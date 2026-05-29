@@ -1,11 +1,12 @@
 # requirements.txt — LO Fighter Design Methodology with OpenRCS dependencies
 
 
-
-
 # ── Core scientific stack ─────────────────────────────────────────────────────
 numpy==2.1.2
 matplotlib==3.9.2
+scipy
+pandas
+scikit-learn
  
 # ── STL file reading (used by stl_module.py in OpenRCS) ──────────────────────
 numpy-stl==3.1.2
@@ -17,9 +18,6 @@ stl==0.0.3
 customtkinter==5.2.2
 pillow==10.4.0
  
-# ── Validation tooling (output_validation.py — optional) ─────────────────────
-scipy
-scikit-learn
  
 # ── Spyder IDE kernel — MUST match your installed Spyder version exactly ──────
 # Spyder 6.x requires spyder-kernels 3.1.x

@@ -46,13 +46,10 @@ Verify: open cmd and run `python --version`
 
 ### 2. Extract tools into correct folders
 OpenVSP-3.49.0-win64/  →  extract into  OpenVSP/
-Octave-9.2.0/           →  extract into  Octave/
 Final structure must be:
 LO_Fighter_Design_Methodology/
 ├── OpenVSP/
 │   └── OpenVSP-3.49.0-win64/
-├── Octave/
-│   └── Octave-9.2.0/
 
 ### 3. Clone OpenRCS
 ```bash
@@ -110,20 +107,30 @@ main.py
         ├─ rcs_functions.extractCoordinatesData()
         │     Build vertex/face arrays in memory
         │
-        └─ rcs_monostatic.rcs_monostatic()
-              Physical Optics loop over (phi, theta) angles
-                → Results/RCS/
-                    ├── rcs_<name>_<timestamp>_plot.png   (RCS vs phi)
-                    ├── rcs_<name>_<timestamp>_3d.jpg     (3D model figure)
-                    └── rcs_<name>_<timestamp>_results.dat (numerical data)
+        └─ rcs_monostatic.rcs_monostatic()  ← called 6 times
+              Run 1: TE-z  Azimuth cut   θ=90°  φ=0→360°
+              Run 2: TM-z  Azimuth cut   θ=90°  φ=0→360°
+              Run 3: TE-z  Elevation cut φ=0°   θ=0→180°
+              Run 4: TM-z  Elevation cut φ=0°   θ=0→180°
+              Run 5: TE-z  Frontal 2-D   az±30° el±15°  (mean only)
+              Run 6: TM-z  Frontal 2-D   az±30° el±15°  (mean only)
+
+Output files → Results/RCS/
+  Linear_Azimuth_Cut_90deg_<ts>.png      4 curves: TE-z co+cross, TM-z co+cross
+  Polar_TE-z_Azimuth_Cut_90deg_<ts>.png  TE-z co-pol + cross-pol
+  Polar_TM-z_Azimuth_Cut_90deg_<ts>.png  TM-z co-pol + cross-pol
+  Linear_Elevation_Cut_0deg_<ts>.png     4 curves: same structure
+  Polar_TE-z_Elevation_Cut_0deg_<ts>.png
+  Polar_TM-z_Elevation_Cut_0deg_<ts>.png
+  MeanRCS_Table_<ts>.png                 6-row summary table
+  aircraft_3D_<ts>.jpg                   facet model (once)
 
 ## Branches
 
 | Branch | Description |
 |--------|-------------|
-| `main` | Baseline pipeline with MATLAB RCS backend |
-| `octave-POFACETS` | Octave + POFACETS backend (no MATLAB license needed) |
-| `openRCS` | **Current** — OpenVSP + OpenRCS, fully MATLAB/Octave-free |
+| `main` | Stable, tested, runnable pipeline |
+| `feature/rcs-pipeline-improvemnets` | Linear & Polar plots (TM-z, TE-z, cross & co-pol ), Mean + Frontal RCS  |
 
 ## Known Issues
 
@@ -131,8 +138,7 @@ main.py
   local folder installation. Patched automatically by setup.py.
   Basic geometry and STL export work fully. VSPAero integration
   pending resolution from OpenVSP team.
-- MATLAB branch requires MATLAB license and MATLAB on system PATH.
-  Octave branch has no such requirement.
+
 
   
 

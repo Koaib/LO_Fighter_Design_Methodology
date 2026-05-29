@@ -17,12 +17,6 @@ POFACETS/
 # Only our bridge scripts (run_openrcs.py) are committed here.
 # Intermediate text files that OpenRCS writes during a run are excluded:
 OpenRCS/open-rcs/
-OpenRCS/open-rcs/coordinates.txt
-OpenRCS/open-rcs/facets.txt
-OpenRCS/open-rcs/matrl.txt
-OpenRCS/open-rcs/results/
-OpenRCS/open-rcs/stl_models/
-OpenRCS/open-rcs/__pycache__/
 
 # ── Virtual environment ───────────────────────────────────────────────────────
 .venv/
