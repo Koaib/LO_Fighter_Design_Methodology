@@ -1,0 +1,29 @@
+# requirements.txt — LO Fighter Design Methodology with OpenRCS dependencies
+
+
+
+
+# ── Core scientific stack ─────────────────────────────────────────────────────
+numpy==2.1.2
+matplotlib==3.9.2
+ 
+# ── STL file reading (used by stl_module.py in OpenRCS) ──────────────────────
+numpy-stl==3.1.2
+stl==0.0.3
+ 
+# ── OpenRCS GUI dependencies ──────────────────────────────────────────────────
+# Not needed for the automated pipeline, but required if you run
+# openrcs.py directly for manual simulations.
+customtkinter==5.2.2
+pillow==10.4.0
+ 
+# ── Validation tooling (output_validation.py — optional) ─────────────────────
+scipy
+scikit-learn
+ 
+# ── Spyder IDE kernel — MUST match your installed Spyder version exactly ──────
+# Spyder 6.x requires spyder-kernels 3.1.x
+# If you see "kernel version mismatch" in Spyder, this is the line to check.
+# To find what your Spyder needs: in Spyder go to
+#   Help → Dependencies → look for spyder-kernels required version
+spyder-kernels>=3.0,<3.2
