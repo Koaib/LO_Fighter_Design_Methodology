@@ -1,0 +1,46 @@
+# =============================================================================
+# .gitignore — LO Fighter Design Methodology
+# =============================================================================
+
+# ── Windows system files ──────────────────────────────────────────────────────
+Thumbs.db
+desktop.ini
+.DS_Store
+
+# ── Tool installations (large binaries — extract locally, do not commit) ──────
+OpenVSP*/
+Octave*/
+POFACETS/
+
+# ── OpenRCS repo (clone separately into OpenRCS/open-rcs/) ───────────────────
+# The open-rcs folder itself is a git submodule / separate clone.
+# Only our bridge scripts (run_openrcs.py) are committed here.
+# Intermediate text files that OpenRCS writes during a run are excluded:
+OpenRCS/open-rcs/
+OpenRCS/open-rcs/coordinates.txt
+OpenRCS/open-rcs/facets.txt
+OpenRCS/open-rcs/matrl.txt
+OpenRCS/open-rcs/results/
+OpenRCS/open-rcs/stl_models/
+OpenRCS/open-rcs/__pycache__/
+
+# ── Virtual environment ───────────────────────────────────────────────────────
+.venv/
+
+# ── Generated outputs ─────────────────────────────────────────────────────────
+Results/
+STL_Files/
+VSP_Files/
+STP_Files/
+
+# ── Python cache ──────────────────────────────────────────────────────────────
+__pycache__/
+*.pyc
+*.pyo
+
+# ── MATLAB / Octave temp files (kept in case old branch is checked out) ───────
+*.asv
+*.m~
+
+# ── Spyder project files ──────────────────────────────────────────────────────
+.spyproject/
