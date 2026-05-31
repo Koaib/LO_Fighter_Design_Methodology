@@ -108,15 +108,9 @@ print("✅ Aircraft created and saved successfully!")
 # =============================================================================
  
 vsp_setup.run_openrcs_rcs(
-    stl_filename = "aircraft.stl",   # must match the STL exported above
-    freq         = 12.0,             # GHz
-    pol          = "TE-z",           # phi-polarised
-    pstart       = 0.0,              # phi start  (deg)
-    pstop        = 360.0,            # phi stop   (deg)
-    delp         = 1.0,              # phi step   (deg)
-    tstart       = 90.0,             # theta fixed at 90° (azimuth cut)
-    tstop        = 90.0,
-    delt         = 1.0,
+    stl_filename = "aircraft.stl",
+    freq         = 12.0,          # radar frequency in GHz
+    pol          = "both",        # "TE-z" / "TM-z" / "both"
 )
 
 # # =========================

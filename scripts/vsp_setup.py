@@ -133,40 +133,18 @@ def auto_name(prefix: str = "case") -> str:
 def run_openrcs_rcs(
     stl_filename: str = "aircraft.stl",
     freq: float       = 12.0,
-    pol: str          = "TE-z",
-    pstart: float     = 0.0,
-    pstop: float      = 360.0,
-    delp: float       = 1.0,
-    tstart: float     = 90.0,
-    tstop: float      = 90.0,
-    delt: float       = 1.0,
+    pol: str          = "both",   # "TE-z", "TM-z", or "both"
 ) -> None:
     """
-    Launch the OpenRCS monostatic RCS pipeline after OpenVSP has exported
-    the STL file.
- 
-    This is the MATLAB-free replacement for the old run_matlab_rcs().
-    It calls run_openrcs.py as a subprocess (so it runs in the project's
-    .venv with all dependencies available).
- 
-    Parameters
-    ----------
-    stl_filename : Name of the STL file inside STL_Files/ (default: aircraft.stl).
-    freq         : Radar frequency in GHz (default: 12 GHz).
-    pol          : Polarisation — 'TE-z' (phi-pol) or 'TM-z' (theta-pol).
-    pstart/pstop/delp  : Phi sweep in degrees.
-    tstart/tstop/delt  : Theta sweep in degrees.
- 
-    The function resolves the STL path automatically from STL_Files/.
-    Results land in Results/RCS/.
+    Launch the OpenRCS pipeline.  Angle sweeps are fixed inside the pipeline:
+      Azimuth cut  : θ = 90°, φ = 0→360°
+      Elevation cut: φ = 0°,  θ = 0→180°
+      Frontal 2-D  : φ = ±30°, θ = 75→105°  (mean table only)
     """
     stl_full = os.path.join(STL_FILES, stl_filename)
-
-    print("\n🔄 Launching OpenRCS to compute RCS...")
-    print(f"   STL file   : {stl_full}")
-    print(f"   Frequency  : {freq} GHz   Pol: {pol}")
-    print(f"   Phi        : {pstart}° → {pstop}° (step {delp}°)")
-    print(f"   Theta      : {tstart}° → {tstop}° (fixed)\n")
+    print("\n🔄 Launching OpenRCS ...")
+    print(f"   STL       : {stl_full}")
+    print(f"   Frequency : {freq} GHz    Polarisation: {pol}\n")
 
     try:
         import run_openrcs
@@ -175,25 +153,20 @@ def run_openrcs_rcs(
             results_dir = RESULTS_DIR,
             freq        = freq,
             pol         = pol,
-            pstart      = pstart,
-            pstop       = pstop,
-            delp        = delp,
-            tstart      = tstart,
-            tstop       = tstop,
-            delt        = delt,
         )
         if result_dict:
-            print("✅ OpenRCS RCS computation finished successfully.")
-            if result_dict.get("polar"):
-                print(f"   Polar plot : {result_dict['polar']}")
+            print("✅ OpenRCS finished.")
+            for k, v in result_dict.items():
+                if v and k != "results_dir":
+                    print(f"   {k:<18}: {os.path.basename(v)}")
         else:
-            print("❌ OpenRCS pipeline returned no results.")
+            print("❌ OpenRCS returned no results.")
 
     except Exception as e:
         import traceback
-        print(f"❌ OpenRCS pipeline error: {e}")
+        print(f"❌ OpenRCS error: {e}")
         traceback.print_exc()
- 
+        
     # ── LEGACY SHIM (kept for backward compatibility) ──────────────────────────
     # If any other module still calls run_matlab_rcs(), redirect it here.
  

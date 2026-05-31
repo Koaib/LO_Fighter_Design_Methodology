@@ -74,6 +74,47 @@ rcs_monostatic.py  →  rcs_monostatic(param_list, coord_list)
       plot_triangle_model()       saves JPEG of 3D wire-frame faceted model
       finalPlot()                 saves PNG of RCS vs angle (linear/contour)
     Returns (plot_path, fig_path, dat_path) all under OpenRCS ./results/
+
+
+RUNS (if pol="both"):
+  1  TE-z  Azimuth cut    θ=90°  φ=0→360°
+  2  TM-z  Azimuth cut    θ=90°  φ=0→360°
+  3  TE-z  Elevation cut  φ=0°   θ=0→180°
+  4  TM-z  Elevation cut  φ=0°   θ=0→180°
+  5  TE-z  Frontal 2-D    φ=−30→30°  θ=75→105°  (mean table only, no plot)
+  6  TM-z  Frontal 2-D    φ=−30→30°  θ=75→105°  (mean table only, no plot)
+
+OUTPUT FILES:
+  Linear_TE-z_Azimuth_Cut_90deg_<ts>.png     TE-z Sφ (co-pol) + Sθ (cross-pol) vs φ
+  Linear_TM-z_Azimuth_Cut_90deg_<ts>.png     TM-z Sθ (co-pol) + Sφ (cross-pol) vs φ
+  Polar_TE-z_Azimuth_Cut_90deg_<ts>.png      TE-z Sφ co-pol polar map
+  Polar_TM-z_Azimuth_Cut_90deg_<ts>.png      TM-z Sθ co-pol polar map
+  Linear_TE-z_Elevation_Cut_0deg_<ts>.png    TE-z vs elevation −90°→+90°
+  Linear_TM-z_Elevation_Cut_0deg_<ts>.png    TM-z vs elevation −90°→+90°
+  MeanRCS_Table_<ts>.png                     6-row mean RCS summary table
+  aircraft_3D_<ts>.jpg                       3-D facet model (once only)
+
+POLARISATION CONVENTION:
+  TE-z  (ipol=1, phi-polarised):   dominant co-pol scattered component = Sφ
+  TM-z  (ipol=0, theta-polarised): dominant co-pol scattered component = Sθ
+  Cross-pol is near zero for a bilaterally symmetric aircraft; it is still
+  plotted (dashed, light colour) so the user can confirm low cross-pol.
+
+AZIMUTH DISPLAY CONVENTION:
+  Solver uses φ = 0→360°.  Linear plots display −180°→+180° so the aircraft
+  nose (0°) is at the centre of the x-axis.  Polar maps keep 0° at the top
+  (compass convention, same as POFACETS).
+
+ELEVATION DISPLAY CONVENTION:
+  Solver uses θ = 0→180° (0°=up, 90°=horizontal, 180°=down).
+  Linear plots display elevation = 90°−θ, so 0° = horizontal (head-on level),
+  +90° = directly above, −90° = directly below.
+
+MEAN RCS (Touzopoulos 2017 methodology):
+  Total scattered power per angle = Sθ_linear + Sφ_linear.
+  Mean = average over all angles in linear domain → converted to dBsm.
+  This gives ONE representative scalar per run.
+  Frontal sector (runs 5+6) averages over az ±30° AND el ±15°.
 """
 
 import os
@@ -82,20 +123,14 @@ import shutil
 import warnings
 from datetime import datetime
 
+import numpy as np
 import matplotlib
-matplotlib.use("Agg")   # non-interactive backend — no display needed
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
 
 # =============================================================================
-# RESOLVE PATHS
+# PATHS
 # =============================================================================
-# Layout assumed:
-#   <ROOT>/
-#     scripts/
-#       run_openrcs.py     <- this file
-#     OpenRCS/
-#       open-rcs/          <- OpenRCS repo clone
-#     STL_Files/
-#     Results/RCS/
 
 _SCRIPTS_DIR = os.path.abspath(os.path.dirname(__file__))
 _ROOT_DIR    = os.path.abspath(os.path.join(_SCRIPTS_DIR, ".."))
@@ -105,366 +140,810 @@ _RESULTS_DIR = os.path.join(_ROOT_DIR, "Results", "RCS")
 
 
 def _ensure_openrcs_on_path():
-    """Add the OpenRCS source folder to sys.path if not already present."""
     if not os.path.isdir(_OPENRCS_DIR):
-        raise FileNotFoundError(
-            f"\n❌ OpenRCS source folder not found at:\n   {_OPENRCS_DIR}\n"
-            "\n👉 Clone it with:\n"
-            "   cd LO_Fighter_Design_Methodology/OpenRCS\n"
-            "   git clone https://github.com/comp-ime-eb-br/open-rcs\n"
-        )
+        raise FileNotFoundError(f"\n❌ OpenRCS not found at: {_OPENRCS_DIR}")
     if _OPENRCS_DIR not in sys.path:
         sys.path.insert(0, _OPENRCS_DIR)
 
 
 # =============================================================================
-# DEFAULT RCS SETTINGS  (matching old run_rcs.m defaults)
+# .DAT FILE PARSER
+#
+# generateResultFiles() in rcs_functions.py writes each section like this:
+#
+#   Azimuth cut  (ip>1, it=1):  ip lines, each = str(array_shape_1) = "[v]"
+#   Elevation cut (ip=1, it>1): 1 line   = str(array_shape_it) = "[v0 v1 ...]"
+#   Frontal 2-D  (ip>1, it>1): ip lines, each = str(array_shape_it)
+#
+# The parser strips brackets, splits on whitespace, and collects all floats
+# until the first blank line (which separates sections in the .dat file).
+# This handles all three formats transparently.
 # =============================================================================
 
-DEFAULTS = dict(
-    freq   = 12.0,    # GHz
-    pol    = "TE-z",  # phi-polarised (Et=0, Ep=1)
-    pstart = 0.0,     # phi start  (deg)
-    pstop  = 360.0,   # phi stop   (deg)
-    delp   = 1.0,     # phi step   (deg)
-    tstart = 90.0,    # theta fixed at 90 deg — azimuth (phi) cut
-    tstop  = 90.0,
-    delt   = 1.0,
-    corr   = 0.0,     # surface correlation length (m) — 0 = smooth PEC
-    delstd = 0.0,     # surface std deviation (m)     — 0 = no roughness
-    rs     = 0,       # 0 = PEC,  1 = specific material
-)
+def _parse_dat(dat_path: str) -> dict:
+    """
+    Parse an OpenRCS .dat result file.
+
+    Returns a dict with flat 1-D numpy arrays:
+        'phi_vals'   : phi angles in degrees
+        'theta_vals' : theta angles in degrees
+        'sth'        : RCS theta component (dBsm)
+        'sph'        : RCS phi   component (dBsm)
+
+    Array lengths:
+        Azimuth cut  (ip=361, it=1)  → 361 values each
+        Elevation cut (ip=1, it=181) → 181 values each
+        Frontal 2-D  (ip=61, it=31)  → 1891 values each (61×31 flattened)
+    """
+    with open(dat_path) as fh:
+        content = fh.read()
+
+    def _extract(header: str) -> np.ndarray:
+        """
+        Find 'header\\n' in content, then read all floats until a blank line.
+        Each data line may be a single value "[v]" or a full array "[v0 v1 ...]".
+        Brackets are stripped; values are split on whitespace.
+        """
+        tag = header + "\n"
+        idx = content.find(tag)
+        if idx == -1:
+            return np.array([])
+        start = idx + len(tag)
+        vals  = []
+        for line in content[start:].splitlines():
+            s = line.strip()
+            if not s:                           # blank line = section boundary
+                break
+            clean = s.replace("[", "").replace("]", "")
+            try:
+                vals.extend(float(x) for x in clean.split())
+            except ValueError:
+                break                           # non-numeric = next header
+        return np.array(vals)
+
+    return {
+        "phi_vals":   _extract("Phi (deg):"),
+        "theta_vals": _extract("Theta (deg):"),
+        "sth":        _extract("RCS Theta (dBsm):"),
+        "sph":        _extract("RCS Phi (dBsm):"),
+    }
+
 
 # =============================================================================
-# FUNCTION TO GENERATE POLAR PLOT
+# UNIT CONVERSION
 # =============================================================================
 
-def _generate_polar_plot(dat_path, output_path, freq=12.0, theta=90.0, stl_name="aircraft.stl"):
-    import numpy as np
-    import matplotlib
-    matplotlib.use("Agg")
-    import matplotlib.pyplot as plt
+def _lin(db_arr: np.ndarray) -> np.ndarray:
+    """dBsm → linear (m²).  Clips at 1e-15 to prevent log(0)."""
+    return np.clip(10.0 ** (db_arr / 10.0), 1e-15, None)
 
-    with open(dat_path, "r") as fh:
-        lines = fh.readlines()
 
-    def _extract_section(lines, header):
-        vals = []
-        in_section = False
-        for line in lines:
-            if header in line:
-                in_section = True
-                continue
-            if in_section:
-                stripped = line.strip()
-                if not stripped:
-                    break
-                try:
-                    vals.append(float(stripped.strip("[]")))
-                except ValueError:
-                    break
-        return vals
+def _db(lin_val: float) -> float:
+    """Linear (m²) → dBsm."""
+    return 10.0 * np.log10(max(float(lin_val), 1e-15))
 
-    phi_deg  = np.array(_extract_section(lines, "Phi (deg):"))
-    rcs_dbsm = np.array(_extract_section(lines, "RCS Phi (dBsm):"))
+
+# =============================================================================
+# MEAN RCS
+#
+# Total scattered power per angle = Sθ_linear + Sφ_linear.
+# Mean = average over all angles in linear domain, then → dBsm.
+# Works for any flat array (azimuth 361 pts, elevation 181 pts, frontal 1891 pts).
+# =============================================================================
+
+def _mean_total(sth: np.ndarray, sph: np.ndarray) -> float:
+    """
+    Mean total monostatic RCS (dBsm).
+
+    Adds theta and phi scattered power in linear domain, averages, converts
+    back to dBsm.  Gives one representative number per solver run.
+    """
+    return _db(float(np.mean(_lin(sth) + _lin(sph))))
+
+
+# =============================================================================
+# AZIMUTH DISPLAY TRANSFORM
+#
+# Solver outputs φ in [0°, 360°], including both 0° and 360° endpoints
+# (same physical angle — duplicate).  For Cartesian linear plots we:
+#   1. Remove the duplicate 360° endpoint.
+#   2. Remap values > 180° to negative:  φ_disp = φ − 360  if  φ > 180°
+#   3. Sort ascending so x-axis runs −180° → +180°, nose at 0°.
+#
+# Returns (x_display, reorder_index) so the caller can reorder RCS arrays.
+# =============================================================================
+
+def _phi_to_display(phi_arr: np.ndarray):
+    """
+    Map φ [0°, 360°] → [−180°, +180°] and sort ascending.
+
+    Returns
+    -------
+    x_disp : 1-D array, φ in [−180°, +180°], ascending (nose at 0°)
+    idx    : reorder indices — apply to Sth/Sph arrays to match x_disp
+    """
+    arr = phi_arr.copy()
+    # remove duplicate endpoint (360° == 0°)
+    if len(arr) > 1 and np.isclose(arr[-1], arr[0] + 360.0):
+        arr = arr[:-1]
+    disp = np.where(arr > 180.0, arr - 360.0, arr)
+    idx  = np.argsort(disp)
+    return disp[idx], idx
+
+
+# =============================================================================
+# PLOT A — Cartesian RCS vs angle  (one polarisation, two components)
+#
+# Shows:
+#   co-pol  : dominant component (Sφ for TE-z, Sθ for TM-z) — solid, full colour
+#   cross-pol: orthogonal component — dashed, lighter colour
+#
+# Y-axis is clipped to [max(co-pol) − 65, max(co-pol) + 5] dBsm.
+# This prevents the near-zero cross-pol flat line at −100 dBsm from
+# collapsing the useful portion of the plot.
+# =============================================================================
+
+def _plot_dual_linear(x_arr_te, copol_te, xpol_te,
+                      x_arr_tm, copol_tm, xpol_tm,
+                      output_path, *, title, subtitle, xlabel) -> None:
+    """
+    Four curves on one Cartesian plot:
+      TE-z co-pol  (Sph) — blue solid
+      TE-z cross-pol (Sth) — blue dashed  (near zero for symmetric aircraft)
+      TM-z co-pol  (Sth) — red solid
+      TM-z cross-pol (Sph) — red dashed  (near zero for symmetric aircraft)
+
+    Parameters
+    ----------
+    x_arr_te : x-axis array for TE-z run (phi or elevation degrees)
+    copol_te : TE-z co-pol component = Sph (dBsm)
+    xpol_te  : TE-z cross-pol component = Sth (dBsm)
+    x_arr_tm : x-axis array for TM-z run
+    copol_tm : TM-z co-pol component = Sth (dBsm)
+    xpol_tm  : TM-z cross-pol component = Sph (dBsm)
+    """
+    fig, ax = plt.subplots(figsize=(11, 5), facecolor="white")
+    ax.set_facecolor("white")
+
+    ax.plot(x_arr_te, copol_te, color="steelblue", lw=1.0,
+            label="TE-z  Sφ  (co-pol)")
+    ax.plot(x_arr_te, xpol_te,  color="steelblue", lw=0.8,
+            linestyle="--", alpha=0.5,
+            label="TE-z  Sθ  (cross-pol)")
+    ax.plot(x_arr_tm, copol_tm, color="crimson",   lw=1.0,
+            label="TM-z  Sθ  (co-pol)")
+    ax.plot(x_arr_tm, xpol_tm,  color="crimson",   lw=0.8,
+            linestyle="--", alpha=0.5,
+            label="TM-z  Sφ  (cross-pol)")
+
+    # y-axis window based on co-pol peaks only
+    # (cross-pol near -100 dBsm would otherwise collapse the useful range)
+    ymax = float(np.nanmax([np.nanmax(copol_te), np.nanmax(copol_tm)])) + 5.0
+    ymin = ymax - 65.0
+    ymin = -110.0
+    ax.set_ylim(ymin, ymax)
+
+    ax.set_xlabel(xlabel, fontsize=11)
+    ax.set_ylabel("RCS (dBsm)", fontsize=11)
+    ax.legend(fontsize=9, loc="upper right")
+    ax.grid(True, linestyle="--", alpha=0.55)
+    ax.axvline(0, color="black", lw=0.6, linestyle=":")
+
+    fig.suptitle(f"{title}\n{subtitle}", fontsize=10)
+    fig.tight_layout()
+    fig.savefig(output_path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print(f"      saved → {os.path.basename(output_path)}")
     
-    # DEBUG
-    print(f"  [DEBUG] phi points: {len(phi_deg)}, rcs points: {len(rcs_dbsm)}")
-    print(f"  [DEBUG] phi range: {phi_deg[0]} to {phi_deg[-1]}")
-    
-    if len(phi_deg) == 0 or len(rcs_dbsm) == 0:
-        raise ValueError(f"Could not parse Phi/RCS sections in {dat_path}")
+# =============================================================================
+# PLOT B — full-circle polar map  (azimuth cut, co-pol component only)
+#
+# Shows only the co-pol component (Sφ for TE-z, Sθ for TM-z) because the
+# cross-pol is near zero for a symmetric aircraft and produces a blank map.
+#
+# Both TE-z and TM-z maps share the same rcs_min/rcs_max scale so they are
+# directly visually comparable.
+#
+# Compass convention: 0° (nose) at top, angles increase clockwise.
+# =============================================================================
 
-    rcs_max   = np.ceil(np.nanmax(rcs_dbsm) / 10) * 10
-    rcs_min   = rcs_max - 60
-    ring_vals = np.linspace(rcs_min, rcs_max, 7)
+def _rcs_to_r(rcs: np.ndarray, rcs_min: float, rcs_max: float) -> np.ndarray:
+    """Normalise RCS (dBsm) to polar radius in [0, 1]."""
+    return np.clip((rcs - rcs_min) / (rcs_max - rcs_min), 0.0, 1.0)
 
-    def rcs_to_r(rcs):
-        return np.clip((rcs - rcs_min) / (rcs_max - rcs_min), 0, 1)
+def _plot_polar(phi_arr, copol_arr, xpol_arr, output_path, *,
+                title, subtitle, color, rcs_min, rcs_max,
+                spoke_override=None) -> None:
+    """
+    Full-circle polar RCS map with two curves for one polarisation:
+      co-pol  — solid, full colour
+      cross-pol — dashed, same colour at 40% opacity
 
-    r_data     = rcs_to_r(rcs_dbsm)
-    theta_plot = np.deg2rad(phi_deg)
+    Both curves share the same normalised radius scale (rcs_min → rcs_max)
+    so they are directly comparable.  Cross-pol will hug near the centre
+    for a symmetric aircraft, visually confirming low depolarisation.
 
-    fig = plt.figure(figsize=(9, 9), facecolor="#d0d0d0")
-    ax  = fig.add_subplot(111, polar=True, facecolor="#d0d0d0")
+    Parameters
+    ----------
+    phi_arr   : φ angles in degrees, 0→359° (duplicate 360° removed)
+    copol_arr : co-pol RCS (dBsm) — same length as phi_arr
+    xpol_arr  : cross-pol RCS (dBsm) — same length as phi_arr
+    title     : first title line
+    subtitle  : remaining title lines
+    color     : base colour (used for both curves; cross-pol gets alpha=0.4)
+    rcs_min   : lower dBsm bound of shared scale
+    rcs_max   : upper dBsm bound of shared scale
+    spoke_override : optional dict {angle_deg: label} to replace default spokes
+    """
+    ring_vals   = np.linspace(rcs_min, rcs_max, 7)
+    ring_angles = np.linspace(0, 2 * np.pi, 361)
+
+    fig = plt.figure(figsize=(7, 7), facecolor="#e8e8e8")
+    ax  = fig.add_subplot(111, polar=True, facecolor="#e8e8e8")
     ax.set_theta_zero_location("N")
     ax.set_theta_direction(-1)
 
-    ring_angles = np.linspace(0, 2*np.pi, 361)
+    # concentric dBsm rings
     for rv in ring_vals:
-        ax.plot(ring_angles, np.full_like(ring_angles, rcs_to_r(rv)),
-                color="black", linewidth=0.6, zorder=2)
+        rr = _rcs_to_r(rv, rcs_min, rcs_max)
+        ax.plot(ring_angles, np.full_like(ring_angles, rr),
+                color="grey", lw=0.5, zorder=2)
+        if rr > 0.05:
+            ax.text(np.deg2rad(105), rr, f"{rv:.0f}",
+                    ha="left", va="center", fontsize=7.5,
+                    color="dimgrey", zorder=6)
 
+    # spokes every 30°
     for sd in range(0, 360, 30):
         ax.plot([np.deg2rad(sd), np.deg2rad(sd)], [0, 1],
-                color="black", linewidth=0.6, zorder=2)
+                color="grey", lw=0.5, zorder=2)
 
-    tc = np.append(theta_plot, theta_plot[0])
-    rc = np.append(r_data, r_data[0])
-    ax.plot(tc, rc, color="navy", linewidth=0.8, zorder=5)
+    # co-pol curve — close back to start
+    r_co = _rcs_to_r(copol_arr, rcs_min, rcs_max)
+    tc   = np.append(np.deg2rad(phi_arr), np.deg2rad(phi_arr[0]))
+    rc   = np.append(r_co, r_co[0])
+    ax.plot(tc, rc, color=color, lw=1.0, zorder=5,
+            label="co-pol")
 
-    for rv in ring_vals:
-        rr = rcs_to_r(rv)
-        if rr > 0.02:
-            ax.text(np.deg2rad(100), rr, f"{rv:.0f}",
-                    ha="left", va="center", fontsize=7.5, color="black", zorder=6)
+    # cross-pol curve
+    r_xp  = _rcs_to_r(xpol_arr, rcs_min, rcs_max)
+    rx    = np.append(r_xp, r_xp[0])
+    ax.plot(tc, rx, color=color, lw=0.8, linestyle="--",
+            alpha=0.4, zorder=4, label="cross-pol")
 
-    spoke_labels = {
+    # legend inside polar axes
+    ax.legend(loc="lower left", bbox_to_anchor=(0.02, 0.02),
+              fontsize=8, framealpha=0.6)
+
+    spokes = spoke_override if spoke_override is not None else {
         0: "0°\n(nose)", 30: "30°", 60: "60°", 90: "90°",
         120: "120°", 150: "150°", 180: "180°\n(tail)",
         210: "210°", 240: "240°", 270: "270°", 300: "300°", 330: "330°",
     }
-    ax.set_xticks(np.deg2rad(list(spoke_labels.keys())))
-    ax.set_xticklabels(list(spoke_labels.values()), fontsize=8.5)
-
+    ax.set_xticks(np.deg2rad(list(spokes.keys())))
+    ax.set_xticklabels(list(spokes.values()), fontsize=8)
     ax.set_yticks([])
     ax.grid(False)
     ax.spines["polar"].set_visible(False)
     ax.set_ylim(0, 1)
 
-    wl = 0.3 / freq
-    fig.suptitle(
-        f"RCS Polar Plot — Monostatic\n"
-        f"target: {stl_name}    θ = {theta:.0f}°    f = {freq:.1f} GHz    λ = {wl:.4f} m",
-        fontsize=10, y=1.01
-    )
+    fig.suptitle(f"{title}\n{subtitle}", fontsize=9, y=1.02)
     fig.tight_layout()
-    fig.savefig(output_path, dpi=150, bbox_inches="tight", facecolor="#d0d0d0")
+    fig.savefig(output_path, dpi=150, bbox_inches="tight", facecolor="#e8e8e8")
     plt.close(fig)
-    print(f"      Polar plot saved → {output_path}")
+    print(f"      saved → {os.path.basename(output_path)}")
+    
 
 # =============================================================================
-# MAIN PIPELINE FUNCTION
+# TABLE — mean RCS summary (PNG image)
+#
+# 6 rows, one per solver run.  Column = mean total RCS (dBsm).
+# Row colours: blue = azimuth, green = elevation, orange = frontal.
+#
+# Frontal sector row is the most important stealth metric:
+#   it averages az ±30° AND el ±15°, exactly as Touzopoulos 2017.
+# =============================================================================
+
+def _save_mean_table(rows, output_path, freq, stl_name) -> None:
+    """
+    Save mean RCS summary as a PNG table image.
+
+    Parameters
+    ----------
+    rows : list of (run_label: str, mean_rcs: float)
+          Expected order: AZ_TE, AZ_TM, EL_TE, EL_TM, FR_TE, FR_TM
+    """
+    fig, ax = plt.subplots(figsize=(9, 3.5), facecolor="white")
+    ax.set_facecolor("white")
+    ax.axis("off")
+
+    col_labels = ["Run", "Mean Total RCS  (dBsm)"]
+    cell_data  = [
+        [label, f"{val:.2f}" if np.isfinite(val) else "N/A"]
+        for label, val in rows
+    ]
+    row_colors = [
+        ["#dce9f7", "#dce9f7"],   # azimuth TE-z  — blue
+        ["#dce9f7", "#dce9f7"],   # azimuth TM-z  — blue
+        ["#d5ecd5", "#d5ecd5"],   # elevation TE-z — green
+        ["#d5ecd5", "#d5ecd5"],   # elevation TM-z — green
+        ["#fde9cc", "#fde9cc"],   # frontal TE-z  — orange
+        ["#fde9cc", "#fde9cc"],   # frontal TM-z  — orange
+    ]
+
+    tbl = ax.table(
+        cellText    = cell_data,
+        colLabels   = col_labels,
+        cellLoc     = "center",
+        loc         = "center",
+        cellColours = row_colors,
+    )
+    tbl.auto_set_font_size(False)
+    tbl.set_fontsize(11)
+    tbl.scale(1.2, 2.0)
+
+    ax.set_title(
+        f"Mean RCS Summary  —  {stl_name}    f = {freq:.1f} GHz\n"
+        "Mean = average total scattered power (Sθ + Sφ) in linear domain",
+        fontsize=11, pad=14,
+    )
+    fig.tight_layout()
+    fig.savefig(output_path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print(f"      saved → {os.path.basename(output_path)}")
+
+
+# =============================================================================
+# SOLVER HELPER
+# =============================================================================
+
+def _run_single_pol(param_base: list, coord_list: list, ipol: int):
+    """
+    Call rcs_monostatic() with a specific polarisation.
+
+    param_base : 13-element list (see _make_params below); index 4 is ipol.
+    coord_list : mesh arrays from extractCoordinatesData().
+    ipol       : 1 = TE-z (phi-polarised),  0 = TM-z (theta-polarised).
+
+    Returns (plot_path, fig_path, dat_path) from rcs_monostatic().
+    """
+    from rcs_monostatic import rcs_monostatic
+    pl    = list(param_base)  # copy — never mutate the shared base list
+    pl[4] = ipol
+    return rcs_monostatic(pl, coord_list)
+
+
+# =============================================================================
+# MAIN PIPELINE
 # =============================================================================
 
 def run_openrcs_pipeline(
     stl_path    : str,
     results_dir : str   = _RESULTS_DIR,
-    freq        : float = DEFAULTS["freq"],
-    pol         : str   = DEFAULTS["pol"],
-    pstart      : float = DEFAULTS["pstart"],
-    pstop       : float = DEFAULTS["pstop"],
-    delp        : float = DEFAULTS["delp"],
-    tstart      : float = DEFAULTS["tstart"],
-    tstop       : float = DEFAULTS["tstop"],
-    delt        : float = DEFAULTS["delt"],
-    corr        : float = DEFAULTS["corr"],
-    delstd      : float = DEFAULTS["delstd"],
-    rs          : int   = DEFAULTS["rs"],
+    freq        : float = 12.0,
+    pol         : str   = "both",
+    corr        : float = 0.0,
+    delstd      : float = 0.0,
+    rs          : int   = 0,
 ) -> dict:
     """
     End-to-end OpenRCS monostatic RCS pipeline.
 
-    Called directly (in-process) from vsp_setup.run_openrcs_rcs() so that
-    every error and print statement appears immediately in the Spyder console.
-
     Parameters
     ----------
-    stl_path    : Absolute path to the STL file exported by OpenVSP.
-    results_dir : Folder where final result files are saved.
-    freq        : Radar frequency in GHz.
-    pol         : 'TE-z' (phi-pol) or 'TM-z' (theta-pol).
-    pstart / pstop / delp  : Phi angle sweep in degrees.
-    tstart / tstop / delt  : Theta angle sweep in degrees.
-    corr / delstd          : Surface roughness parameters (0 = smooth PEC).
-    rs                     : 0 = PEC,  1 = specific material (needs matrl.txt).
+    stl_path    : absolute path to the STL file exported by OpenVSP
+    results_dir : output folder
+    freq        : radar frequency in GHz
+    pol         : "TE-z", "TM-z", or "both" (default)
+    corr        : surface roughness correlation length m (0 = smooth PEC)
+    delstd      : surface roughness std deviation m     (0 = smooth PEC)
+    rs          : 0 = Perfect Electric Conductor
 
     Returns
     -------
-    dict with keys 'plot', 'fig', 'dat', 'results_dir'
+    dict with output file paths keyed by descriptive names
     """
-
     print("\n" + "=" * 60)
     print("  OpenRCS Monostatic RCS Pipeline")
     print("=" * 60)
-    print(f"  STL file   : {stl_path}")
-    print(f"  Frequency  : {freq} GHz")
-    print(f"  Pol        : {pol}")
-    print(f"  Phi        : {pstart} to {pstop} deg  step {delp} deg")
-    print(f"  Theta      : {tstart} deg (fixed azimuth cut)")
-    print(f"  Results    : {results_dir}")
+    print(f"  STL        : {stl_path}")
+    print(f"  Frequency  : {freq} GHz    Polarisation: {pol}")
+    print(f"  Cuts       : Azimuth θ=90°  |  Elevation φ=0°  |  Frontal 2-D")
     print("=" * 60 + "\n")
 
-    # ── sanity checks ──────────────────────────────────────────────────────────
     if not os.path.isfile(stl_path):
-        raise FileNotFoundError(
-            f"STL file not found: {stl_path}\n"
-            "Make sure main.py ran successfully and aircraft.stl was exported."
-        )
+        raise FileNotFoundError(f"STL not found: {stl_path}")
 
     _ensure_openrcs_on_path()
     os.makedirs(results_dir, exist_ok=True)
 
-    # ── import OpenRCS modules ─────────────────────────────────────────────────
-    # Done here (not at module top level) so that if _OPENRCS_DIR does not
-    # exist yet, the import error message is clear and descriptive.
     try:
         from stl_module    import stl_converter
-        from rcs_functions import extractCoordinatesData, MATERIALESPECIFICO
-        from rcs_monostatic import rcs_monostatic
+        from rcs_functions import extractCoordinatesData
     except ImportError as exc:
         raise ImportError(
-            f"Could not import OpenRCS modules from:\n  {_OPENRCS_DIR}\n"
-            f"Original error: {exc}\n\n"
-            "Check that:\n"
-            "  1. The OpenRCS repo was cloned into OpenRCS/open-rcs/\n"
-            "  2. All OpenRCS requirements are installed in the .venv\n"
-            "     (numpy-stl, matplotlib, customtkinter, pillow)\n"
+            f"Cannot import OpenRCS modules from {_OPENRCS_DIR}.\n{exc}"
         ) from exc
 
-    # ── STEP 1: switch working directory to OpenRCS root ──────────────────────
-    # OpenRCS writes and reads these paths relative to its own root:
-    #   ./coordinates.txt     written by stl_converter()
-    #   ./facets.txt          written by stl_converter()
-    #   ./results/<ts>/       written by rcs_monostatic()
-    # We must cd there so all relative paths resolve correctly.
     original_cwd = os.getcwd()
     os.chdir(_OPENRCS_DIR)
-    print(f"[1/5] Working directory:\n      {_OPENRCS_DIR}\n")
 
-    # out_plot/fig/dat declared here so the finally block can always reference them
-    out_plot = out_fig = out_dat = None
-
+    out = {
+        "linear_az":   None,
+        "polar_az_te": None, "polar_az_tm": None,
+        "linear_el":   None,
+        "polar_el_te": None, "polar_el_tm": None,
+        "mean_table":  None,
+        "fig_3d":      None,
+        "results_dir": results_dir,
+    }
+    
     try:
         os.makedirs("stl_models", exist_ok=True)
         os.makedirs("results",    exist_ok=True)
 
-        # ── STEP 2: copy STL into OpenRCS stl_models/ ─────────────────────────
-        stl_filename = os.path.basename(stl_path)          # "aircraft.stl"
-        stl_dest     = os.path.abspath(
-                           os.path.join("stl_models", stl_filename))
-
+        # ── copy STL into OpenRCS working directory ───────────────────────────
+        stl_filename = os.path.basename(stl_path)
+        stl_dest     = os.path.abspath(os.path.join("stl_models", stl_filename))
         if os.path.abspath(stl_path) != stl_dest:
             shutil.copy2(stl_path, stl_dest)
-        print(f"[2/5] STL copied to:\n      {stl_dest}\n")
 
-        # ── STEP 3: STL → coordinates.txt + facets.txt ────────────────────────
-        # stl_converter() (stl_module.py):
-        #   mesh.Mesh.from_file(path) opens the STL
-        #   unique vertices extracted → np.savetxt("coordinates.txt")
-        #   face connectivity + ilum + Rs=0 → np.savetxt("facets.txt")
-        print("[3/5] Converting STL to coordinates.txt + facets.txt ...")
+        # ── convert STL → coordinates.txt + facets.txt ───────────────────────
+        print("[1/3] Converting STL → mesh files ...")
         stl_converter(stl_dest)
-        print("      Done.\n")
 
-        # ── STEP 4: build param_list for rcs_monostatic() ─────────────────────
-        # Exact order required — mirrors getParamsFromFile('monostatic'):
-        #   [0] input_model  str   filename only (no path)
-        #   [1] freq         float Hz  (not GHz — the PO solver expects Hz)
-        #   [2] corr         float surface correlation length (m)
-        #   [3] delstd       float surface std deviation (m)
-        #   [4] ipol         int   0=TM-z, 1=TE-z
-        #   [5] rs           int   0=PEC, 1=specific material
-        #   [6] pstart       float phi start (deg)
-        #   [7] pstop        float phi stop  (deg)
-        #   [8] delp         float phi step  (deg)
-        #   [9] tstart       float theta start (deg)
-        #   [10] tstop       float theta stop  (deg)
-        #   [11] delt        float theta step  (deg)
-        #   [12] matrlpath   str   path to matrl file (only used when rs==1)
-        ipol      = 1 if pol.upper() == "TE-Z" else 0
-        freq_hz   = freq * 1e9
-        matrlpath = os.path.join(_OPENRCS_DIR, "matrl.txt")
-
-        param_list = [
-            stl_filename, freq_hz, corr, delstd, ipol, rs,
-            pstart, pstop, delp,
-            tstart, tstop, delt,
-            matrlpath,
-        ]
-
-        # ── STEP 5: load mesh arrays ───────────────────────────────────────────
-        # extractCoordinatesData(rs) reads coordinates.txt + facets.txt and
-        # returns a 17-element list:
-        #   x,y,z,xpts,ypts,zpts,nverts,nfc,node1,node2,node3,
-        #   iflag,ilum,Rs,ntria,vind,r
-        print("[4/5] Loading mesh data ...")
+        # ── load mesh arrays (done ONCE for all 6 runs) ───────────────────────
+        print("[2/3] Loading mesh ...")
         coord_list = extractCoordinatesData(rs)
-        print("      Done.\n")
 
-        # ── STEP 6: Physical Optics RCS computation ────────────────────────────
-        print("[5/5] Running Physical Optics RCS computation ...")
-        print("      (may take a few minutes for high-resolution meshes)\n")
+        # ── build param_list factory ──────────────────────────────────────────
+        # rcs_monostatic() expects a 13-element list:
+        #   [0] stl_filename  str
+        #   [1] freq          float  Hz  (not GHz)
+        #   [2] corr          float  surface correlation length
+        #   [3] delstd        float  surface std deviation
+        #   [4] ipol          int    0=TM-z, 1=TE-z  ← overridden per call
+        #   [5] rs            int    0=PEC
+        #   [6] pstart        float  phi start   (deg)
+        #   [7] pstop         float  phi stop    (deg)
+        #   [8] delp          float  phi step    (deg)
+        #   [9] tstart        float  theta start (deg)
+        #  [10] tstop         float  theta stop  (deg)
+        #  [11] delt          float  theta step  (deg)
+        #  [12] matrlpath     str    path to material file
+        matrlpath = os.path.join(_OPENRCS_DIR, "matrl.txt")
+        freq_hz   = freq * 1e9
+
+        def _make_params(pstart, pstop, delp, tstart, tstop, delt):
+            """
+            Build a base param_list.  ipol (index 4) is 0 here and gets
+            overridden by _run_single_pol() before each solver call.
+            """
+            return [
+                stl_filename, freq_hz, corr, delstd,
+                0,                              # ipol placeholder
+                rs,
+                pstart, pstop, delp,
+                tstart, tstop, delt,
+                matrlpath,
+            ]
+
+        # ── three cut configurations ──────────────────────────────────────────
+
+        # Azimuth cut: full phi sweep at fixed theta=90° (radar at same altitude).
+        # ip = (360-0)/1 + 1 = 361,  it = 1
+        params_az = _make_params(
+            pstart=0.0, pstop=360.0, delp=1.0,
+            tstart=90.0, tstop=90.0, delt=1.0,
+        )
+
+        # Elevation cut: fixed phi=0° (nose direction), full theta sweep.
+        # ip = 1,  it = (180-0)/1 + 1 = 181
+        params_el = _make_params(
+            pstart=0.0, pstop=0.0, delp=1.0,
+            tstart=0.0, tstop=180.0, delt=1.0,
+        )
+
+        # Frontal 2-D: az ±30° and el ±15° (theta 75°→105°).
+        # Used only for mean frontal sector RCS — no plot generated.
+        # ip = (-30 to 30)/1 + 1 = 61,  it = (75 to 105)/1 + 1 = 31
+        params_fr = _make_params(
+            pstart=-30.0, pstop=30.0, delp=1.0,
+            tstart=75.0, tstop=105.0, delt=1.0,
+        )
+
+        pol_upper = pol.upper()
+        run_te    = pol_upper in ("TE-Z", "BOTH")
+        run_tm    = pol_upper in ("TM-Z", "BOTH")
+
+        # ── run all 6 solver calls ────────────────────────────────────────────
+        print("[3/3] Running Physical Optics solver ...")
         warnings.filterwarnings("ignore")
-        plot_name, fig_name, file_name = rcs_monostatic(param_list, coord_list)
-        print(f"\n      plot → {plot_name}")
-        print(f"      fig  → {fig_name}")
-        print(f"      dat  → {file_name}\n")
 
-        # ── STEP 7: copy results to project Results/RCS/ ──────────────────────
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        stem      = os.path.splitext(stl_filename)[0]   # "aircraft"
-        base      = f"rcs_{stem}_{timestamp}"
+        raw = {}   # keyed by "AZ_TE", "AZ_TM", "EL_TE", "EL_TM", "FR_TE", "FR_TM"
 
-        out_plot = os.path.join(results_dir, base + "_plot.png")
-        out_fig  = os.path.join(results_dir, base + "_3d.jpg")
-        out_dat  = os.path.join(results_dir, base + "_results.dat")
+        if run_te:
+            print("  Run 1/6  TE-z  Azimuth   cut ...")
+            raw["AZ_TE"] = _run_single_pol(params_az, coord_list, ipol=1)
+            print("  Run 3/6  TE-z  Elevation cut ...")
+            raw["EL_TE"] = _run_single_pol(params_el, coord_list, ipol=1)
+            print("  Run 5/6  TE-z  Frontal   2-D ...")
+            raw["FR_TE"] = _run_single_pol(params_fr, coord_list, ipol=1)
 
-        if os.path.isfile(plot_name):
-            shutil.copy2(plot_name, out_plot)
+        if run_tm:
+            print("  Run 2/6  TM-z  Azimuth   cut ...")
+            raw["AZ_TM"] = _run_single_pol(params_az, coord_list, ipol=0)
+            print("  Run 4/6  TM-z  Elevation cut ...")
+            raw["EL_TM"] = _run_single_pol(params_el, coord_list, ipol=0)
+            print("  Run 6/6  TM-z  Frontal   2-D ...")
+            raw["FR_TM"] = _run_single_pol(params_fr, coord_list, ipol=0)
+
+        # ── copy dat files to results folder ─────────────────────────────────
+        ts   = datetime.now().strftime("%Y%m%d_%H%M%S")
+        stem = os.path.splitext(stl_filename)[0]
+
+        def _cp(src, dst):
+            if src and os.path.isfile(src):
+                shutil.copy2(src, dst)
+                return dst
+            return None
+
+        dat_paths = {}
+        for tag, tup in raw.items():
+            if tup:
+                dst = os.path.join(results_dir, f"{stem}_{tag}_{ts}.dat")
+                dat_paths[tag] = _cp(tup[2], dst)
+
+        # ── save 3-D figure once (from the first available run) ───────────────
+        for tag in ("AZ_TE", "AZ_TM", "EL_TE", "EL_TM"):
+            if tag in raw and raw[tag] and raw[tag][1] and os.path.isfile(raw[tag][1]):
+                dst = os.path.join(results_dir, f"aircraft_3D_{ts}.jpg")
+                out["fig_3d"] = _cp(raw[tag][1], dst)
+                break
+
+        # ── parse all dat files ───────────────────────────────────────────────
+        parsed = {}
+        for tag, path in dat_paths.items():
+            if path:
+                parsed[tag] = _parse_dat(path)
+
+        # ── shared polar scale ────────────────────────────────────────────────
+        # Both azimuth polar maps use the same dBsm range so TE-z and TM-z
+        # are directly comparable at a glance.
+        # TE-z co-pol = Sφ,  TM-z co-pol = Sθ
+        copol_for_scale = []
+        if "AZ_TE" in parsed and len(parsed["AZ_TE"]["sph"]):
+            copol_for_scale.append(parsed["AZ_TE"]["sph"])
+        if "AZ_TM" in parsed and len(parsed["AZ_TM"]["sth"]):
+            copol_for_scale.append(parsed["AZ_TM"]["sth"])
+
+        if copol_for_scale:
+            gmax = np.ceil(max(np.nanmax(a) for a in copol_for_scale) / 10) * 10
+            gmin = gmax - 60.0
         else:
-            print(f"  Warning: plot file not found at {plot_name}")
-            out_plot = None
+            gmax, gmin = 20.0, -40.0
 
-        if os.path.isfile(fig_name):
-            shutil.copy2(fig_name, out_fig)
+        wl = 0.3 / freq   # wavelength in metres
+
+        # ── AZIMUTH LINEAR PLOT (both polarisations, one figure) ──────────────
+        # TE-z dominant output = Sph.  TM-z dominant output = Sth.
+        # Cross-pol (~0 for symmetric aircraft) is not shown — it adds no info.
+        if "AZ_TE" in parsed and "AZ_TM" in parsed:
+            d_te = parsed["AZ_TE"]
+            d_tm = parsed["AZ_TM"]
+            x_te, idx_te = _phi_to_display(d_te["phi_vals"])
+            x_tm, idx_tm = _phi_to_display(d_tm["phi_vals"])
+            fname = f"Linear_Azimuth_Cut_90deg_{ts}.png"
+            fpath = os.path.join(results_dir, fname)
+            _plot_dual_linear(
+                x_te, d_te["sph"][idx_te], d_te["sth"][idx_te],
+                x_tm, d_tm["sth"][idx_tm], d_tm["sph"][idx_tm],
+                fpath,
+                title    = "Monostatic RCS — Azimuth Cut",
+                subtitle = (f"θ = 90°    f = {freq:.1f} GHz    "
+                            f"λ = {wl:.4f} m    "
+                            f"nose at 0°,  tail at ±180°"),
+                xlabel   = "Azimuth Angle  φ (deg)",
+            )
+            out["linear_az"] = fpath
+            
+            
+        # ── AZIMUTH POLAR MAPS ────────────────────────────────────────────────
+        # Co-pol only.  Cross-pol is not plotted here (near zero → blank map).
+        if "AZ_TE" in parsed and len(parsed["AZ_TE"]["sph"]):
+            d = parsed["AZ_TE"]
+            phi_arr = d["phi_vals"].copy()
+            # remove duplicate 360° endpoint if present
+            if len(phi_arr) > 1 and np.isclose(phi_arr[-1], phi_arr[0] + 360.0):
+                phi_arr = phi_arr[:-1]
+            sph_arr = d["sph"][:len(phi_arr)]
+            fname = f"Polar_TE-z_Azimuth_Cut_90deg_{ts}.png"
+            fpath = os.path.join(results_dir, fname)
+            _plot_polar(
+                phi_arr, sph_arr, d["sth"][:len(phi_arr)], fpath,
+                title   = "Polar RCS Map — TE-z polarisation",
+                subtitle= (f"Azimuth cut  θ = 90°    "
+                           f"f = {freq:.1f} GHz    λ = {wl:.4f} m\n"
+                           f"scale: {gmin:.0f} dBsm (centre) → {gmax:.0f} dBsm (rim)"),
+                color   = "steelblue",
+                rcs_min = gmin,
+                rcs_max = gmax,
+            )
+            out["polar_az_te"] = fpath
+
+        if "AZ_TM" in parsed and len(parsed["AZ_TM"]["sth"]):
+            d = parsed["AZ_TM"]
+            phi_arr = d["phi_vals"].copy()
+            if len(phi_arr) > 1 and np.isclose(phi_arr[-1], phi_arr[0] + 360.0):
+                phi_arr = phi_arr[:-1]
+            sth_arr = d["sth"][:len(phi_arr)]
+            fname = f"Polar_TM-z_Azimuth_Cut_90deg_{ts}.png"
+            fpath = os.path.join(results_dir, fname)
+            _plot_polar(
+                phi_arr, sth_arr, d["sph"][:len(phi_arr)], fpath,
+                title   = "Polar RCS Map — TM-z polarisation",
+                subtitle= (f"Azimuth cut  θ = 90°    "
+                           f"f = {freq:.1f} GHz    λ = {wl:.4f} m\n"
+                           f"scale: {gmin:.0f} dBsm (centre) → {gmax:.0f} dBsm (rim)"),
+                color   = "crimson",
+                rcs_min = gmin,
+                rcs_max = gmax,
+            )
+            out["polar_az_tm"] = fpath
+
+        # ── ELEVATION LINEAR PLOT (both polarisations, one figure) ────────────
+        # x-axis: elevation = 90° − θ
+        #   θ=0°   → elevation=+90° (directly above)
+        #   θ=90°  → elevation=0°   (horizontal, head-on)
+        #   θ=180° → elevation=−90° (directly below)
+        if "EL_TE" in parsed and "EL_TM" in parsed:
+            d_te = parsed["EL_TE"]
+            d_tm = parsed["EL_TM"]
+            el_te = 90.0 - d_te["theta_vals"]
+            el_tm = 90.0 - d_tm["theta_vals"]
+            idx_te = np.argsort(el_te)
+            idx_tm = np.argsort(el_tm)
+            fname = f"Linear_Elevation_Cut_0deg_{ts}.png"
+            fpath = os.path.join(results_dir, fname)
+            _plot_dual_linear(
+                el_te[idx_te], d_te["sph"][idx_te], d_te["sth"][idx_te],
+                el_tm[idx_tm], d_tm["sth"][idx_tm], d_tm["sph"][idx_tm],
+                fpath,
+                title    = "Monostatic RCS — Elevation Cut (nose direction)",
+                subtitle = (f"φ = 0°    f = {freq:.1f} GHz    "
+                            f"λ = {wl:.4f} m    "
+                            f"0° = horizontal,  +90° = above,  −90° = below"),
+                xlabel   = "Elevation Angle (deg)",
+            )
+            out["linear_el"] = fpath
+
+        # ── ELEVATION POLAR PLOTS ─────────────────────────────────────────────
+        # The aircraft is symmetric so the elevation cut at φ=0° (nose) is
+        # mirrored to create a full-circle polar: right half = above-to-below
+        # going clockwise, left half = mirror.
+        # Polar angle mapping: el_polar = 90° − elevation
+        #   elevation=+90° → polar=0°   (top = directly above)
+        #   elevation= 0°  → polar=90°  (right = horizontal)
+        #   elevation=−90° → polar=180° (bottom = directly below)
+        # Mirror for left side: angle_left = 360° − angle_right
+
+        def _elevation_to_polar_circle(el_deg, rcs_dBsm):
+            """
+            Map elevation [-90,+90] to a full 360° polar circle by mirroring.
+            Returns (phi_full, rcs_full) suitable for _plot_polar().
+            """
+            idx       = np.argsort(el_deg)           # sort low to high
+            el_sorted = el_deg[idx]
+            rc_sorted = rcs_dBsm[idx]
+            # right half: el → polar angle
+            phi_right = 90.0 - el_sorted             # -90→180°, 0→90°, 90→0°
+            # left half: mirror (360 - phi_right), reversed so it flows continuously
+            phi_left  = 360.0 - phi_right[-2:0:-1]
+            rc_left   = rc_sorted[-2:0:-1]
+            phi_full  = np.concatenate([phi_right, phi_left])
+            rcs_full  = np.concatenate([rc_sorted, rc_left])
+            return phi_full, rcs_full
+
+        # shared scale for the two elevation polar maps
+        el_copol = []
+        if "EL_TE" in parsed and len(parsed["EL_TE"]["sph"]):
+            el_copol.append(parsed["EL_TE"]["sph"])
+        if "EL_TM" in parsed and len(parsed["EL_TM"]["sth"]):
+            el_copol.append(parsed["EL_TM"]["sth"])
+        if el_copol:
+            el_gmax = np.ceil(max(np.nanmax(a) for a in el_copol) / 10) * 10
+            el_gmin = el_gmax - 60.0
         else:
-            print(f"  Warning: fig file not found at {fig_name}")
-            out_fig = None
+            el_gmax, el_gmin = 20.0, -40.0
 
-        if os.path.isfile(file_name):
-            shutil.copy2(file_name, out_dat)
-        else:
-            print(f"  Warning: data file not found at {file_name}")
-            out_dat = None
+        el_spokes = {
+            0:   "above\n+90°",  45: "+45°",  90:  "horiz\n0°",
+            135: "−45°",        180: "below\n−90°",
+            225: "−45°",        270: "horiz\n0°",  315: "+45°",
+        }
 
-        print(f"Results saved to: {results_dir}")
-        if out_plot: print(f"  RCS plot  : {out_plot}")
-        if out_fig:  print(f"  3D figure : {out_fig}")
-        if out_dat:  print(f"  Data file : {out_dat}")
-        
-        
-        
-        # ── STEP 8: polar plot ─────────────────────────────────────────────────
-        out_polar = None
-        if out_dat and os.path.isfile(out_dat):
-            out_polar = os.path.join(results_dir, base + "_polar.png")
-            try:
-                _generate_polar_plot(
-                    dat_path    = out_dat,
-                    output_path = out_polar,
-                    freq        = freq,
-                    theta       = tstart,
-                    stl_name    = stl_filename,
-                )
-                print(f"  Polar plot: {out_polar}")
-            except Exception as e:
-                import traceback
-                print(f"  Warning: polar plot failed — {e}")
-                traceback.print_exc()
-                out_polar = None
+        if "EL_TE" in parsed and len(parsed["EL_TE"]["theta_vals"]):
+            d    = parsed["EL_TE"]
+            el   = 90.0 - d["theta_vals"]
+            ph_c, rc_c = _elevation_to_polar_circle(el, d["sph"])
+            fname = f"Polar_TE-z_Elevation_Cut_0deg_{ts}.png"
+            fpath = os.path.join(results_dir, fname)
+            ph_xp_te, rx_xp_te = _elevation_to_polar_circle(el, d["sth"])
+            _plot_polar(
+                ph_c, rc_c, rx_xp_te, fpath,
+                title    = "Polar RCS Map — TE-z polarisation",
+                subtitle = (f"Elevation cut  φ = 0° (nose)    "
+                            f"f = {freq:.1f} GHz    λ = {wl:.4f} m\n"
+                            f"scale: {el_gmin:.0f} dBsm (centre) "
+                            f"→ {el_gmax:.0f} dBsm (rim)"),
+                color    = "steelblue",
+                rcs_min  = el_gmin,
+                rcs_max  = el_gmax,
+                spoke_override = el_spokes,
+            )
+            out["polar_el_te"] = fpath
+
+        if "EL_TM" in parsed and len(parsed["EL_TM"]["theta_vals"]):
+            d    = parsed["EL_TM"]
+            el   = 90.0 - d["theta_vals"]
+            ph_c, rc_c = _elevation_to_polar_circle(el, d["sth"])
+            fname = f"Polar_TM-z_Elevation_Cut_0deg_{ts}.png"
+            fpath = os.path.join(results_dir, fname)
+            ph_xp_tm, rx_xp_tm = _elevation_to_polar_circle(el, d["sph"])
+            _plot_polar(
+                ph_c, rc_c, rx_xp_tm, fpath,
+                title    = "Polar RCS Map — TM-z polarisation",
+                subtitle = (f"Elevation cut  φ = 0° (nose)    "
+                            f"f = {freq:.1f} GHz    λ = {wl:.4f} m\n"
+                            f"scale: {el_gmin:.0f} dBsm (centre) "
+                            f"→ {el_gmax:.0f} dBsm (rim)"),
+                color    = "crimson",
+                rcs_min  = el_gmin,
+                rcs_max  = el_gmax,
+                spoke_override = el_spokes,
+            )
+            out["polar_el_tm"] = fpath
+        # ── MEAN RCS TABLE ────────────────────────────────────────────────────
+        # 6 rows in fixed order.  Each value = mean total RCS (dBsm).
+        # Frontal sector rows (FR_TE, FR_TM) use the 2-D grid
+        # az ±30° / el ±15° — the most important stealth metric.
+        mean_rows = []
+        for tag, label in [
+            ("AZ_TE", "Azimuth Cut  θ=90°           TE-z"),
+            ("AZ_TM", "Azimuth Cut  θ=90°           TM-z"),
+            ("EL_TE", "Elevation Cut  φ=0° (nose)   TE-z"),
+            ("EL_TM", "Elevation Cut  φ=0° (nose)   TM-z"),
+            ("FR_TE", "Frontal ±30° az / ±15° el    TE-z"),
+            ("FR_TM", "Frontal ±30° az / ±15° el    TM-z"),
+        ]:
+            if tag in parsed and len(parsed[tag]["sth"]):
+                d = parsed[tag]
+                mean_rows.append((label, _mean_total(d["sth"], d["sph"])))
+            else:
+                mean_rows.append((label, float("nan")))
+
+        if any(np.isfinite(v) for _, v in mean_rows):
+            fname = f"MeanRCS_Table_{ts}.png"
+            fpath = os.path.join(results_dir, fname)
+            _save_mean_table(mean_rows, fpath, freq, stl_filename)
+            out["mean_table"] = fpath
+
+        # ── summary ───────────────────────────────────────────────────────────
+        print(f"\n  All results saved to: {results_dir}")
+        for k, v in out.items():
+            if v and k != "results_dir":
+                print(f"    {k:<18}: {os.path.basename(v)}")
+
     finally:
-        # Restore working directory even if an exception was raised.
-        # If we don't do this, any code after a crash would operate from
-        # inside the OpenRCS directory and break other relative paths.
         os.chdir(original_cwd)
 
     print("\n✅ OpenRCS pipeline complete.\n")
-    return {
-        "plot":        out_plot,
-        "fig":         out_fig,
-        "dat":         out_dat,
-        "polar":        out_polar,
-        "results_dir": results_dir,
-    }
+    return out
 
 
 # =============================================================================
-# CLI / STANDALONE ENTRY POINT
+# CLI
 # =============================================================================
 
 if __name__ == "__main__":
-    # When run directly, use the default STL file and default RCS settings.
-    # Useful for testing the RCS pipeline independently of OpenVSP.
-    default_stl = os.path.join(_STL_DIR, "aircraft.stl")
-    run_openrcs_pipeline(stl_path=default_stl)
+    run_openrcs_pipeline(stl_path=os.path.join(_STL_DIR, "aircraft.stl"))
