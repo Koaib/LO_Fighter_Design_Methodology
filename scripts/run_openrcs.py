@@ -319,7 +319,8 @@ def _plot_dual_linear(x_arr_te, copol_te, xpol_te,
     # y-axis window based on co-pol peaks only
     # (cross-pol near -100 dBsm would otherwise collapse the useful range)
     ymax = float(np.nanmax([np.nanmax(copol_te), np.nanmax(copol_tm)])) + 5.0
-    ymin = ymax - 65.0
+    #ymin = ymax - 65.0
+    # Setting min as -110 to show the cross pol RCS
     ymin = -110.0
     ax.set_ylim(ymin, ymax)
 
