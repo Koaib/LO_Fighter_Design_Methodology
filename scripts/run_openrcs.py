@@ -85,15 +85,16 @@ RUNS (if pol="both"):
   6  TM-z  Frontal 2-D    φ=−30→30°  θ=75→105°  (mean table only, no plot)
 
 OUTPUT FILES:
-  Linear_TE-z_Azimuth_Cut_90deg_<ts>.png     TE-z Sφ (co-pol) + Sθ (cross-pol) vs φ
-  Linear_TM-z_Azimuth_Cut_90deg_<ts>.png     TM-z Sθ (co-pol) + Sφ (cross-pol) vs φ
-  Polar_TE-z_Azimuth_Cut_90deg_<ts>.png      TE-z Sφ co-pol polar map
-  Polar_TM-z_Azimuth_Cut_90deg_<ts>.png      TM-z Sθ co-pol polar map
-  Linear_TE-z_Elevation_Cut_0deg_<ts>.png    TE-z vs elevation −90°→+90°
-  Linear_TM-z_Elevation_Cut_0deg_<ts>.png    TM-z vs elevation −90°→+90°
-  MeanRCS_Table_<ts>.png                     6-row mean RCS summary table
+  Linear_Azimuth_Cut_90deg_<ts>.png          TE-z and/or TM-z co+cross-pol vs φ
+  Polar_TE-z_Azimuth_Cut_90deg_<ts>.png      TE-z polar map (if TE-z run)
+  Polar_TM-z_Azimuth_Cut_90deg_<ts>.png      TM-z polar map (if TM-z run)
+  Linear_Elevation_Cut_0deg_<ts>.png         TE-z and/or TM-z vs elevation
+  Polar_TE-z_Elevation_Cut_0deg_<ts>.png     TE-z elevation polar (if TE-z run)
+  Polar_TM-z_Elevation_Cut_0deg_<ts>.png     TM-z elevation polar (if TM-z run)
+  MeanRCS_Table_<ts>.png                     mean RCS table (runs that were done)
   aircraft_3D_<ts>.jpg                       3-D facet model (once only)
-
+  <stem>_<TAG>_<ts>.dat                      raw data per run (AZ_TE, EL_TM, etc.)
+  
 POLARISATION CONVENTION:
   TE-z  (ipol=1, phi-polarised):   dominant co-pol scattered component = Sφ
   TM-z  (ipol=0, theta-polarised): dominant co-pol scattered component = Sθ
@@ -285,42 +286,39 @@ def _phi_to_display(phi_arr: np.ndarray):
 
 def _plot_dual_linear(x_arr_te, copol_te, xpol_te,
                       x_arr_tm, copol_tm, xpol_tm,
-                      output_path, *, title, subtitle, xlabel) -> None:
+                      output_path, *, title, subtitle, xlabel,
+                      only_te=False, only_tm=False) -> None:
     """
-    Four curves on one Cartesian plot:
-      TE-z co-pol  (Sph) — blue solid
-      TE-z cross-pol (Sth) — blue dashed  (near zero for symmetric aircraft)
-      TM-z co-pol  (Sth) — red solid
-      TM-z cross-pol (Sph) — red dashed  (near zero for symmetric aircraft)
+    Cartesian RCS vs angle plot.
+
+    If both polarisations are available: four curves (TE-z co+cross, TM-z co+cross).
+    If only one polarisation was run: two curves (co-pol solid, cross-pol dashed).
 
     Parameters
     ----------
-    x_arr_te : x-axis array for TE-z run (phi or elevation degrees)
-    copol_te : TE-z co-pol component = Sph (dBsm)
-    xpol_te  : TE-z cross-pol component = Sth (dBsm)
-    x_arr_tm : x-axis array for TM-z run
-    copol_tm : TM-z co-pol component = Sth (dBsm)
-    xpol_tm  : TM-z cross-pol component = Sph (dBsm)
+    only_te : True when TM-z was not run — plot TE-z only
+    only_tm : True when TE-z was not run — plot TM-z only
     """
     fig, ax = plt.subplots(figsize=(11, 5), facecolor="white")
     ax.set_facecolor("white")
 
-    ax.plot(x_arr_te, copol_te, color="steelblue", lw=1.0,
-            label="TE-z  Sφ  (co-pol)")
-    ax.plot(x_arr_te, xpol_te,  color="steelblue", lw=0.8,
-            linestyle="--", alpha=0.5,
-            label="TE-z  Sθ  (cross-pol)")
-    ax.plot(x_arr_tm, copol_tm, color="crimson",   lw=1.0,
-            label="TM-z  Sθ  (co-pol)")
-    ax.plot(x_arr_tm, xpol_tm,  color="crimson",   lw=0.8,
-            linestyle="--", alpha=0.5,
-            label="TM-z  Sφ  (cross-pol)")
+    if not only_tm:
+        ax.plot(x_arr_te, copol_te, color="steelblue", lw=1.0,
+                label="TE-z  Sφ  (co-pol)")
+        ax.plot(x_arr_te, xpol_te, color="steelblue", lw=0.8,
+                linestyle="--", alpha=0.5,
+                label="TE-z  Sθ  (cross-pol)")
 
-    # y-axis window based on co-pol peaks only
-    # (cross-pol near -100 dBsm would otherwise collapse the useful range)
+    if not only_te:
+        ax.plot(x_arr_tm, copol_tm, color="crimson", lw=1.0,
+                label="TM-z  Sθ  (co-pol)")
+        ax.plot(x_arr_tm, xpol_tm, color="crimson", lw=0.8,
+                linestyle="--", alpha=0.5,
+                label="TM-z  Sφ  (cross-pol)")
+
     ymax = float(np.nanmax([np.nanmax(copol_te), np.nanmax(copol_tm)])) + 5.0
     #ymin = ymax - 65.0
-    # Setting min as -110 to show the cross pol RCS
+    # changed min y so crosspol component also dispalys (-100 dBsm)
     ymin = -110.0
     ax.set_ylim(ymin, ymax)
 
@@ -740,9 +738,13 @@ def run_openrcs_pipeline(
         # ── AZIMUTH LINEAR PLOT (both polarisations, one figure) ──────────────
         # TE-z dominant output = Sph.  TM-z dominant output = Sth.
         # Cross-pol (~0 for symmetric aircraft) is not shown — it adds no info.
-        if "AZ_TE" in parsed and "AZ_TM" in parsed:
-            d_te = parsed["AZ_TE"]
-            d_tm = parsed["AZ_TM"]
+        if "AZ_TE" in parsed or "AZ_TM" in parsed:
+            only_te_az = "AZ_TE" in parsed and "AZ_TM" not in parsed
+            only_tm_az = "AZ_TM" in parsed and "AZ_TE" not in parsed
+            d_te = parsed.get("AZ_TE")
+            d_tm = parsed.get("AZ_TM")
+            if d_te is None: d_te = d_tm
+            if d_tm is None: d_tm = d_te
             x_te, idx_te = _phi_to_display(d_te["phi_vals"])
             x_tm, idx_tm = _phi_to_display(d_tm["phi_vals"])
             fname = f"Linear_Azimuth_Cut_90deg_{ts}.png"
@@ -756,6 +758,8 @@ def run_openrcs_pipeline(
                             f"λ = {wl:.4f} m    "
                             f"nose at 0°,  tail at ±180°"),
                 xlabel   = "Azimuth Angle  φ (deg)",
+                only_te  = only_te_az,
+                only_tm  = only_tm_az,
             )
             out["linear_az"] = fpath
             
@@ -808,9 +812,13 @@ def run_openrcs_pipeline(
         #   θ=0°   → elevation=+90° (directly above)
         #   θ=90°  → elevation=0°   (horizontal, head-on)
         #   θ=180° → elevation=−90° (directly below)
-        if "EL_TE" in parsed and "EL_TM" in parsed:
-            d_te = parsed["EL_TE"]
-            d_tm = parsed["EL_TM"]
+        if "EL_TE" in parsed or "EL_TM" in parsed:
+            only_te_el = "EL_TE" in parsed and "EL_TM" not in parsed
+            only_tm_el = "EL_TM" in parsed and "EL_TE" not in parsed
+            d_te = parsed.get("EL_TE")
+            d_tm = parsed.get("EL_TM")
+            if d_te is None: d_te = d_tm
+            if d_tm is None: d_tm = d_te
             el_te = 90.0 - d_te["theta_vals"]
             el_tm = 90.0 - d_tm["theta_vals"]
             idx_te = np.argsort(el_te)
@@ -826,9 +834,11 @@ def run_openrcs_pipeline(
                             f"λ = {wl:.4f} m    "
                             f"0° = horizontal,  +90° = above,  −90° = below"),
                 xlabel   = "Elevation Angle (deg)",
+                only_te  = only_te_el,
+                only_tm  = only_tm_el,
             )
             out["linear_el"] = fpath
-
+            
         # ── ELEVATION POLAR PLOTS ─────────────────────────────────────────────
         # The aircraft is symmetric so the elevation cut at φ=0° (nose) is
         # mirrored to create a full-circle polar: right half = above-to-below

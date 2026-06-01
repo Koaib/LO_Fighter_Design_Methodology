@@ -215,9 +215,6 @@ def run_vspaero_aero(
     print("   [DEBUG] wing_id =", wing_id)        # ← add this
 
     print("\n🔄 Running VSPAero VLM analysis...")
-    ...
-
-    print("\n🔄 Running VSPAero VLM analysis...")
     print(f"   Alpha : {alpha_start}° → {alpha_end}°  ({alpha_npts} points)")
     print(f"   Mach  : {mach}   Re: {re_cref:.2e}\n")
 
