@@ -26,96 +26,114 @@ RCS SETTINGS section at the bottom or pass them into run_openrcs_rcs().
 
 import vsp_setup  
 import openvsp as vsp
+import os
+
+
+"""
+Single entry point for the LO Fighter Design Methodology pipeline.
+
+INPUT_MODE options:
+  "generate"   — build geometry from scratch using OpenVSP parameters below
+  "import_stl" — skip geometry, load an existing STL from Geometry/
+  "import_vsp3"— load an existing .vsp3 from Geometry/, then export STL
+"""
 
 # =========================
-# INITIALIZE
+# INPUT MODE — edit this
 # =========================
 
-vsp.VSPCheckSetup()
-vsp.ClearVSPModel()
+INPUT_MODE    = "import_vsp3"       # "generate" | "import_stl" | "import_vsp3"
+IMPORT_FILE   = "F35A_subsonic_meters_simplified_OML_v3.vsp3"  # filename inside Geometry/ folder (for import modes)
 
 # =========================
-# FUSELAGE
+# GEOMETRY FOLDER PATH
 # =========================
 
-fuselage = vsp.AddGeom("FUSELAGE")
-vsp.SetParmVal(fuselage, "Length", "Design", 10.0)
+ROOT_DIR     = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+GEOMETRY_DIR = os.path.join(ROOT_DIR, "Geometry")
+os.makedirs(GEOMETRY_DIR, exist_ok=True)
 
 # =========================
-# MAIN WING
+# BRANCH ON INPUT MODE
 # =========================
 
-wing = vsp.AddGeom("WING")
-vsp.SetParmVal(wing, "Span", "XSec_1", 12.0)
-vsp.SetParmVal(wing, "Root_Chord", "XSec_1", 2.5)
-vsp.SetParmVal(wing, "Tip_Chord", "XSec_1", 1.2)
-vsp.SetParmVal(wing, "Sweep", "XSec_1", 25.0)
-vsp.SetParmVal(wing, "Dihedral", "XSec_1", 5.0)
+if INPUT_MODE == "import_stl":
+    stl_file = os.path.join(GEOMETRY_DIR, IMPORT_FILE)
+    if not os.path.isfile(stl_file):
+        raise FileNotFoundError(f"STL not found: {stl_file}")
+    # Copy into STL_Files/ where run_openrcs expects it
+    import shutil
+    dest = vsp_setup.stl_path(IMPORT_FILE)
+    shutil.copy2(stl_file, dest)
+    print(f"✅ Imported STL: {IMPORT_FILE}")
+    stl_for_rcs = IMPORT_FILE
 
-# Position wing
-vsp.SetParmVal(wing, "X_Rel_Location", "XForm", 4.0)
-vsp.SetParmVal(wing, "Z_Rel_Location", "XForm", 0.0)
+elif INPUT_MODE == "import_vsp3":
+    import openvsp as vsp
+    vsp3_file = os.path.join(GEOMETRY_DIR, IMPORT_FILE)
+    if not os.path.isfile(vsp3_file):
+        raise FileNotFoundError(f"VSP3 not found: {vsp3_file}")
+    vsp.VSPCheckSetup()
+    vsp.ClearVSPModel()
+    vsp.ReadVSPFile(vsp3_file)
+    vsp.Update()
+    # Derive STL name from the vsp3 filename
+    stl_name = os.path.splitext(IMPORT_FILE)[0] + ".stl"
+    vsp.ExportFile(vsp_setup.stl_path(stl_name), vsp.SET_ALL, vsp.EXPORT_STL)
+    print(f"✅ Loaded VSP3 and exported STL: {stl_name}")
+    stl_for_rcs = stl_name
+
+else:  # "generate"
+    import openvsp as vsp
+    vsp.VSPCheckSetup()
+    vsp.ClearVSPModel()
+
+    # =====================
+    # FUSELAGE
+    # =====================
+    fuselage = vsp.AddGeom("FUSELAGE")
+    vsp.SetParmVal(fuselage, "Length", "Design", 10.0)
+
+    # =====================
+    # MAIN WING
+    # =====================
+    wing = vsp.AddGeom("WING")
+    vsp.SetParmVal(wing, "Span",       "XSec_1", 12.0)
+    vsp.SetParmVal(wing, "Root_Chord", "XSec_1",  2.5)
+    vsp.SetParmVal(wing, "Tip_Chord",  "XSec_1",  1.2)
+    vsp.SetParmVal(wing, "Sweep",      "XSec_1", 25.0)
+    vsp.SetParmVal(wing, "Dihedral",   "XSec_1",  5.0)
+    vsp.SetParmVal(wing, "X_Rel_Location", "XForm", 4.0)
+    vsp.SetParmVal(wing, "Z_Rel_Location", "XForm", 0.0)
+
+    # =====================
+    # HORIZONTAL TAIL
+    # =====================
+    htail = vsp.AddGeom("WING")
+    vsp.SetParmVal(htail, "Span",       "XSec_1",  5.0)
+    vsp.SetParmVal(htail, "Root_Chord", "XSec_1",  1.2)
+    vsp.SetParmVal(htail, "Tip_Chord",  "XSec_1",  0.6)
+    vsp.SetParmVal(htail, "Sweep",      "XSec_1", 30.0)
+    vsp.SetParmVal(htail, "X_Rel_Location", "XForm", 8.5)
+    vsp.SetParmVal(htail, "Z_Rel_Location", "XForm", 0.2)
+
+    vsp.Update()
+
+    vsp.WriteVSPFile(vsp_setup.vsp_path("aircraft.vsp3"))
+    vsp.ExportFile(vsp_setup.stp_path("aircraft.stp"), vsp.SET_ALL, vsp.EXPORT_STEP)
+    vsp.ExportFile(vsp_setup.stl_path("aircraft.stl"), vsp.SET_ALL, vsp.EXPORT_STL)
+    print("✅ Aircraft created and saved successfully!")
+    stl_for_rcs = "aircraft.stl"
 
 # =========================
-# HORIZONTAL TAIL
+# RCS PIPELINE
 # =========================
 
-htail = vsp.AddGeom("WING")
-vsp.SetParmVal(htail, "Span", "XSec_1", 5.0)
-vsp.SetParmVal(htail, "Root_Chord", "XSec_1", 1.2)
-vsp.SetParmVal(htail, "Tip_Chord", "XSec_1", 0.6)
-vsp.SetParmVal(htail, "Sweep", "XSec_1", 30.0)
-
-# Position tail
-vsp.SetParmVal(htail, "X_Rel_Location", "XForm", 8.5)
-vsp.SetParmVal(htail, "Z_Rel_Location", "XForm", 0.2)
-
-# =========================
-# UPDATE MODEL
-# =========================
-
-vsp.Update()
-
-# =========================
-# SAVE FILE (VSP,STP,STL)
-# =========================
-
-# Option 1: Manual name
-vsp.WriteVSPFile(vsp_setup.vsp_path("aircraft.vsp3"))
-vsp.ExportFile(vsp_setup.stp_path("aircraft.stp"), vsp.SET_ALL, vsp.EXPORT_STEP)
-vsp.ExportFile(vsp_setup.stl_path("aircraft.stl"), vsp.SET_ALL, vsp.EXPORT_STL)
-
-
-# Option 2: Auto timestamped name
-# vsp.WriteVSPFile(vsp_setup.vsp_path(vsp_setup.auto_name("aircraft")))
-
-print("✅ Aircraft created and saved successfully!")
-
-
-# =========================
-# TRIGGER RCS PIPELINE
-# =========================
-
-# RCS SETTINGS — edit these to change the simulation without touching any
-# other file.  These are the same defaults used in the old run_rcs.m script.
-#
-#   freq   : radar frequency in GHz
-#   pol    : 'TE-z'  = phi-polarised   (matches old 'Phi' setting in POFACETS)
-#            'TM-z'  = theta-polarised
-#   pstart / pstop / delp  : phi sweep in degrees
-#   tstart / tstop / delt  : theta sweep in degrees
-#                            tstart == tstop → azimuth (phi) cut at fixed theta
-# =============================================================================
- 
 vsp_setup.run_openrcs_rcs(
-    stl_filename = "aircraft.stl",
-    freq         = 12.0,          # radar frequency in GHz
-    pol          = "TE-z",        # "TE-z" / "TM-z" / "both"
-    cuts         = "azimuth",                 # "azimuth" / "elevation" / "frontal"
-                                          # "azimuth+elevation"
-                                          # "azimuth+frontal"
-                                          # "elevation+frontal"
-                                          # "all"
+    stl_filename = stl_for_rcs,
+    freq         = 12.0,
+    pol          = "TE-z",
+    cuts         = "azimuth",
 )
 
 # # =========================
