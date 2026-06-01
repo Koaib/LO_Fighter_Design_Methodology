@@ -110,7 +110,12 @@ print("✅ Aircraft created and saved successfully!")
 vsp_setup.run_openrcs_rcs(
     stl_filename = "aircraft.stl",
     freq         = 12.0,          # radar frequency in GHz
-    pol          = "both",        # "TE-z" / "TM-z" / "both"
+    pol          = "TE-z",        # "TE-z" / "TM-z" / "both"
+    cuts         = "azimuth",                 # "azimuth" / "elevation" / "frontal"
+                                          # "azimuth+elevation"
+                                          # "azimuth+frontal"
+                                          # "elevation+frontal"
+                                          # "all"
 )
 
 # # =========================

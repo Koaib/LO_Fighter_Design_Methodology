@@ -131,20 +131,38 @@ def auto_name(prefix: str = "case") -> str:
 # =============================================================================
  
 def run_openrcs_rcs(
-    stl_filename: str = "aircraft.stl",
-    freq: float       = 12.0,
-    pol: str          = "both",   # "TE-z", "TM-z", or "both"
+    stl_filename : str = "aircraft.stl",
+    freq         : float = 12.0,
+    pol          : str = "both",   # "TE-z", "TM-z", or "both"
+    cuts         : str = "all",    # see options below
 ) -> None:
     """
-    Launch the OpenRCS pipeline.  Angle sweeps are fixed inside the pipeline:
-      Azimuth cut  : θ = 90°, φ = 0→360°
-      Elevation cut: φ = 0°,  θ = 0→180°
-      Frontal 2-D  : φ = ±30°, θ = 75→105°  (mean table only)
+    Launch the OpenRCS pipeline.
+
+    pol options:
+        "TE-z"  — phi-polarised only
+        "TM-z"  — theta-polarised only
+        "both"  — run both (recommended)
+
+    cuts options:
+        "azimuth"            — azimuth cut only     (θ=90°, φ=0→360°)
+        "elevation"          — elevation cut only   (φ=0°,  θ=0→180°)
+        "frontal"            — frontal 2-D only     (mean table only, no plots)
+        "azimuth+elevation"  — azimuth + elevation
+        "azimuth+frontal"    — azimuth + frontal mean
+        "elevation+frontal"  — elevation + frontal mean
+        "all"                — all three (default)
+
+    Outputs depend on which cuts are selected:
+        azimuth   → 1 linear plot, 2 polar maps, means for azimuth runs
+        elevation → 1 linear plot, 2 polar maps, means for elevation runs
+        frontal   → mean table only (no plots)
+        mean table is only generated when at least one cut has been run
     """
     stl_full = os.path.join(STL_FILES, stl_filename)
     print("\n🔄 Launching OpenRCS ...")
     print(f"   STL       : {stl_full}")
-    print(f"   Frequency : {freq} GHz    Polarisation: {pol}\n")
+    print(f"   Frequency : {freq} GHz    Pol: {pol}    Cuts: {cuts}\n")
 
     try:
         import run_openrcs
@@ -153,6 +171,7 @@ def run_openrcs_rcs(
             results_dir = RESULTS_DIR,
             freq        = freq,
             pol         = pol,
+            cuts        = cuts,
         )
         if result_dict:
             print("✅ OpenRCS finished.")
@@ -167,9 +186,6 @@ def run_openrcs_rcs(
         print(f"❌ OpenRCS error: {e}")
         traceback.print_exc()
         
-    # ── LEGACY SHIM (kept for backward compatibility) ──────────────────────────
-    # If any other module still calls run_matlab_rcs(), redirect it here.
- 
 def run_matlab_rcs():
     """
     Deprecated.  MATLAB is no longer required.

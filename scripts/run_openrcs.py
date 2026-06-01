@@ -523,6 +523,7 @@ def run_openrcs_pipeline(
     results_dir : str   = _RESULTS_DIR,
     freq        : float = 12.0,
     pol         : str   = "both",
+    cuts        : str   = "all",
     corr        : float = 0.0,
     delstd      : float = 0.0,
     rs          : int   = 0,
@@ -653,32 +654,42 @@ def run_openrcs_pipeline(
             tstart=75.0, tstop=105.0, delt=1.0,
         )
 
-        pol_upper = pol.upper()
-        run_te    = pol_upper in ("TE-Z", "BOTH")
-        run_tm    = pol_upper in ("TM-Z", "BOTH")
+        pol_upper  = pol.upper()
+        run_te     = pol_upper in ("TE-Z", "BOTH")
+        run_tm     = pol_upper in ("TM-Z", "BOTH")
 
-        # ── run all 6 solver calls ────────────────────────────────────────────
+        # decide which cuts to run based on the cuts parameter
+        cuts_lower = cuts.lower().replace(" ", "")
+        do_az  = any(c in cuts_lower for c in ("azimuth",  "all"))
+        do_el  = any(c in cuts_lower for c in ("elevation","all"))
+        do_fr  = any(c in cuts_lower for c in ("frontal",  "all"))
+
+        # count total runs for progress labelling
+        total = sum([
+            do_az and run_te, do_az and run_tm,
+            do_el and run_te, do_el and run_tm,
+            do_fr and run_te, do_fr and run_tm,
+        ])
+        run_n = 0
+
+        def _run(tag, params, ipol, label):
+            nonlocal run_n
+            run_n += 1
+            print(f"  Run {run_n}/{total}  {label} ...")
+            raw[tag] = _run_single_pol(params, coord_list, ipol=ipol)
+
         print("[3/3] Running Physical Optics solver ...")
         warnings.filterwarnings("ignore")
-
-        raw = {}   # keyed by "AZ_TE", "AZ_TM", "EL_TE", "EL_TM", "FR_TE", "FR_TM"
-
-        if run_te:
-            print("  Run 1/6  TE-z  Azimuth   cut ...")
-            raw["AZ_TE"] = _run_single_pol(params_az, coord_list, ipol=1)
-            print("  Run 3/6  TE-z  Elevation cut ...")
-            raw["EL_TE"] = _run_single_pol(params_el, coord_list, ipol=1)
-            print("  Run 5/6  TE-z  Frontal   2-D ...")
-            raw["FR_TE"] = _run_single_pol(params_fr, coord_list, ipol=1)
-
-        if run_tm:
-            print("  Run 2/6  TM-z  Azimuth   cut ...")
-            raw["AZ_TM"] = _run_single_pol(params_az, coord_list, ipol=0)
-            print("  Run 4/6  TM-z  Elevation cut ...")
-            raw["EL_TM"] = _run_single_pol(params_el, coord_list, ipol=0)
-            print("  Run 6/6  TM-z  Frontal   2-D ...")
-            raw["FR_TM"] = _run_single_pol(params_fr, coord_list, ipol=0)
-
+        
+        raw = {}
+        
+        if do_az and run_te: _run("AZ_TE", params_az, 1, "TE-z  Azimuth   cut")
+        if do_az and run_tm: _run("AZ_TM", params_az, 0, "TM-z  Azimuth   cut")
+        if do_el and run_te: _run("EL_TE", params_el, 1, "TE-z  Elevation cut")
+        if do_el and run_tm: _run("EL_TM", params_el, 0, "TM-z  Elevation cut")
+        if do_fr and run_te: _run("FR_TE", params_fr, 1, "TE-z  Frontal   2-D")
+        if do_fr and run_tm: _run("FR_TM", params_fr, 0, "TM-z  Frontal   2-D")
+        
         # ── copy dat files to results folder ─────────────────────────────────
         ts   = datetime.now().strftime("%Y%m%d_%H%M%S")
         stem = os.path.splitext(stl_filename)[0]
@@ -928,6 +939,22 @@ def run_openrcs_pipeline(
             fpath = os.path.join(results_dir, fname)
             _save_mean_table(mean_rows, fpath, freq, stl_filename)
             out["mean_table"] = fpath
+
+
+        # ── clean up OpenRCS internal results folder ──────────────────────────
+        # The solver writes temp files to ./results/ inside the OpenRCS dir.
+        # We have already copied everything we need to results_dir above,
+        # so the OpenRCS results folder can be wiped clean after each run.
+        
+        openrcs_results = os.path.join(_OPENRCS_DIR, "results")
+        if os.path.isdir(openrcs_results):
+            for f in os.listdir(openrcs_results):
+                fpath_temp = os.path.join(openrcs_results, f)
+                try:
+                    if os.path.isfile(fpath_temp):
+                        os.remove(fpath_temp)
+                except Exception as e:
+                    print(f"  Warning: could not delete temp file {f} — {e}")
 
         # ── summary ───────────────────────────────────────────────────────────
         print(f"\n  All results saved to: {results_dir}")
