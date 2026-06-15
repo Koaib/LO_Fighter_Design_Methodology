@@ -41,3 +41,10 @@ __pycache__/
 
 # ── Spyder project files ──────────────────────────────────────────────────────
 .spyproject/
+
+# ── Validation script generated outputs ───────────────────────────────────
+RCS_Validation/**/stl/
+RCS_Validation/**/results/
+RCS_Validation/**/plots/
+RCS_Validation/**/coordinates.txt
+RCS_Validation/**/facets.txt
