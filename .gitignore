@@ -44,6 +44,7 @@ __pycache__/
 
 # ── Validation script generated outputs ───────────────────────────────────
 RCS_Validation/**/stl/
+RCS_Validation/**/vsp3/
 RCS_Validation/**/results/
 RCS_Validation/**/plots/
 RCS_Validation/**/coordinates.txt
