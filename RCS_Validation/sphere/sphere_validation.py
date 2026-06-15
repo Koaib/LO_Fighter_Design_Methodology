@@ -64,7 +64,7 @@ print("=" * 50)
 # ============================================================
 # Output folders
 # ============================================================
-for d in ("stl", "results", "plots"):
+for d in ("stl", "vsp3", "results", "plots"):
     os.makedirs(d, exist_ok=True)
 
 # ============================================================
@@ -126,11 +126,16 @@ if HAVE_VSP:
         stl_path = os.path.abspath(f"stl/sphere_{label}.stl")
         vsp.ExportFile(stl_path, vsp.SET_ALL, vsp.EXPORT_STL)
 
+        vsp3_path = os.path.abspath(f"vsp3/sphere_{label}.vsp3")
+        vsp.WriteVSPFile(vsp3_path, vsp.SET_ALL)
+
         mesh_info[label] = dict(divisions=divisions,
                                  edge_mm=target_edge * 1000,
-                                 stl_path=stl_path)
+                                 stl_path=stl_path,
+                                 vsp3_path=vsp3_path)
         print(f"{label}: target_edge={target_edge*1000:.2f} mm, "
               f"divisions={divisions} -> {stl_path}")
+        print(f"         vsp3 -> {vsp3_path}")
 else:
     # assume STLs already exist from a previous run
     for factor, label in zip(mesh_factors, mesh_labels):
