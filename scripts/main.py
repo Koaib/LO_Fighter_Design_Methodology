@@ -43,7 +43,7 @@ INPUT_MODE options:
 # =========================
 
 INPUT_MODE    = "import_vsp3"       # "generate" | "import_stl" | "import_vsp3"
-IMPORT_FILE   = "F35A_subsonic_meters_simplified_OML_v3.vsp3"  # filename inside Geometry/ folder (for import modes)
+IMPORT_FILE   = "F35A_subsonic_meters_simplified_OML_v5.vsp3"  # filename inside Geometry/ folder (for import modes)
 
 # =========================
 # GEOMETRY FOLDER PATH
