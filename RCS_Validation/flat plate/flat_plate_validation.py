@@ -66,8 +66,8 @@ phi_null_deg   = np.degrees(np.arcsin(wl / b))
 print("=" * 55)
 print(f"Frequency         = {freq/1e9:.2f} GHz")
 print(f"Wavelength lambda = {wl*1000:.3f} mm")
-print(f"Plate b (Z)       = {a*1000:.1f} mm = {a/wl:.1f} lambda")
-print(f"Plate a (Y)       = {b*1000:.1f} mm = {b/wl:.1f} lambda")
+print(f"Plate a (Y, width)  = {a*1000:.1f} mm = {a/wl:.1f} lambda")
+print(f"Plate b (Z, height) = {b*1000:.1f} mm = {b/wl:.1f} lambda")
 print(f"Peak RCS          = {sigma_max_dBsm:.2f} dBsm  (phi=0,180)")
 print(f"First null        = {phi_null_deg:.2f} deg from broadside")
 print("=" * 55)
@@ -123,8 +123,10 @@ if HAVE_VSP:
 
     for factor, label in zip(mesh_factors, mesh_labels):
         target_edge = factor * wl
-        u = max(int(round(b / target_edge)), 4)
-        w = max(int(round(a / target_edge)), 4)
+        u_panels = max(int(round(b / target_edge)), 4)
+        w_panels = max(int(round(a / target_edge)), 4)
+        u = u_panels + 1
+        w = 4 * w_panels + 1
 
         vsp.VSPRenew()                      # full reset EVERY iteration, not just once
         vsp.ReadVSPFile(template_path)
@@ -164,7 +166,7 @@ if HAVE_VSP:
         vsp.SetVSP3FileName(vsp3_path)
         vsp.WriteVSPFile(vsp3_path, vsp.SET_ALL)
 
-        mesh_info[label] = dict(w=w, u=u,
+        mesh_info[label] = dict(w=w_panels, u=u_panels,
                                 edge_mm=target_edge*1000,
                                 stl_path=stl_path,
                                 vsp3_path=vsp3_path)
