@@ -33,9 +33,9 @@ a    = 0.1        # sphere radius (m)
 freq = 12e9       # frequency (Hz)
 
 # mesh densities to test, as edge_length = factor * lambda
-mesh_factors = [2.0, 1.5, 1.0, 0.5, 1/3, 1/4]
+mesh_factors = [2.0, 1.5, 1.0, 0.5, 1/3, 1/4, 1/5, 1/6]
 mesh_labels  = ["2lambda", "1p5lambda", "lambda",
-                "lambda_2", "lambda_3", "lambda_4"]
+                "lambda_2", "lambda_3", "lambda_4", "lambda_5", "lambda_6"]
 
 # path to OpenRCS engine (adjust to your project layout)
 OPENRCS_DIR = "../../OpenRCS/open-rcs"
@@ -252,7 +252,7 @@ fig, ax = plt.subplots(figsize=(10, 5))
 ax.plot(phi_analytical, rcs_analytical, 'k-', lw=2.5,
         label=f'Analytical ({sigma_dBsm:.2f} dBsm)')
 
-colors = ['red', 'orange', 'green', 'blue', 'purple', 'brown', 'cyan']
+colors = ['red', 'orange', 'green', 'blue', 'purple', 'brown', 'cyan', 'pink', 'olive']
 for (factor, label), color in zip(zip(mesh_factors, mesh_labels), colors):
     dat_path = mesh_info[label].get("dat_path", f"results/sphere_{label}.dat")
     if not os.path.exists(dat_path):
@@ -286,7 +286,9 @@ ax.set_title(f"Sphere RCS — Mesh Convergence vs Analytical\n"
 ax.legend(loc='best', fontsize=8)
 ax.grid(True, alpha=0.3)
 plt.tight_layout()
-plt.savefig("plots/sphere_convergence_linear.png", dpi=150)
+from datetime import datetime
+ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+plt.savefig(f"plots/sphere_convergence_linear_{ts}.png", dpi=150)
 plt.close(fig)
 print("\nSaved plots/sphere_convergence_linear.png")
 
