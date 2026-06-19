@@ -340,7 +340,7 @@ from datetime import datetime
 ts = datetime.now().strftime("%Y%m%d_%H%M%S")
 plt.savefig(f"plots/plate_convergence_cart_{ts}.png", dpi=150)
 plt.close(fig)
-print("\nSaved plots/plate_convergence_cart_{ts}.png")
+print("\nSaved plots/plate_convergence_cart.png")
 
 print("\nDone.")
 
