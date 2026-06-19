@@ -111,40 +111,44 @@ mesh_info = {}  # label -> dict(divisions, edge_mm, stl_path)
 if HAVE_VSP:
     for factor, label in zip(mesh_factors, mesh_labels):
         target_edge = factor * wl
-        divisions = int(round(circumference / target_edge))
-        divisions = max(divisions, 4)  # safety floor
 
         vsp.VSPRenew()
         eid = vsp.AddGeom("ELLIPSOID")
         vsp.SetParmVal(eid, "A_Radius", "Design", a)
         vsp.SetParmVal(eid, "B_Radius", "Design", a)
         vsp.SetParmVal(eid, "C_Radius", "Design", a)
-        vsp.SetParmVal(eid, "Tess_U", "Shape", divisions)
-        vsp.SetParmVal(eid, "Tess_W", "Shape", divisions)
         vsp.Update()
 
-        stl_path = os.path.abspath(f"stl/sphere_{label}.stl")
-        vsp.ExportFile(stl_path, vsp.SET_ALL, vsp.EXPORT_STL)
+        # CFDMesh uniform edge length = factor * lambda
+        vsp.SetCFDMeshVal(vsp.CFD_MAX_EDGE_LEN, target_edge)
+        vsp.SetCFDMeshVal(vsp.CFD_MIN_EDGE_LEN, target_edge)
+        vsp.SetCFDMeshVal(vsp.CFD_GROWTH_RATIO, 10.0)
+        vsp.SetCFDMeshVal(vsp.CFD_MAX_GAP,      target_edge)
+        vsp.SetCFDMeshVal(vsp.CFD_NUM_CIRCLE_SEGS, 0.00001)
+        vsp.DeleteAllCFDSources()
 
+        stl_path  = os.path.abspath(f"stl/sphere_{label}.stl")
         vsp3_path = os.path.abspath(f"vsp3/sphere_{label}.vsp3")
+
+        vsp.SetComputationFileName(vsp.CFD_STL_TYPE, stl_path)
+        vsp.ComputeCFDMesh(vsp.SET_ALL, vsp.SET_NONE, vsp.CFD_STL_TYPE)
+
+        vsp.SetVSP3FileName(vsp3_path)
         vsp.WriteVSPFile(vsp3_path, vsp.SET_ALL)
 
-        mesh_info[label] = dict(divisions=divisions,
-                                 edge_mm=target_edge * 1000,
-                                 stl_path=stl_path,
-                                 vsp3_path=vsp3_path)
-        print(f"{label}: target_edge={target_edge*1000:.2f} mm, "
-              f"divisions={divisions} -> {stl_path}")
-        print(f"         vsp3 -> {vsp3_path}")
-else:
-    # assume STLs already exist from a previous run
-    for factor, label in zip(mesh_factors, mesh_labels):
-        target_edge = factor * wl
-        divisions = int(round(circumference / target_edge))
-        mesh_info[label] = dict(divisions=divisions,
-                                 edge_mm=target_edge * 1000,
-                                 stl_path=os.path.abspath(f"stl/sphere_{label}.stl"))
+        tri_count = 0
+        if os.path.exists(stl_path):
+            with open(stl_path) as fh:
+                tri_count = sum(1 for ln in fh
+                                if ln.strip().startswith("facet normal"))
 
+        mesh_info[label] = dict(divisions=tri_count,
+                                edge_mm=target_edge * 1000,
+                                stl_path=stl_path,
+                                vsp3_path=vsp3_path)
+        print(f"{label}: edge={target_edge*1000:.1f}mm, "
+              f"tris={tri_count} -> {stl_path}")
+        
 # ============================================================
 # STEP 3 — Run OpenRCS PO solver on each mesh
 # ============================================================
@@ -263,11 +267,11 @@ for (factor, label), color in zip(zip(mesh_factors, mesh_labels), colors):
     # for TE-z, co-pol is Sph; sort by phi for clean line
     idx = np.argsort(d["phi_vals"])
     edge_mm = mesh_info[label]["edge_mm"]
-    div = mesh_info[label]["divisions"]
+    n_tri   = mesh_info[label]["divisions"]  # now stores tri count
     ax.plot(d["phi_vals"][idx], d["sph"][idx],
             color=color, lw=1.2,
-            label=f'{label}  (edge~{edge_mm:.1f}mm, N={div})')
-
+            label=f'{label}  (edge~{edge_mm:.1f}mm, tris={n_tri})')
+    
 ax.set_xlabel('Azimuth angle phi (deg)')
 ax.set_ylabel('RCS (dBsm)')
 ax.set_xlim(0, 360)
