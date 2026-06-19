@@ -106,9 +106,32 @@ plt.savefig("plots/analytical_plate.png", dpi=150)
 plt.close(fig)
 print("Saved plots/analytical_plate.png")
 
+
 # ============================================================
 # STEP 2 — Generate plate STLs via OpenVSP
 # ============================================================
+
+def filter_stl_keep_face(in_path, out_path, normal_axis=0, tol=0.9):
+    with open(in_path) as f:
+        lines = f.readlines()
+    out_lines = []
+    i = 0
+    while i < len(lines):
+        line = lines[i].strip()
+        if line.startswith("solid") or line.startswith("endsolid"):
+            out_lines.append(lines[i])
+            i += 1
+        elif line.startswith("facet normal"):
+            parts = line.split()
+            n = [float(parts[2]), float(parts[3]), float(parts[4])]
+            if abs(n[normal_axis]) >= tol:   # keeps both +X and -X faces
+                out_lines.extend(lines[i:i+7])
+            i += 7
+        else:
+            i += 1
+    with open(out_path, 'w') as f:
+        f.writelines(out_lines)
+        
 try:
     import openvsp as vsp
     HAVE_VSP = True
@@ -123,219 +146,67 @@ if HAVE_VSP:
 
     for factor, label in zip(mesh_factors, mesh_labels):
         target_edge = factor * wl
-        u_panels = max(int(round(b / target_edge)), 4)
-        w_panels = max(int(round(a / target_edge)), 4)
-        u = u_panels + 1
-        w = 4 * w_panels + 1
 
-        vsp.VSPRenew()                      # full reset EVERY iteration, not just once
+        # --- build geometry ---
+        vsp.VSPRenew()
         vsp.ReadVSPFile(template_path)
 
-        geoms = vsp.FindGeoms()
-        print(f"{label}: geoms after fresh read -> "
-              f"{[(g, vsp.GetGeomTypeName(g)) for g in geoms]}")
-        wid = geoms[0]
-
-        parm_by_name = {vsp.GetParmName(pid): pid for pid in vsp.GetGeomParmIDs(wid)}
+        wid = vsp.FindGeoms()[0]
+        parm_by_name = {vsp.GetParmName(pid): pid
+                        for pid in vsp.GetGeomParmIDs(wid)}
 
         def pset(name, val):
             pid = parm_by_name.get(name)
             if pid is None:
-                raise KeyError(f"No parm named '{name}' on this geom. "
-                                f"Available: {sorted(parm_by_name.keys())}")
+                raise KeyError(f"Parm '{name}' not found. "
+                               f"Available: {sorted(parm_by_name.keys())}")
             vsp.SetParmVal(pid, val)
 
         pset("Length", b)
         pset("Width",  a)
         pset("Height", 0.001)
-        pset("Tess_W", w)
-        pset("Tess_U", u)
         pset("Y_Rotation", 90)
         vsp.Update()
 
-        bb_min = vsp.GetGeomBBoxMin(wid)
-        bb_max = vsp.GetGeomBBoxMax(wid)
-        dx, dy, dz = bb_max.x()-bb_min.x(), bb_max.y()-bb_min.y(), bb_max.z()-bb_min.z()
-        print(f"  bbox: dx={dx*1000:.1f}mm dy={dy*1000:.1f}mm dz={dz*1000:.1f}mm "
-              f"(expect dx~1mm thin, dy~{b*1000:.0f}mm, dz~{a*1000:.0f}mm)")
+        # --- CFDMesh: set uniform edge length = factor * lambda ---
+        vsp.SetCFDMeshVal(vsp.CFD_MAX_EDGE_LEN, target_edge)
+        vsp.SetCFDMeshVal(vsp.CFD_MIN_EDGE_LEN, target_edge)   # min=max kills curvature criteria
+        vsp.SetCFDMeshVal(vsp.CFD_GROWTH_RATIO, 10.0)           # large = growth ratio OFF
+        vsp.SetCFDMeshVal(vsp.CFD_MAX_GAP,      target_edge)    # max_gap >= edge len = OFF
+        vsp.SetCFDMeshVal(vsp.CFD_NUM_CIRCLE_SEGS, 0.00001)     # near-zero = OFF
+        vsp.DeleteAllCFDSources()                                # no local sources
 
         stl_path  = os.path.abspath(f"stl/plate_{label}.stl")
         vsp3_path = os.path.abspath(f"vsp3/plate_{label}.vsp3")
 
-        vsp.ExportFile(stl_path, vsp.SET_ALL, vsp.EXPORT_STL)
+        vsp.SetComputationFileName(vsp.CFD_STL_TYPE, stl_path)
+        vsp.ComputeCFDMesh(vsp.SET_ALL, vsp.SET_NONE, vsp.CFD_STL_TYPE)
+
+        vsp.SetComputationFileName(vsp.CFD_STL_TYPE, stl_path)
+        vsp.ComputeCFDMesh(vsp.SET_ALL, vsp.SET_NONE, vsp.CFD_STL_TYPE)
+
+        # filter to keep only +X face (plate normal after Y_Rotation=90)
+        raw_stl = stl_path.replace(".stl", "_raw.stl")
+        if os.path.exists(raw_stl):
+            os.remove(raw_stl)
+        os.rename(stl_path, raw_stl)
+        filter_stl_keep_face(raw_stl, stl_path, normal_axis=0, tol=0.9)  
+
         vsp.SetVSP3FileName(vsp3_path)
         vsp.WriteVSPFile(vsp3_path, vsp.SET_ALL)
 
-        mesh_info[label] = dict(w=w_panels, u=u_panels,
-                                edge_mm=target_edge*1000,
+        # --- count actual triangles from the STL for the legend ---
+        tri_count = 0
+        if os.path.exists(stl_path):
+            with open(stl_path) as fh:
+                tri_count = sum(1 for ln in fh if ln.strip().startswith("facet normal"))
+
+        mesh_info[label] = dict(edge_mm=target_edge * 1000,
+                                n_tri=tri_count,
                                 stl_path=stl_path,
                                 vsp3_path=vsp3_path)
-        print(f"{label}: edge~{target_edge*1000:.1f}mm, "
-              f"w={w}, u={u} -> {stl_path}")
-        # no DeleteGeom needed — next loop iteration's VSPRenew() wipes everything clean
-
-# if HAVE_VSP:
-#     vsp.VSPRenew()
-#     template_path = os.path.abspath("box_template.vsp3")
-
-#     for factor, label in zip(mesh_factors, mesh_labels):
-#         target_edge = factor * wl
-#         u = max(int(round(b / target_edge)), 4)
-#         w  = max(int(round(a / target_edge)), 4)
-
-#         vsp.ReadVSPFile(template_path)
-
-#         wid = vsp.FindGeoms()[0]
-
-#         vsp.SetParmVal(wid, "Length", "Design", b)
-#         vsp.SetParmVal(wid, "Width",  "Design", a)
-#         vsp.SetParmVal(wid, "Height", "Design", 0.001)
-#         vsp.SetParmVal(wid, "Tess_W", "Shape",  w)
-#         vsp.SetParmVal(wid, "Tess_U", "Shape",  u)
-#         vsp.SetParmVal(wid, "Y_Rotation", "XForm",  90)
-
-#         vsp.Update()
-
-#         stl_path  = os.path.abspath(f"stl/plate_{label}.stl")
-#         vsp3_path = os.path.abspath(f"vsp3/plate_{label}.vsp3")
-
-#         vsp.ExportFile(stl_path, vsp.SET_ALL, vsp.EXPORT_STL)
-#         vsp.SetVSP3FileName(vsp3_path)
-#         vsp.WriteVSPFile(vsp3_path, vsp.SET_ALL)
-
-#         mesh_info[label] = dict(w=w, u=u,
-#                                 edge_mm=target_edge*1000,
-#                                 stl_path=stl_path,
-#                                 vsp3_path=vsp3_path)
-#         print(f"{label}: edge~{target_edge*1000:.1f}mm, "
-#               f"w={w}, u={u} -> {stl_path}")
-
-#         vsp.DeleteGeom(wid)
-
-
-# # try:
-# #     import openvsp as vsp
-# #     HAVE_VSP = True
-# # except ImportError:
-# #     HAVE_VSP = False
-# #     print("\nWARNING: openvsp not importable — skipping STL generation.")
-
-# # mesh_info = {}
-
-# # if HAVE_VSP:
-# #     vsp.VSPRenew()
-# #     template_path = os.path.abspath("box_template.vsp3")
-
-# #     for factor, label in zip(mesh_factors, mesh_labels):
-# #         target_edge = factor * wl
-# #         u = max(int(round(b / target_edge)), 4)
-# #         w = max(int(round(a / target_edge)), 4)
-
-# #         vsp.ReadVSPFile(template_path)
-# #         wid = vsp.FindGeoms()[0]
-
-# #         # Build a name -> parm_id lookup, group-agnostic.
-# #         parm_by_name = {vsp.GetParmName(pid): pid for pid in vsp.GetGeomParmIDs(wid)}
-
-# #         def pset(name, val):
-# #             pid = parm_by_name.get(name)
-# #             if pid is None:
-# #                 raise KeyError(f"No parm named '{name}' on this geom. "
-# #                                 f"Available: {sorted(parm_by_name.keys())}")
-# #             vsp.SetParmVal(pid, val)
-
-# #         pset("Length", b)
-# #         pset("Width",  a)
-# #         pset("Height", 0.001)
-# #         pset("Num_W",  w)
-# #         pset("Num_U",  u)
-# #         pset("YRot",   90)
-# #         vsp.Update()
-
-# #         # Sanity check: confirm the exported box actually has the dimensions
-# #         # you think it has, given the 90deg YRot.
-# #         bb_min = vsp.GetGeomBBoxMin(wid)
-# #         bb_max = vsp.GetGeomBBoxMax(wid)
-# #         dx, dy, dz = bb_max.x()-bb_min.x(), bb_max.y()-bb_min.y(), bb_max.z()-bb_min.z()
-# #         print(f"  bbox: dx={dx*1000:.1f}mm dy={dy*1000:.1f}mm dz={dz*1000:.1f}mm "
-# #               f"(expect ~0.001m thick on X, a={a*1000:.0f}mm on Z, b={b*1000:.0f}mm on Y)")
-
-# #         stl_path  = os.path.abspath(f"stl/plate_{label}.stl")
-# #         vsp3_path = os.path.abspath(f"vsp3/plate_{label}.vsp3")
-
-# #         vsp.ExportFile(stl_path, vsp.SET_ALL, vsp.EXPORT_STL)
-# #         vsp.SetVSP3FileName(vsp3_path)
-# #         vsp.WriteVSPFile(vsp3_path, vsp.SET_ALL)
-
-# #         mesh_info[label] = dict(w=w, u=u,
-# #                                 edge_mm=target_edge*1000,
-# #                                 stl_path=stl_path,
-# #                                 vsp3_path=vsp3_path)
-# #         print(f"{label}: edge~{target_edge*1000:.1f}mm, "
-# #               f"w={w}, u={u} -> {stl_path}")
-
-# #         vsp.DeleteGeom(wid)
-
-
-# try:
-#     import openvsp as vsp
-#     HAVE_VSP = True
-# except ImportError:
-#     HAVE_VSP = False
-#     print("\nWARNING: openvsp not importable — skipping STL generation.")
-
-# mesh_info = {}
-
-# if HAVE_VSP:
-#     vsp.VSPRenew()
-#     template_path = os.path.abspath("box_template.vsp3")
-
-#     for factor, label in zip(mesh_factors, mesh_labels):
-#         target_edge = factor * wl
-#         u = max(int(round(b / target_edge)), 4)
-#         w = max(int(round(a / target_edge)), 4)
-
-#         vsp.ReadVSPFile(template_path)
-#         wid = vsp.FindGeoms()[0]
-
-#         parm_by_name = {vsp.GetParmName(pid): pid for pid in vsp.GetGeomParmIDs(wid)}
-
-#         def pset(name, val):
-#             pid = parm_by_name.get(name)
-#             if pid is None:
-#                 raise KeyError(f"No parm named '{name}' on this geom. "
-#                                 f"Available: {sorted(parm_by_name.keys())}")
-#             vsp.SetParmVal(pid, val)
-
-#         pset("Length", a)        # local X -> global Z after Y_Rotation=90
-#         pset("Width",  b)        # local Y -> stays global Y
-#         pset("Height", 0.001)    # local Z -> global X  (thin, becomes the normal)
-#         pset("Tess_W", w)        # divisions along Length (a / Z)
-#         pset("Tess_U", u)        # divisions along Width  (b / Y)
-#         pset("Y_Rotation", 90)
-#         vsp.Update()
-
-#         bb_min = vsp.GetGeomBBoxMin(wid)
-#         bb_max = vsp.GetGeomBBoxMax(wid)
-#         dx, dy, dz = bb_max.x()-bb_min.x(), bb_max.y()-bb_min.y(), bb_max.z()-bb_min.z()
-#         print(f"  bbox: dx={dx*1000:.1f}mm dy={dy*1000:.1f}mm dz={dz*1000:.1f}mm "
-#               f"(expect dx~1mm thin, dy~{b*1000:.0f}mm, dz~{a*1000:.0f}mm)")
-
-#         stl_path  = os.path.abspath(f"stl/plate_{label}.stl")
-#         vsp3_path = os.path.abspath(f"vsp3/plate_{label}.vsp3")
-
-#         vsp.ExportFile(stl_path, vsp.SET_ALL, vsp.EXPORT_STL)
-#         vsp.SetVSP3FileName(vsp3_path)
-#         vsp.WriteVSPFile(vsp3_path, vsp.SET_ALL)
-
-#         mesh_info[label] = dict(w=w, u=u,
-#                                 edge_mm=target_edge*1000,
-#                                 stl_path=stl_path,
-#                                 vsp3_path=vsp3_path)
-#         print(f"{label}: edge~{target_edge*1000:.1f}mm, "
-#               f"w={w}, u={u} -> {stl_path}")
-
-#         vsp.DeleteGeom(wid)
+        print(f"{label}: edge={target_edge*1000:.1f}mm, "
+              f"tris={tri_count}, -> {stl_path}")
         
 # ============================================================
 # STEP 3 — Run OpenRCS PO solver on each mesh
@@ -362,6 +233,14 @@ if HAVE_OPENRCS:
             continue
 
         stl_converter(stl_path)
+        
+        # verify the facets file actually changed
+        import os
+        facets_file = os.path.join(OPENRCS_DIR, "facets.txt")
+        coords_file = os.path.join(OPENRCS_DIR, "coordinates.txt")
+        print(f"{label}: facets.txt size={os.path.getsize(facets_file)}, "
+              f"coords.txt size={os.path.getsize(coords_file)}")
+
         Rs         = 0
         coord_list = extractCoordinatesData(Rs)
 
@@ -440,14 +319,13 @@ for (factor, label), color in zip(zip(mesh_factors, mesh_labels), colors):
     if len(d["phi_vals"]) == 0:
         print(f"{label}: .dat parsed empty, skipping plot")
         continue
-    idx     = np.argsort(d["phi_vals"])
-    edge_mm = mesh_info[label]["edge_mm"]
-    n_c     = mesh_info[label]["w"]
-    n_s     = mesh_info[label]["u"]
+    idx      = np.argsort(d["phi_vals"])
+    edge_mm  = mesh_info[label]["edge_mm"]
+    n_tri    = mesh_info[label].get("n_tri", 0)
     ax.plot(d["phi_vals"][idx], d["sph"][idx],
             color=color, lw=1.2,
-            label=f'{label}  (edge~{edge_mm:.1f}mm, Nc={n_c}, Ns={n_s})')
-
+            label=f'λ/{round(1/factor):.0f}  (edge={edge_mm:.1f}mm, tris={n_tri})')
+    
 ax.set_xlabel('Azimuth angle phi (deg)')
 ax.set_ylabel('RCS (dBsm)')
 ax.set_title(f'Flat Plate RCS — Mesh Convergence vs Analytical\n'
@@ -458,8 +336,11 @@ ax.set_ylim(sigma_max_dBsm - 60, sigma_max_dBsm + 10)
 ax.legend(fontsize=8)
 ax.grid(True, alpha=0.3)
 plt.tight_layout()
-plt.savefig("plots/plate_convergence_cart.png", dpi=150)
+from datetime import datetime
+ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+plt.savefig(f"plots/plate_convergence_cart_{ts}.png", dpi=150)
 plt.close(fig)
-print("\nSaved plots/plate_convergence_cart.png")
+print("\nSaved plots/plate_convergence_cart_{ts}.png")
 
 print("\nDone.")
+
