@@ -24,7 +24,8 @@ LO_Fighter_Design_Methodology/
 ├── scripts/
 │   ├── main.py                       ← main entry point
 │   ├── vsp_setup.py                  ← paths and tool launchers
-│   └── run_rcs.m                     ← Octave RCS script
+│   └── run_openrcs.py                     ← RCS script
+|   |__ extract_params.py
 ├── setup.py                          ← run once to set up
 ├── requirements.txt
 └── README.md
