@@ -235,6 +235,36 @@ def run_openrcs_rcs(
         print(f"❌ OpenRCS error: {e}")
         traceback.print_exc()
         
+def dump_geom_params(vsp3_path: str, out_json_path: str) -> dict:
+    """
+    Extract every geom's parameters from a vsp3 file into a JSON dict.
+    Reusable across any baseline geometry -- not specific to any one
+    aircraft.
+    """
+    import openvsp as vsp
+    import json
+
+    vsp.VSPCheckSetup()
+    vsp.ClearVSPModel()
+    vsp.ReadVSPFile(vsp3_path)
+    vsp.Update()
+
+    dump = {}
+    for gid in vsp.FindGeoms():
+        gname = vsp.GetGeomName(gid)
+        gtype = vsp.GetGeomTypeName(gid) if hasattr(vsp, "GetGeomTypeName") else "?"
+        parms = {vsp.GetParmName(pid): vsp.GetParmVal(pid)
+                 for pid in vsp.GetGeomParmIDs(gid)}
+        dump[gname] = {"id": gid, "type": gtype, "parms": parms}
+
+    with open(out_json_path, "w") as f:
+        json.dump(dump, f, indent=2)
+
+    print(f"Dumped {sum(len(v['parms']) for v in dump.values())} parms "
+          f"across {len(dump)} geoms -> {out_json_path}")
+    return dump
+
+        
 def run_matlab_rcs():
     """
     Deprecated.  MATLAB is no longer required.
