@@ -56,8 +56,11 @@ IMPORT_FILE   = "SSAM_final_geom_to_be_used_scaled_by_19_nozzle_mod.vsp3"  # fil
 # regions to lambda/8 while flatter regions stay at lambda/4.
 USE_CFD_MESH     = True     # False -> old plain ExportFile(EXPORT_STL)
 FREQ_GHZ         = 12.0     # also drives the RCS run below
-MAX_EDGE_FACTOR  = 1      # coarse bound: edge = lambda / MAX_EDGE_FACTOR
-MIN_EDGE_FACTOR  = 1     # fine bound:   edge = lambda / MIN_EDGE_FACTOR
+MAX_EDGE_FACTOR  = 1        # coarse bound: edge = lambda / MAX_EDGE_FACTOR
+MIN_EDGE_FACTOR  = 1        # fine bound:   edge = lambda / MIN_EDGE_FACTOR
+MAX_GAP_FACTOR   = 5.0      # max_gap = lambda / MAX_GAP_FACTOR
+GROWTH_RATIO     = 1.3      # OpenVSP default -- grading ON (was 10.0 = off)
+NUM_CIRCLE_SEGS  = 16.0     # OpenVSP default -- curvature detection ON (was ~0 = off)
 
 # =========================
 # GEOMETRY FOLDER PATH
@@ -101,7 +104,11 @@ elif INPUT_MODE == "import_vsp3":
             freq_ghz        = FREQ_GHZ,
             min_edge_factor = MIN_EDGE_FACTOR,
             max_edge_factor = MAX_EDGE_FACTOR,
+            max_gap_factor  = MAX_GAP_FACTOR,
+            growth_ratio    = GROWTH_RATIO,
+            num_circle_segs = NUM_CIRCLE_SEGS,
         )
+        
     else:
         vsp.ExportFile(stl_out, vsp.SET_ALL, vsp.EXPORT_STL)
 
