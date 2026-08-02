@@ -49,3 +49,6 @@ RCS_Validation/**/results/
 RCS_Validation/**/plots/
 RCS_Validation/**/coordinates.txt
 RCS_Validation/**/facets.txt
+
+# ── dump parameter extraction files ───────────────────────────────────
+*.json
