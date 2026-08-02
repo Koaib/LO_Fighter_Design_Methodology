@@ -79,10 +79,25 @@ elif INPUT_MODE == "import_vsp3":
     vsp.Update()
     # Derive STL name from the vsp3 filename
     stl_name = os.path.splitext(IMPORT_FILE)[0] + ".stl"
-    vsp.ExportFile(vsp_setup.stl_path(stl_name), vsp.SET_ALL, vsp.EXPORT_STL)
+    stl_out  = vsp_setup.stl_path(stl_name)
+
+    if USE_CFD_MESH:
+        vsp_setup.export_stl_cfdmesh(
+            out_stl_path    = stl_out,
+            freq_ghz        = FREQ_GHZ,
+            min_edge_factor = MIN_EDGE_FACTOR,
+            max_edge_factor = MAX_EDGE_FACTOR,
+            max_gap_factor  = MAX_GAP_FACTOR,
+            growth_ratio    = GROWTH_RATIO,
+            num_circle_segs = NUM_CIRCLE_SEGS,
+        )
+        
+    else:
+        vsp.ExportFile(stl_out, vsp.SET_ALL, vsp.EXPORT_STL)
+
     print(f"✅ Loaded VSP3 and exported STL: {stl_name}")
     stl_for_rcs = stl_name
-
+    
 else:  # "generate"
     import openvsp as vsp
     vsp.VSPCheckSetup()
@@ -131,7 +146,7 @@ else:  # "generate"
 
 vsp_setup.run_openrcs_rcs(
     stl_filename = stl_for_rcs,
-    freq         = 12.0,
+    freq         = FREQ_GHZ,
     pol          = "TE-z",
     cuts         = "azimuth",
 )

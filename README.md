@@ -107,14 +107,16 @@ main.py
         ├─ rcs_functions.extractCoordinatesData()
         │     Build vertex/face arrays in memory
         │
-        └─ rcs_monostatic.rcs_monostatic()  ← called 6 times
-              Run 1: TE-z  Azimuth cut   θ=90°  φ=0→360°
-              Run 2: TM-z  Azimuth cut   θ=90°  φ=0→360°
-              Run 3: TE-z  Elevation cut φ=0°   θ=0→180°
-              Run 4: TM-z  Elevation cut φ=0°   θ=0→180°
-              Run 5: TE-z  Frontal 2-D   az±30° el±15°  (mean only)
-              Run 6: TM-z  Frontal 2-D   az±30° el±15°  (mean only)
-
+        └── rcs_monostatic.rcs_monostatic()  ← called per (pol × cut) combo
+              Controlled by run_openrcs_rcs(pol=..., cuts=...) in vsp_setup.py:
+                pol  : "TE-z" | "TM-z" | "both"
+                cuts : "azimuth" | "elevation" | "frontal"
+                       | "azimuth+elevation" | "azimuth+frontal"
+                       | "elevation+frontal" | "all"
+              main.py currently runs pol="TE-z", cuts="azimuth" (1 run).
+              Selecting pol="both", cuts="all" reproduces the full
+              6-run sweep (azimuth/elevation/frontal x TE-z/TM-z).
+              
 Output files → Results/RCS/
   Linear_Azimuth_Cut_90deg_<ts>.png      4 curves: TE-z co+cross, TM-z co+cross
   Polar_TE-z_Azimuth_Cut_90deg_<ts>.png  TE-z co-pol + cross-pol

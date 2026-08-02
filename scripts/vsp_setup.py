@@ -125,6 +125,55 @@ def auto_name(prefix: str = "case") -> str:
     """Returns a timestamped filename string, e.g. 'aircraft_20260513_142301.vsp3'."""
     return f"{prefix}_{time.strftime('%Y%m%d_%H%M%S')}.vsp3"
 
+def export_stl_cfdmesh(
+    out_stl_path    : str,
+    freq_ghz        : float,
+    min_edge_factor : float = 6.0,    # fine bound:   edge = lambda / min_edge_factor
+    max_edge_factor : float = 6.0,    # coarse bound: edge = lambda / max_edge_factor
+    max_gap_factor  : float = 5.0,    # max_gap = lambda / max_gap_factor
+    growth_ratio    : float = 1.3,    # OpenVSP default -- was 10.0 (effectively "off")
+    num_circle_segs : float = 16.0,   # OpenVSP default -- was 0.00001 (effectively "off")
+) -> str:
+    """
+    Export SET_ALL geometry to STL via OpenVSP's CFDMesh engine, with
+    independent, wavelength-scaled control over min/max edge length and
+    max gap, and real curvature-grading settings (growth_ratio, num_circle_segs)
+    instead of the "off" values used for uniform-mesh validation shapes.
+
+    growth_ratio/num_circle_segs defaults match OpenVSP's own GUI defaults
+    (Growth Ratio=1.3, Num Circle Segments=16) rather than arbitrary picks.
+
+    Setting min_edge_factor == max_edge_factor still reproduces uniform mesh
+    if that's what a given run needs (e.g. matching the validation shapes).
+    """
+    import openvsp as vsp
+
+    c   = 3e8
+    wl  = c / (freq_ghz * 1e9)
+    max_edge = wl / max_edge_factor
+    min_edge = wl / min_edge_factor
+    max_gap  = wl / max_gap_factor
+
+    if min_edge > max_edge:
+        print(f"⚠️  min_edge > max_edge — swapping so min <= max.")
+        min_edge, max_edge = max_edge, min_edge
+
+    vsp.SetCFDMeshVal(vsp.CFD_MAX_EDGE_LEN, max_edge)
+    vsp.SetCFDMeshVal(vsp.CFD_MIN_EDGE_LEN, min_edge)
+    vsp.SetCFDMeshVal(vsp.CFD_GROWTH_RATIO, growth_ratio)
+    vsp.SetCFDMeshVal(vsp.CFD_MAX_GAP,      max_gap)
+    vsp.SetCFDMeshVal(vsp.CFD_NUM_CIRCLE_SEGS, num_circle_segs)
+    vsp.DeleteAllCFDSources()
+
+    vsp.SetComputationFileName(vsp.CFD_STL_TYPE, out_stl_path)
+    vsp.ComputeCFDMesh(vsp.SET_ALL, vsp.SET_NONE, vsp.CFD_STL_TYPE)
+
+    print(f"✅ CFD-mesh STL exported: {out_stl_path}")
+    print(f"   min_edge={min_edge*1000:.2f}mm (lambda/{min_edge_factor}), "
+          f"max_edge={max_edge*1000:.2f}mm (lambda/{max_edge_factor}), "
+          f"max_gap={max_gap*1000:.2f}mm (lambda/{max_gap_factor}), "
+          f"growth_ratio={growth_ratio}, num_circle_segs={num_circle_segs}")
+    return out_stl_path
 
 # =============================================================================
 # OPENRCS RCS LAUNCHER  (replaces run_matlab_rcs())
