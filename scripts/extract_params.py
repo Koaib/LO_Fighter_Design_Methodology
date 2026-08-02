@@ -1,0 +1,15 @@
+# -*- coding: utf-8 -*-
+"""
+Created on Sun Aug  2 15:05:52 2026
+
+@author: KK
+"""
+
+import vsp_setup
+from pathlib import Path
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+VSP3_FILE  = SCRIPT_DIR.parent / "Geometry" / "SSAM_final_geom_to_be_used_scaled_by_19.vsp3"
+OUT_FILE   = SCRIPT_DIR / "ssam_params_dump.json"
+
+vsp_setup.dump_geom_params(str(VSP3_FILE), str(OUT_FILE))
