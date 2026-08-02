@@ -43,7 +43,21 @@ INPUT_MODE options:
 # =========================
 
 INPUT_MODE    = "import_vsp3"       # "generate" | "import_stl" | "import_vsp3"
-IMPORT_FILE   = "SSAM_final_geom_to_be_used_scaled_by_19.vsp3"  # filename inside Geometry/ folder (for import modes)
+IMPORT_FILE   = "SSAM_final_geom_to_be_used_scaled_by_19_nozzle_mod.vsp3"  # filename inside Geometry/ folder (for import modes)
+
+# =========================
+# STL MESH SETTINGS — edit this
+# =========================
+# STL tessellation tied directly to RCS wavelength (lambda = c/freq),
+# same CFD-mesh approach used in the sphere/flat-plate/almond validation.
+# Convergence study on those shapes showed lambda/4-lambda/8 is feasible;
+# lambda/6 is the time/accuracy compromise currently in use.
+# min and max no longer have to match — e.g. MAX=4, MIN=8 refines curved
+# regions to lambda/8 while flatter regions stay at lambda/4.
+USE_CFD_MESH     = True     # False -> old plain ExportFile(EXPORT_STL)
+FREQ_GHZ         = 12.0     # also drives the RCS run below
+MAX_EDGE_FACTOR  = 1      # coarse bound: edge = lambda / MAX_EDGE_FACTOR
+MIN_EDGE_FACTOR  = 1     # fine bound:   edge = lambda / MIN_EDGE_FACTOR
 
 # =========================
 # GEOMETRY FOLDER PATH
@@ -79,10 +93,21 @@ elif INPUT_MODE == "import_vsp3":
     vsp.Update()
     # Derive STL name from the vsp3 filename
     stl_name = os.path.splitext(IMPORT_FILE)[0] + ".stl"
-    vsp.ExportFile(vsp_setup.stl_path(stl_name), vsp.SET_ALL, vsp.EXPORT_STL)
+    stl_out  = vsp_setup.stl_path(stl_name)
+
+    if USE_CFD_MESH:
+        vsp_setup.export_stl_cfdmesh(
+            out_stl_path    = stl_out,
+            freq_ghz        = FREQ_GHZ,
+            min_edge_factor = MIN_EDGE_FACTOR,
+            max_edge_factor = MAX_EDGE_FACTOR,
+        )
+    else:
+        vsp.ExportFile(stl_out, vsp.SET_ALL, vsp.EXPORT_STL)
+
     print(f"✅ Loaded VSP3 and exported STL: {stl_name}")
     stl_for_rcs = stl_name
-
+    
 else:  # "generate"
     import openvsp as vsp
     vsp.VSPCheckSetup()
@@ -131,7 +156,7 @@ else:  # "generate"
 
 vsp_setup.run_openrcs_rcs(
     stl_filename = stl_for_rcs,
-    freq         = 12.0,
+    freq         = FREQ_GHZ,
     pol          = "TE-z",
     cuts         = "azimuth",
 )
