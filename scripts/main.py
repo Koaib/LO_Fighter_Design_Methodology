@@ -70,6 +70,8 @@ ROOT_DIR     = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 GEOMETRY_DIR = os.path.join(ROOT_DIR, "Geometry")
 os.makedirs(GEOMETRY_DIR, exist_ok=True)
 
+SETS_FILE = os.path.join(GEOMETRY_DIR, os.path.splitext(IMPORT_FILE)[0] + "_sets.json")
+
 # =========================
 # BRANCH ON INPUT MODE
 # =========================
@@ -94,6 +96,14 @@ elif INPUT_MODE == "import_vsp3":
     vsp.ClearVSPModel()
     vsp.ReadVSPFile(vsp3_file)
     vsp.Update()
+    
+    if not os.path.exists(SETS_FILE):
+        raise FileNotFoundError(
+            f"No sets file found: {SETS_FILE}\n"
+            f"Run extract_params.py on this vsp3 first, then classify the geoms."
+        )
+    thin_set, thick_set = vsp_setup.apply_geom_sets(SETS_FILE)
+    
     # Derive STL name from the vsp3 filename
     stl_name = os.path.splitext(IMPORT_FILE)[0] + ".stl"
     stl_out  = vsp_setup.stl_path(stl_name)
