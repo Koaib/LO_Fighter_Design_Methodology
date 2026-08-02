@@ -43,7 +43,7 @@ INPUT_MODE options:
 # =========================
 
 INPUT_MODE    = "import_vsp3"       # "generate" | "import_stl" | "import_vsp3"
-IMPORT_FILE   = "SSAM_final_geom_to_be_used_scaled_by_19.vsp3"  # filename inside Geometry/ folder (for import modes)
+IMPORT_FILE   = "box_template.vsp3"  # filename inside Geometry/ folder (for import modes)
 
 # =========================
 # GEOMETRY FOLDER PATH
