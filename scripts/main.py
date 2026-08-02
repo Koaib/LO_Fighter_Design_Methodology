@@ -46,6 +46,23 @@ INPUT_MODE    = "import_vsp3"       # "generate" | "import_stl" | "import_vsp3"
 IMPORT_FILE   = "box_template.vsp3"  # filename inside Geometry/ folder (for import modes)
 
 # =========================
+# STL MESH SETTINGS — edit this
+# =========================
+# STL tessellation tied directly to RCS wavelength (lambda = c/freq),
+# same CFD-mesh approach used in the sphere/flat-plate/almond validation.
+# Convergence study on those shapes showed lambda/4-lambda/8 is feasible;
+# lambda/6 is the time/accuracy compromise currently in use.
+# min and max no longer have to match — e.g. MAX=4, MIN=8 refines curved
+# regions to lambda/8 while flatter regions stay at lambda/4.
+USE_CFD_MESH     = True     # False -> old plain ExportFile(EXPORT_STL)
+FREQ_GHZ         = 12.0     # also drives the RCS run below
+MAX_EDGE_FACTOR  = 1        # coarse bound: edge = lambda / MAX_EDGE_FACTOR
+MIN_EDGE_FACTOR  = 1        # fine bound:   edge = lambda / MIN_EDGE_FACTOR
+MAX_GAP_FACTOR   = 5.0      # max_gap = lambda / MAX_GAP_FACTOR
+GROWTH_RATIO     = 1.3      # OpenVSP default -- grading ON (was 10.0 = off)
+NUM_CIRCLE_SEGS  = 16.0     # OpenVSP default -- curvature detection ON (was ~0 = off)
+
+# =========================
 # GEOMETRY FOLDER PATH
 # =========================
 
