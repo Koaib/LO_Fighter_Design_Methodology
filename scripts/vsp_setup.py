@@ -418,9 +418,7 @@ def run_vspaero_aero(
     # ── 2. SAVE VSP3 ─────────────────────────────────────────────────────────
     vsp_file = os.path.join(VSP_FILES, "aircraft.vsp3")
     vsp.WriteVSPFile(vsp_file)
-    vsp.ReadVSPFile(vsp_file)   
-    print(f"   VSP3 saved and reloaded : {vsp_file}")
-    print(f"   Internal VSP path : {vsp.GetVSPFileName()}")
+    print(f"   VSP3 saved : {vsp_file}")
     
     # Change working dir so vspaero.exe writes .polar/.history/.lod here
     original_cwd = os.getcwd()

@@ -43,7 +43,7 @@ INPUT_MODE options:
 # =========================
 
 INPUT_MODE    = "import_vsp3"       # "generate" | "import_stl" | "import_vsp3"
-IMPORT_FILE   = "SSAM_final_geom_to_be_used_NOT_scaled_by_19.vsp3"  # filename inside Geometry/ folder (for import modes)
+IMPORT_FILE   = "test_case.vsp3"  # filename inside Geometry/ folder (for import modes)
 REF_MODE      = "auto"      # use "manual" for box_template — it has no wing
 REF_WING_NAME = "Main_Wing"   # only matters once REF_MODE = "auto" (SSAM run)
 
@@ -175,16 +175,16 @@ else:  # "generate"
     print("✅ Aircraft created and saved successfully!")
     stl_for_rcs = "aircraft.stl"
 
-# =========================
-# RCS PIPELINE
-# =========================
+# # =========================
+# # RCS PIPELINE
+# # =========================
 
-vsp_setup.run_openrcs_rcs(
-    stl_filename = stl_for_rcs,
-    freq         = FREQ_GHZ,
-    pol          = "TE-z",
-    cuts         = "azimuth",
-)
+# vsp_setup.run_openrcs_rcs(
+#     stl_filename = stl_for_rcs,
+#     freq         = FREQ_GHZ,
+#     pol          = "TE-z",
+#     cuts         = "azimuth",
+# )
 
 # =========================
 # AERO SETTINGS
