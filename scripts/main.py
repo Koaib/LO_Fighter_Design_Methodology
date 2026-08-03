@@ -43,7 +43,9 @@ INPUT_MODE options:
 # =========================
 
 INPUT_MODE    = "import_vsp3"       # "generate" | "import_stl" | "import_vsp3"
-IMPORT_FILE   = "box_template.vsp3"  # filename inside Geometry/ folder (for import modes)
+IMPORT_FILE   = "SSAM_final_geom_to_be_used_NOT_scaled_by_19.vsp3"  # filename inside Geometry/ folder (for import modes)
+REF_MODE      = "auto"      # use "manual" for box_template — it has no wing
+REF_WING_NAME = "Main_Wing"   # only matters once REF_MODE = "auto" (SSAM run)
 
 # =========================
 # STL MESH SETTINGS — edit this
@@ -56,8 +58,8 @@ IMPORT_FILE   = "box_template.vsp3"  # filename inside Geometry/ folder (for imp
 # regions to lambda/8 while flatter regions stay at lambda/4.
 USE_CFD_MESH     = True     # False -> old plain ExportFile(EXPORT_STL)
 FREQ_GHZ         = 12.0     # also drives the RCS run below
-MAX_EDGE_FACTOR  = 1        # coarse bound: edge = lambda / MAX_EDGE_FACTOR
-MIN_EDGE_FACTOR  = 1        # fine bound:   edge = lambda / MIN_EDGE_FACTOR
+MAX_EDGE_FACTOR  = 0.25        # coarse bound: edge = lambda / MAX_EDGE_FACTOR
+MIN_EDGE_FACTOR  = 0.5        # fine bound:   edge = lambda / MIN_EDGE_FACTOR
 MAX_GAP_FACTOR   = 5.0      # max_gap = lambda / MAX_GAP_FACTOR
 GROWTH_RATIO     = 1.3      # OpenVSP default -- grading ON (was 10.0 = off)
 NUM_CIRCLE_SEGS  = 16.0     # OpenVSP default -- curvature detection ON (was ~0 = off)
@@ -96,14 +98,21 @@ elif INPUT_MODE == "import_vsp3":
     vsp.ClearVSPModel()
     vsp.ReadVSPFile(vsp3_file)
     vsp.Update()
-    
+
     if not os.path.exists(SETS_FILE):
         raise FileNotFoundError(
             f"No sets file found: {SETS_FILE}\n"
             f"Run extract_params.py on this vsp3 first, then classify the geoms."
         )
     thin_set, thick_set = vsp_setup.apply_geom_sets(SETS_FILE)
-    
+
+    wing_id = None
+    if REF_MODE == "auto":
+        matches = [gid for gid in vsp.FindGeoms() if vsp.GetGeomName(gid) == REF_WING_NAME]
+        if not matches:
+            raise ValueError(f"REF_WING_NAME='{REF_WING_NAME}' not found in geometry.")
+        wing_id = matches[0]
+
     # Derive STL name from the vsp3 filename
     stl_name = os.path.splitext(IMPORT_FILE)[0] + ".stl"
     stl_out  = vsp_setup.stl_path(stl_name)
@@ -118,7 +127,6 @@ elif INPUT_MODE == "import_vsp3":
             growth_ratio    = GROWTH_RATIO,
             num_circle_segs = NUM_CIRCLE_SEGS,
         )
-        
     else:
         vsp.ExportFile(stl_out, vsp.SET_ALL, vsp.EXPORT_STL)
 
@@ -178,27 +186,33 @@ vsp_setup.run_openrcs_rcs(
     cuts         = "azimuth",
 )
 
-# # =========================
-# # AERO SETTINGS
-# # =========================
+# =========================
+# AERO SETTINGS
+# =========================
 
-# ALPHA_START  = -5.0
-# ALPHA_END    = 15.0
-# ALPHA_NPTS   = 21       # gives 1-deg steps
-# MACH         = 0.4      # cruise approximation
-# RE_CREF      = 1e6      # Reynolds based on ref chord
-# WAKE_ITERS   = 3
+ALPHA_START  = -8.0
+ALPHA_END    = 12.0
+ALPHA_NPTS   = 11       # gives 2-deg steps
+MACH         = 0.4      # cruise approximation
+RE_CREF      = 1e6      # Reynolds based on ref chord
+WAKE_ITERS   = 3
 
-# # =========================
-# # TRIGGER AERO PIPELINE
-# # =========================
+# =========================
+# TRIGGER AERO PIPELINE
+# =========================
 
-# vsp_setup.run_vspaero_aero(
-#     wing_id     = wing,        # the wing geom ID created earlier
-#     alpha_start = ALPHA_START,
-#     alpha_end   = ALPHA_END,
-#     alpha_npts  = ALPHA_NPTS,
-#     mach        = MACH,
-#     re_cref     = RE_CREF,
-#     wake_iters  = WAKE_ITERS,
-# )
+vsp_setup.run_vspaero_aero(
+    wing_id        = wing_id,
+    alpha_start    = ALPHA_START,
+    alpha_end      = ALPHA_END,
+    alpha_npts     = ALPHA_NPTS,
+    mach_start     = MACH,
+    mach_end       = MACH,
+    mach_npts      = 1,
+    re_cref_start  = RE_CREF,
+    wake_iters     = WAKE_ITERS,
+    thin_geom_set  = thin_set,
+    thick_geom_set = thick_set,
+    ref_mode       = REF_MODE,
+    sref = 1.0, bref = 1.0, cref = 1.0,   # ← add this line, only used when REF_MODE="manual"
+)

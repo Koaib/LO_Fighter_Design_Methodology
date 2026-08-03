@@ -300,9 +300,18 @@ def dump_geom_params(vsp3_path: str, out_json_path: str) -> dict:
 
 def apply_geom_sets(sets_json_path: str) -> tuple:
     """
-    Reads the lifting/non_lifting classification JSON (named after the
-    vsp3 file, produced by dump_geom_params) and assigns every geom in
-    the currently loaded model to the corresponding VSP Set.
+    Reads the lifting/non_lifting classification JSON and assigns every
+    geom in the currently loaded model to the corresponding VSP Set.
+
+    Always force-creates fresh sets at two fixed, pipeline-reserved slot
+    indices (the last two of OpenVSP's 20 set slots) -- regardless of
+    what sets may already exist in the vsp3 (hand-built or otherwise).
+    This makes pipeline behavior independent of prior GUI/session state,
+    which is what caused the earlier Set_0/Actual_Geom collision bug.
+
+    DO NOT use the last two set slots for anything else in the GUI --
+    the pipeline will overwrite them on every run.
+
     Returns (thin_set_idx, thick_set_idx) for use as ThinGeomSet/GeomSet
     in VSPAERO analysis inputs.
     """
@@ -315,8 +324,10 @@ def apply_geom_sets(sets_json_path: str) -> tuple:
     lifting     = set(cfg.get("lifting", []))
     non_lifting = set(cfg.get("non_lifting", []))
 
-    thin_set  = vsp.SET_FIRST_USER
-    thick_set = vsp.SET_FIRST_USER + 1
+    num_sets  = vsp.GetNumSets()
+    thin_set  = num_sets - 2   # reserved, pipeline-owned
+    thick_set = num_sets - 1   # reserved, pipeline-owned
+
     vsp.SetSetName(thin_set,  "Lifting")
     vsp.SetSetName(thick_set, "Non-Lifting")
 
@@ -326,6 +337,12 @@ def apply_geom_sets(sets_json_path: str) -> tuple:
         raise ValueError(
             f"Unclassified geoms — add to {sets_json_path}: {sorted(unclassified)}"
         )
+
+    # Clear both reserved slots completely before assigning -- guarantees
+    # no leftover flags from a previous run or previous geometry survive.
+    for gid in all_geoms.values():
+        vsp.SetSetFlag(gid, thin_set,  False)
+        vsp.SetSetFlag(gid, thick_set, False)
 
     for name in lifting:
         vsp.SetSetFlag(all_geoms[name], thin_set, True)
@@ -353,13 +370,25 @@ def run_matlab_rcs():
 
 def run_vspaero_aero(
     wing_id,
-    alpha_start  = -5.0,
-    alpha_end    = 15.0,
-    alpha_npts   = 21,
-    mach         = 0.4,
-    re_cref      = 1e6,
-    wake_iters   = 3,
+    alpha_start    = -5.0,
+    alpha_end      = 15.0,
+    alpha_npts     = 21,
+    beta_start     = 0.0,
+    beta_end       = 0.0,
+    beta_npts      = 1,
+    mach_start     = 0.4,
+    mach_end       = 0.4,
+    mach_npts      = 1,
+    re_cref_start  = 1e6,
+    re_cref_end    = 1e6,
+    re_cref_npts   = 1,
+    wake_iters     = 3,
+    thin_geom_set  = 0,
+    thick_geom_set = 0,
+    ref_mode       = "auto",
+    sref = None, bref = None, cref = None,
 ):
+    
     import openvsp as vsp
     
     # DEBUGGING
@@ -368,14 +397,21 @@ def run_vspaero_aero(
 
     print("\n🔄 Running VSPAero VLM analysis...")
     print(f"   Alpha : {alpha_start}° → {alpha_end}°  ({alpha_npts} points)")
-    print(f"   Mach  : {mach}   Re: {re_cref:.2e}\n")
+    print(f"   Mach  : {mach_start}   Re: {re_cref_start:.2e}\n")
 
     # ── 1. SET REFERENCE WING ────────────────────────────────────────────────
     
     # DEBUGGING
     print("   [DEBUG] calling SetVSPAERORefWingID...")
-    vsp.SetVSPAERORefWingID(wing_id)
-    print("   [DEBUG] SetVSPAERORefWingID done")
+    if ref_mode == "auto":
+        vsp.SetVSPAERORefWingID(wing_id)
+        print("   [DEBUG] Ref values from wing planform (auto)")
+    elif ref_mode == "manual":
+        if None in (sref, bref, cref):
+            raise ValueError("ref_mode='manual' requires sref, bref, cref.")
+        print(f"   [DEBUG] Ref values manual: Sref={sref}, bref={bref}, cref={cref}")
+    else:
+        raise ValueError("ref_mode must be 'auto' or 'manual'.")
     vsp.PrintAnalysisInputs("VSPAERODegenGeom")
     vsp.PrintAnalysisInputs("DegenGeom")
 
@@ -397,9 +433,15 @@ def run_vspaero_aero(
         # name, so the old calls were silently ignored → empty RID → early exit.
         print("   Running VSPAEROComputeGeometry...")
         vsp.SetAnalysisInputDefaults("VSPAEROComputeGeometry")
-        vsp.SetIntAnalysisInput("VSPAEROComputeGeometry", "GeomSet",     [-1])
-        vsp.SetIntAnalysisInput("VSPAEROComputeGeometry", "ThinGeomSet", [0])
+        vsp.SetIntAnalysisInput("VSPAEROComputeGeometry", "GeomSet",     [thick_geom_set])
+        vsp.SetIntAnalysisInput("VSPAEROComputeGeometry", "ThinGeomSet", [thin_geom_set])
+
+        geoms_before = set(vsp.FindGeoms())
         geom_rid = vsp.ExecAnalysis("VSPAEROComputeGeometry")
+        for gid in set(vsp.FindGeoms()) - geoms_before:
+            vsp.DeleteGeom(gid)
+        vsp.Update()
+        
         if not geom_rid:
             print("❌ VSPAEROComputeGeometry failed — check model geometry.")
             return None
@@ -411,27 +453,7 @@ def run_vspaero_aero(
             print(f"   VSP_Files contents: {os.listdir(VSP_FILES)}")
             return None
         print("   .vspgeom exists ✅")
-
-        # ── 4. VSPAEROSweep ──────────────────────────────────────────────────
-        vsp.SetAnalysisInputDefaults("VSPAEROSweep")
-        vsp.SetDoubleAnalysisInput("VSPAEROSweep", "AlphaStart", [alpha_start])
-        vsp.SetDoubleAnalysisInput("VSPAEROSweep", "AlphaEnd",   [alpha_end])
-        vsp.SetIntAnalysisInput(   "VSPAEROSweep", "AlphaNpts",  [alpha_npts])
-        vsp.SetDoubleAnalysisInput("VSPAEROSweep", "BetaStart",  [0.0])
-        vsp.SetDoubleAnalysisInput("VSPAEROSweep", "BetaEnd",    [0.0])
-        vsp.SetIntAnalysisInput(   "VSPAEROSweep", "BetaNpts",   [1])
-        vsp.SetDoubleAnalysisInput("VSPAEROSweep", "MachStart",  [mach])
-        vsp.SetDoubleAnalysisInput("VSPAEROSweep", "MachEnd",    [mach])
-        vsp.SetIntAnalysisInput(   "VSPAEROSweep", "MachNpts",   [1])
-        vsp.SetDoubleAnalysisInput("VSPAEROSweep", "ReCref",      [re_cref])
-        vsp.SetIntAnalysisInput(   "VSPAEROSweep", "WakeNumIter", [wake_iters])
-        vsp.SetIntAnalysisInput(   "VSPAEROSweep", "GeomSet",     [-1])
-        print("   Executing VSPAEROSweep (1–3 min)...")
-        rid = vsp.ExecAnalysis("VSPAEROSweep")
-        if not rid:
-            print("❌ VSPAEROSweep failed.")
-            return None
-        print(f"   Sweep finished. RID: {rid}")
+        
         
         # ── 5. VSPAEROSweep — alpha sweep ─────────────────────────────────────
         vsp.SetAnalysisInputDefaults("VSPAEROSweep")
@@ -440,19 +462,32 @@ def run_vspaero_aero(
         vsp.SetDoubleAnalysisInput("VSPAEROSweep", "AlphaEnd",   [alpha_end])
         vsp.SetIntAnalysisInput(   "VSPAEROSweep", "AlphaNpts",  [alpha_npts])
 
-        vsp.SetDoubleAnalysisInput("VSPAEROSweep", "BetaStart", [0.0])
-        vsp.SetDoubleAnalysisInput("VSPAEROSweep", "BetaEnd",   [0.0])
-        vsp.SetIntAnalysisInput(   "VSPAEROSweep", "BetaNpts",  [1])
+        vsp.SetDoubleAnalysisInput("VSPAEROSweep", "BetaStart", [beta_start])
+        vsp.SetDoubleAnalysisInput("VSPAEROSweep", "BetaEnd",   [beta_end])
+        vsp.SetIntAnalysisInput(   "VSPAEROSweep", "BetaNpts",  [beta_npts])
 
-        vsp.SetDoubleAnalysisInput("VSPAEROSweep", "MachStart", [mach])
-        vsp.SetDoubleAnalysisInput("VSPAEROSweep", "MachEnd",   [mach])
-        vsp.SetIntAnalysisInput(   "VSPAEROSweep", "MachNpts",  [1])
+        vsp.SetDoubleAnalysisInput("VSPAEROSweep", "MachStart", [mach_start])
+        vsp.SetDoubleAnalysisInput("VSPAEROSweep", "MachEnd",   [mach_end])
+        vsp.SetIntAnalysisInput(   "VSPAEROSweep", "MachNpts",  [mach_npts])
 
-        vsp.SetDoubleAnalysisInput("VSPAEROSweep", "ReCref",      [re_cref])
+        vsp.SetDoubleAnalysisInput("VSPAEROSweep", "ReCref",      [re_cref_start])
+        vsp.SetDoubleAnalysisInput("VSPAEROSweep", "ReCrefEnd",   [re_cref_end])
+        vsp.SetIntAnalysisInput(   "VSPAEROSweep", "ReCrefNpts",  [re_cref_npts])
         vsp.SetIntAnalysisInput(   "VSPAEROSweep", "WakeNumIter", [wake_iters])
+        vsp.SetIntAnalysisInput(   "VSPAEROSweep", "GeomSet",     [thick_geom_set])
+        vsp.SetIntAnalysisInput(   "VSPAEROSweep", "ThinGeomSet", [thin_geom_set])
 
-        print("   Executing VSPAEROSweep (1-3 min)...")
+        if ref_mode == "manual":
+            vsp.SetIntAnalysisInput(   "VSPAEROSweep", "RefFlag", [0])
+            vsp.SetDoubleAnalysisInput("VSPAEROSweep", "Sref",    [sref])
+            vsp.SetDoubleAnalysisInput("VSPAEROSweep", "bref",    [bref])
+            vsp.SetDoubleAnalysisInput("VSPAEROSweep", "cref",    [cref])
+
+        print("   Executing VSPAEROSweep...")
         rid = vsp.ExecAnalysis("VSPAEROSweep")
+        for gid in set(vsp.FindGeoms()) - geoms_before:
+            vsp.DeleteGeom(gid)
+        vsp.Update()
         if not rid:
             print("❌ VSPAEROSweep failed.")
             return None
