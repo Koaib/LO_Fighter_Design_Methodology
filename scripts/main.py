@@ -56,7 +56,7 @@ REF_WING_NAME = "Main_Wing"   # only matters once REF_MODE = "auto" (SSAM run)
 # lambda/6 is the time/accuracy compromise currently in use.
 # min and max no longer have to match — e.g. MAX=4, MIN=8 refines curved
 # regions to lambda/8 while flatter regions stay at lambda/4.
-USE_CFD_MESH     = True     # False -> old plain ExportFile(EXPORT_STL)
+USE_CFD_MESH     = False     # False -> old plain ExportFile(EXPORT_STL)
 FREQ_GHZ         = 12.0     # also drives the RCS run below
 MAX_EDGE_FACTOR  = 1        # coarse bound: edge = lambda / MAX_EDGE_FACTOR
 MIN_EDGE_FACTOR  = 3        # fine bound:   edge = lambda / MIN_EDGE_FACTOR
@@ -175,44 +175,44 @@ else:  # "generate"
     print("✅ Aircraft created and saved successfully!")
     stl_for_rcs = "aircraft.stl"
 
-# =========================
-# RCS PIPELINE
-# =========================
+# # =========================
+# # RCS PIPELINE
+# # =========================
 
-vsp_setup.run_openrcs_rcs(
-    stl_filename = stl_for_rcs,
-    freq         = FREQ_GHZ,
-    pol          = "TE-z",
-    cuts         = "azimuth",
-)
+# vsp_setup.run_openrcs_rcs(
+#     stl_filename = stl_for_rcs,
+#     freq         = FREQ_GHZ,
+#     pol          = "TE-z",
+#     cuts         = "azimuth",
+# )
 
-# =========================
-# AERO SETTINGS
-# =========================
+# # =========================
+# # AERO SETTINGS
+# # =========================
 
-ALPHA_START  = -8.0
-ALPHA_END    = 12.0
-ALPHA_NPTS   = 11       # gives 2-deg steps
-MACH         = 0.4      # cruise approximation
-RE_CREF      = 1e6      # Reynolds based on ref chord
-WAKE_ITERS   = 3
+# ALPHA_START  = -8.0
+# ALPHA_END    = 12.0
+# ALPHA_NPTS   = 11       # gives 2-deg steps
+# MACH         = 0.4      # cruise approximation
+# RE_CREF      = 1e6      # Reynolds based on ref chord
+# WAKE_ITERS   = 3
 
-# =========================
-# TRIGGER AERO PIPELINE
-# =========================
+# # =========================
+# # TRIGGER AERO PIPELINE
+# # =========================
 
-vsp_setup.run_vspaero_aero(
-    wing_id        = wing_id,
-    alpha_start    = ALPHA_START,
-    alpha_end      = ALPHA_END,
-    alpha_npts     = ALPHA_NPTS,
-    mach_start     = MACH,
-    mach_end       = MACH,
-    mach_npts      = 1,
-    re_cref_start  = RE_CREF,
-    wake_iters     = WAKE_ITERS,
-    thin_geom_set  = thin_set,
-    thick_geom_set = thick_set,
-    ref_mode       = REF_MODE,
-    sref = 1.0, bref = 1.0, cref = 1.0,   # ← add this line, only used when REF_MODE="manual"
-)
+# vsp_setup.run_vspaero_aero(
+#     wing_id        = wing_id,
+#     alpha_start    = ALPHA_START,
+#     alpha_end      = ALPHA_END,
+#     alpha_npts     = ALPHA_NPTS,
+#     mach_start     = MACH,
+#     mach_end       = MACH,
+#     mach_npts      = 1,
+#     re_cref_start  = RE_CREF,
+#     wake_iters     = WAKE_ITERS,
+#     thin_geom_set  = thin_set,
+#     thick_geom_set = thick_set,
+#     ref_mode       = REF_MODE,
+#     sref = 1.0, bref = 1.0, cref = 1.0,   # ← add this line, only used when REF_MODE="manual"
+# )
