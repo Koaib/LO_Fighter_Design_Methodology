@@ -43,7 +43,7 @@ INPUT_MODE options:
 # =========================
 
 INPUT_MODE    = "import_vsp3"       # "generate" | "import_stl" | "import_vsp3"
-IMPORT_FILE   = "SSAM_final_geom_to_be_used_scaled_by_19.vsp3"  # filename inside Geometry/ folder (for import modes)
+IMPORT_FILE   = "SSAM_final_geom_to_be_used_scaled_by_19_nozzle_mod.vsp3"  # filename inside Geometry/ folder (for import modes)
 REF_MODE      = "auto"      # use "manual" for box_template — it has no wing
 REF_WING_NAME = "Main_Wing"   # only matters once REF_MODE = "auto" (SSAM run)
 
