@@ -1,0 +1,85 @@
+# -*- coding: utf-8 -*-
+"""
+Created on Thu Aug  6 12:10:49 2026
+
+@author: KK
+"""
+
+import subprocess, json, os, sys
+from pathlib import Path
+
+SCRIPT_DIR   = Path(__file__).resolve().parent
+ROOT_DIR     = SCRIPT_DIR.parent
+GEOMETRY_DIR = ROOT_DIR / "Geometry"
+
+VSP3_FILE    = str(GEOMETRY_DIR / "SSAM_final_geom_to_be_used_scaled_by_19_nozzle_mod.vsp3")
+SETS_FILE    = str(GEOMETRY_DIR / "SSAM_final_geom_to_be_used_scaled_by_19_nozzle_mod_sets.json")
+SWEEP_PARAMS_FILE = str(GEOMETRY_DIR / "SSAM_final_geom_to_be_used_scaled_by_19_nozzle_mod_sweep_params.json")
+
+with open(SWEEP_PARAMS_FILE) as f:
+    SWEEP_PARAMS = json.load(f)
+
+SWEEP_ROOT   = ROOT_DIR / "Results" / "Sweeps"
+MANIFEST_DIR = ROOT_DIR / "Results" / "Manifest"
+LOG_DIR      = ROOT_DIR / "Results" / "SweepLogs"
+for d in (SWEEP_ROOT, MANIFEST_DIR, LOG_DIR):
+    d.mkdir(parents=True, exist_ok=True)
+
+TIMEOUT_SEC = 70 * 60
+
+BASE = dict(
+    vsp3=VSP3_FILE, sets_file=SETS_FILE, ref_wing="Main_Wing",
+    manifest_dir=str(MANIFEST_DIR), sweep_dir=str(SWEEP_ROOT),
+    alpha_start=-2.0, alpha_end=10.0, alpha_npts=7,
+    mach=0.6, re_cref=1e6, wake_iters=3,
+    run_rcs=False,
+    freq_ghz=12.0, pol="both", cuts="azimuth", az_range="half", delp=1.0,
+    min_edge_factor=3, max_edge_factor=1, max_gap_factor=3,
+    growth_ratio=1.6, num_circle_segs=12.0,
+)
+
+
+def _override(param_key, delta):
+    spec = SWEEP_PARAMS[param_key]
+    return [spec["geom"], spec["surf"], spec["section"], spec["parm"], spec["baseline"] + delta]
+
+
+def build_sweep(param_key, deltas, family_tag, extra_param_keys=None):
+    configs = []
+    for d in deltas:
+        overrides = [_override(param_key, d)]
+        for extra_key in (extra_param_keys or []):
+            overrides.append(_override(extra_key, d))
+        configs.append({**BASE, "tag": f"{family_tag}_{d:+.1f}", "parm_overrides": overrides})
+    return configs
+
+
+def run_one(cfg):
+    manifest_file = MANIFEST_DIR / f"{cfg['tag']}.json"
+    if manifest_file.exists():
+        with open(manifest_file) as f:
+            if json.load(f).get("status") == "done":
+                print(f"skip {cfg['tag']} — already done"); return True
+
+    log_path = LOG_DIR / f"{cfg['tag']}.log"
+    worker = str(SCRIPT_DIR / "sweep_worker.py")
+    with open(log_path, "w") as logf:
+        try:
+            subprocess.run([sys.executable, worker, json.dumps(cfg)],
+                            stdout=logf, stderr=subprocess.STDOUT, timeout=TIMEOUT_SEC, check=True)
+            print(f"OK {cfg['tag']}"); return True
+        except subprocess.TimeoutExpired:
+            print(f"TIMEOUT — {cfg['tag']} skipped"); return False
+        except subprocess.CalledProcessError:
+            print(f"FAILED — {cfg['tag']}, see {log_path}"); return False
+
+
+if __name__ == "__main__":
+    DELTAS = [-15, -10, -5, 5, 10, 15]
+
+    configs  = build_sweep("WingSweep_root", DELTAS, "WingSweep_aligned", extra_param_keys=["HTSweep_root"])
+    configs += build_sweep("WingSweep_root", DELTAS, "WingSweep_misaligned")
+    configs += build_sweep("VTCant",         DELTAS, "VTCant")
+
+    results = {cfg["tag"]: run_one(cfg) for cfg in configs}
+    print(json.dumps(results, indent=2))

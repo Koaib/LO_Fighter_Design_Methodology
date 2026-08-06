@@ -1,0 +1,75 @@
+# -*- coding: utf-8 -*-
+"""
+Created on Thu Aug  6 12:11:30 2026
+
+@author: KK
+"""
+
+import json, glob, sys
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+from pathlib import Path
+
+SCRIPT_DIR   = Path(__file__).resolve().parent
+ROOT_DIR     = SCRIPT_DIR.parent
+MANIFEST_DIR = ROOT_DIR / "Results" / "Manifest"
+OUT_DIR      = ROOT_DIR / "Results" / "Comparisons"
+OUT_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def load_family(prefix):
+    entries = []
+    for f in sorted(glob.glob(str(MANIFEST_DIR / f"{prefix}_*.json"))):
+        with open(f) as fh:
+            e = json.load(fh)
+        if e.get("status") == "done":
+            entries.append(e)
+    return entries
+
+
+def _delta(tag, prefix):
+    return float(tag.replace(f"{prefix}_", ""))
+
+
+def overlay_curves(entries, prefix):
+    fig1, ax1 = plt.subplots(figsize=(7,5))
+    fig2, ax2 = plt.subplots(figsize=(7,5))
+    for e in sorted(entries, key=lambda e: _delta(e["tag"], prefix)):
+        df = pd.read_csv(e["aero_csv"])
+        label = f"{_delta(e['tag'], prefix):+.1f}°"
+        ax1.plot(df["CDtot"], df["CL"], "-o", ms=3, label=label)
+        ax2.plot(df["Alpha"], df["CL"], "-o", ms=3, label=label)
+    ax1.set_xlabel("CD"); ax1.set_ylabel("CL"); ax1.set_title(f"Drag Polar — {prefix}")
+    ax1.legend(title="Δ"); ax1.grid(True, ls="--", alpha=0.6)
+    ax2.set_xlabel("Alpha (deg)"); ax2.set_ylabel("CL"); ax2.set_title(f"CL-Alpha — {prefix}")
+    ax2.legend(title="Δ"); ax2.grid(True, ls="--", alpha=0.6)
+    fig1.tight_layout(); fig1.savefig(OUT_DIR / f"{prefix}_drag_polar_overlay.png", dpi=150)
+    fig2.tight_layout(); fig2.savefig(OUT_DIR / f"{prefix}_cl_alpha_overlay.png", dpi=150)
+    plt.close(fig1); plt.close(fig2)
+
+
+def threshold_curve(entries, prefix, baseline_max_LD):
+    deltas = sorted(_delta(e["tag"], prefix) for e in entries)
+    ld = {_delta(e["tag"], prefix): e["max_LD"] for e in entries}
+    pct = [100.0 * (baseline_max_LD - ld[d]) / baseline_max_LD for d in deltas]
+    fig, ax = plt.subplots(figsize=(7,5))
+    ax.plot(deltas, pct, "-o", color="darkred")
+    ax.axhline(2.0, color="grey", ls="--", label="2% threshold")
+    ax.axhline(3.0, color="grey", ls=":", label="3% threshold")
+    ax.set_xlabel("Parameter Δ (deg)"); ax.set_ylabel("Max L/D loss (%)")
+    ax.set_title(f"Aero degradation vs Δ — {prefix}")
+    ax.legend(); ax.grid(True, ls="--", alpha=0.6)
+    fig.tight_layout(); fig.savefig(OUT_DIR / f"{prefix}_threshold_curve.png", dpi=150)
+    plt.close(fig)
+    return dict(zip(deltas, pct))
+
+
+if __name__ == "__main__":
+    prefix = sys.argv[1]
+    baseline_max_LD = float(sys.argv[2])
+    entries = load_family(prefix)
+    if not entries:
+        print(f"No completed runs for '{prefix}'"); sys.exit(1)
+    overlay_curves(entries, prefix)
+    print(json.dumps(threshold_curve(entries, prefix, baseline_max_LD), indent=2))

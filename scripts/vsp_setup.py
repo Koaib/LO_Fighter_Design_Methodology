@@ -236,66 +236,37 @@ def run_openrcs_rcs(
         traceback.print_exc()
         
 def dump_geom_params(vsp3_path: str, out_json_path: str) -> dict:
-    """
-    Extract every geom's parameters from a vsp3 file into a JSON dict.
-    Reusable across any baseline geometry -- not specific to any one
-    aircraft.
-    """
     import openvsp as vsp
     import json
-
-    vsp.VSPCheckSetup()
-    vsp.ClearVSPModel()
-    vsp.ReadVSPFile(vsp3_path)
-    vsp.Update()
+    vsp.VSPCheckSetup(); vsp.ClearVSPModel()
+    vsp.ReadVSPFile(vsp3_path); vsp.Update()
 
     dump = {}
     for gid in vsp.FindGeoms():
         gname = vsp.GetGeomName(gid)
-        gtype = vsp.GetGeomTypeName(gid) if hasattr(vsp, "GetGeomTypeName") else "?"
-        parms = {vsp.GetParmName(pid): vsp.GetParmVal(pid)
-                 for pid in vsp.GetGeomParmIDs(gid)}
-        dump[gname] = {"id": gid, "type": gtype, "parms": parms}
+        gtype = vsp.GetGeomTypeName(gid)
+        entry = {"id": gid, "type": gtype, "parms": {}, "sections": {}}
+
+        # geom-level parms — unchanged from before
+        entry["parms"] = {vsp.GetParmName(pid): vsp.GetParmVal(pid)
+                           for pid in vsp.GetGeomParmIDs(gid)}
+
+        # per-section parms (WING/FUSELAGE have multiple XSecs)
+        n_surf = vsp.GetNumXSecSurfs(gid) if hasattr(vsp, "GetNumXSecSurfs") else 0
+        for si in range(n_surf):
+            xsec_surf_id = vsp.GetXSecSurf(gid, si)
+            n_xsec = vsp.GetNumXSec(xsec_surf_id)
+            for xi in range(n_xsec):
+                xsec_id = vsp.GetXSec(xsec_surf_id, xi)
+                sec_parms = {}
+                for pid in vsp.GetXSecParmIDs(xsec_id):
+                    sec_parms[vsp.GetParmName(pid)] = vsp.GetParmVal(pid)
+                entry["sections"][f"surf{si}_sec{xi}"] = sec_parms
+
+        dump[gname] = entry
 
     with open(out_json_path, "w") as f:
         json.dump(dump, f, indent=2)
-
-    geom_names = list(dump.keys())
-    print(f"Dumped {sum(len(v['parms']) for v in dump.values())} parms "
-          f"across {len(dump)} geoms -> {out_json_path}")
-    print(f"Geoms found ({len(geom_names)}): {', '.join(geom_names)}")
-
-    # ── companion classification file, tied to the VSP3 filename ──────
-    # e.g. SSAM_final_geom_...scaled_by_19.vsp3
-    #      -> SSAM_final_geom_...scaled_by_19_sets.json  (same folder)
-    vsp3_dir  = os.path.dirname(vsp3_path)
-    vsp3_stem = os.path.splitext(os.path.basename(vsp3_path))[0]
-    sets_path = os.path.join(vsp3_dir, f"{vsp3_stem}_sets.json")
-
-    if not os.path.exists(sets_path):
-        with open(sets_path, "w") as f:
-            json.dump({
-                "lifting": [],
-                "non_lifting": [],
-                "_available_geoms": geom_names
-            }, f, indent=2)
-        print(f"📝 Classification template created -> {sets_path}")
-        print('   Edit it: move each name into "lifting" or "non_lifting".')
-    else:
-        with open(sets_path, "r") as f:
-            existing = json.load(f)
-        old_names = set(existing.get("_available_geoms", []))
-        new_names = set(geom_names)
-        added, removed = new_names - old_names, old_names - new_names
-        if added or removed:
-            print(f"⚠️  Geometry changed since {sets_path} was classified:")
-            if added:   print(f"     + added   : {sorted(added)}")
-            if removed: print(f"     - removed : {sorted(removed)}")
-            print("   File NOT overwritten (your classifications are preserved).")
-            print("   Update it by hand to match the current geometry.")
-        else:
-            print(f"   Classification file up to date: {sets_path}")
-            
     return dump
 
 def apply_geom_sets(sets_json_path: str) -> tuple:
