@@ -238,20 +238,21 @@ def run_openrcs_rcs(
 def dump_geom_params(vsp3_path: str, out_json_path: str) -> dict:
     import openvsp as vsp
     import json
+
     vsp.VSPCheckSetup(); vsp.ClearVSPModel()
     vsp.ReadVSPFile(vsp3_path); vsp.Update()
 
     dump = {}
+    sweep_candidates = {}   # collects every section parm for the template
+
     for gid in vsp.FindGeoms():
         gname = vsp.GetGeomName(gid)
-        gtype = vsp.GetGeomTypeName(gid)
+        gtype = vsp.GetGeomTypeName(gid) if hasattr(vsp, "GetGeomTypeName") else "?"
         entry = {"id": gid, "type": gtype, "parms": {}, "sections": {}}
 
-        # geom-level parms — unchanged from before
         entry["parms"] = {vsp.GetParmName(pid): vsp.GetParmVal(pid)
                            for pid in vsp.GetGeomParmIDs(gid)}
 
-        # per-section parms (WING/FUSELAGE have multiple XSecs)
         n_surf = vsp.GetNumXSecSurfs(gid) if hasattr(vsp, "GetNumXSecSurfs") else 0
         for si in range(n_surf):
             xsec_surf_id = vsp.GetXSecSurf(gid, si)
@@ -260,13 +261,56 @@ def dump_geom_params(vsp3_path: str, out_json_path: str) -> dict:
                 xsec_id = vsp.GetXSec(xsec_surf_id, xi)
                 sec_parms = {}
                 for pid in vsp.GetXSecParmIDs(xsec_id):
-                    sec_parms[vsp.GetParmName(pid)] = vsp.GetParmVal(pid)
+                    pname = vsp.GetParmName(pid)
+                    pval  = vsp.GetParmVal(pid)
+                    sec_parms[pname] = pval
+                    # only surface shaping-relevant parms as sweep candidates
+                    if pname in ("Sweep", "Dihedral", "Twist", "Root_Chord", "Tip_Chord"):
+                        key = f"{gname}_{pname}_surf{si}sec{xi}"
+                        sweep_candidates[key] = {
+                            "geom": gname, "surf": si, "section": xi,
+                            "parm": pname, "baseline": pval,
+                        }
                 entry["sections"][f"surf{si}_sec{xi}"] = sec_parms
 
         dump[gname] = entry
 
     with open(out_json_path, "w") as f:
         json.dump(dump, f, indent=2)
+
+    geom_names = list(dump.keys())
+    print(f"Dumped params for {len(geom_names)} geoms -> {out_json_path}")
+
+    vsp3_dir  = os.path.dirname(vsp3_path)
+    vsp3_stem = os.path.splitext(os.path.basename(vsp3_path))[0]
+
+    # ── existing _sets.json template logic — unchanged ──────────────────
+    sets_path = os.path.join(vsp3_dir, f"{vsp3_stem}_sets.json")
+    if not os.path.exists(sets_path):
+        with open(sets_path, "w") as f:
+            json.dump({"lifting": [], "non_lifting": [], "_available_geoms": geom_names}, f, indent=2)
+        print(f"📝 Classification template created -> {sets_path}")
+    else:
+        with open(sets_path, "r") as f:
+            existing = json.load(f)
+        old_names, new_names = set(existing.get("_available_geoms", [])), set(geom_names)
+        added, removed = new_names - old_names, old_names - new_names
+        if added or removed:
+            print(f"⚠️  Geometry changed since {sets_path} was classified — file NOT overwritten.")
+        else:
+            print(f"   Classification file up to date: {sets_path}")
+
+    # ── NEW: _sweep_params.json template, same pattern ──────────────────
+    sweep_path = os.path.join(vsp3_dir, f"{vsp3_stem}_sweep_params.json")
+    if not os.path.exists(sweep_path):
+        with open(sweep_path, "w") as f:
+            json.dump(sweep_candidates, f, indent=2)
+        print(f"📝 Sweep-params template created -> {sweep_path}")
+        print("   Delete entries you don't need; rename keys to short, meaningful names.")
+        print("   Baseline values are pre-filled from the current geometry — verify, don't guess.")
+    else:
+        print(f"   Sweep-params file already exists, not overwritten: {sweep_path}")
+
     return dump
 
 def apply_geom_sets(sets_json_path: str) -> tuple:
