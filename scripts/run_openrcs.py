@@ -525,7 +525,10 @@ def run_openrcs_pipeline(
     corr        : float = 0.0,
     delstd      : float = 0.0,
     rs          : int   = 0,
+    az_range    : str   = "full",   # "full" (0-360) or "half" (0-180, symmetric aircraft)
+    delp        : float = 1.0,      # phi step, deg
 ) -> dict:
+    
     """
     End-to-end OpenRCS monostatic RCS pipeline.
 
@@ -549,6 +552,7 @@ def run_openrcs_pipeline(
     print(f"  STL        : {stl_path}")
     print(f"  Frequency  : {freq} GHz    Polarisation: {pol}")
     print(f"  Cuts       : Azimuth θ=90°  |  Elevation φ=0°  |  Frontal 2-D")
+    print(f"  Azimuth    : range={az_range}  delp={delp}°")
     print("=" * 60 + "\n")
 
     if not os.path.isfile(stl_path):
@@ -632,8 +636,9 @@ def run_openrcs_pipeline(
 
         # Azimuth cut: full phi sweep at fixed theta=90° (radar at same altitude).
         # ip = (360-0)/1 + 1 = 361,  it = 1
+        _az_pstop = 180.0 if az_range == "half" else 360.0
         params_az = _make_params(
-            pstart=0.0, pstop=360.0, delp=1.0,
+            pstart=0.0, pstop=_az_pstop, delp=delp,
             tstart=90.0, tstop=90.0, delt=1.0,
         )
 
@@ -707,7 +712,7 @@ def run_openrcs_pipeline(
         # ── save 3-D figure once (from the first available run) ───────────────
         for tag in ("AZ_TE", "AZ_TM", "EL_TE", "EL_TM"):
             if tag in raw and raw[tag] and raw[tag][1] and os.path.isfile(raw[tag][1]):
-                dst = os.path.join(results_dir, f"aircraft_3D_{ts}.jpg")
+                dst = os.path.join(results_dir, f"{stem}_{ts}.jpg")                
                 out["fig_3d"] = _cp(raw[tag][1], dst)
                 break
 
@@ -765,46 +770,39 @@ def run_openrcs_pipeline(
             
             
         # ── AZIMUTH POLAR MAPS ────────────────────────────────────────────────
-        # Co-pol only.  Cross-pol is not plotted here (near zero → blank map).
+        def _azimuth_to_full_circle(phi_deg, rcs_dBsm):
+            phi = phi_deg.copy()
+            if len(phi) > 1 and np.isclose(phi[-1], phi[0] + 360.0):
+                phi = phi[:-1]
+                return phi, rcs_dBsm[:len(phi)]
+            phi_left = 360.0 - phi[-2:0:-1]
+            rcs_left = rcs_dBsm[-2:0:-1]
+            return np.concatenate([phi, phi_left]), np.concatenate([rcs_dBsm[:len(phi)], rcs_left])
+
         if "AZ_TE" in parsed and len(parsed["AZ_TE"]["sph"]):
             d = parsed["AZ_TE"]
-            phi_arr = d["phi_vals"].copy()
-            # remove duplicate 360° endpoint if present
-            if len(phi_arr) > 1 and np.isclose(phi_arr[-1], phi_arr[0] + 360.0):
-                phi_arr = phi_arr[:-1]
-            sph_arr = d["sph"][:len(phi_arr)]
+            phi_full, sph_full = _azimuth_to_full_circle(d["phi_vals"], d["sph"])
+            _,        sth_full = _azimuth_to_full_circle(d["phi_vals"], d["sth"])
             fname = f"Polar_TE-z_Azimuth_Cut_90deg_{ts}.png"
             fpath = os.path.join(results_dir, fname)
-            _plot_polar(
-                phi_arr, sph_arr, d["sth"][:len(phi_arr)], fpath,
-                title   = "Polar RCS Map — TE-z polarisation",
-                subtitle= (f"Azimuth cut  θ = 90°    "
-                           f"f = {freq:.1f} GHz    λ = {wl:.4f} m\n"
-                           f"scale: {gmin:.0f} dBsm (centre) → {gmax:.0f} dBsm (rim)"),
-                color   = "steelblue",
-                rcs_min = gmin,
-                rcs_max = gmax,
-            )
+            _plot_polar(phi_full, sph_full, sth_full, fpath,
+                title="Polar RCS Map — TE-z polarisation",
+                subtitle=(f"Azimuth cut  θ = 90°    f = {freq:.1f} GHz    λ = {wl:.4f} m\n"
+                          f"scale: {gmin:.0f} dBsm (centre) → {gmax:.0f} dBsm (rim)"),
+                color="steelblue", rcs_min=gmin, rcs_max=gmax)
             out["polar_az_te"] = fpath
 
         if "AZ_TM" in parsed and len(parsed["AZ_TM"]["sth"]):
             d = parsed["AZ_TM"]
-            phi_arr = d["phi_vals"].copy()
-            if len(phi_arr) > 1 and np.isclose(phi_arr[-1], phi_arr[0] + 360.0):
-                phi_arr = phi_arr[:-1]
-            sth_arr = d["sth"][:len(phi_arr)]
+            phi_full, sth_full = _azimuth_to_full_circle(d["phi_vals"], d["sth"])
+            _,        sph_full = _azimuth_to_full_circle(d["phi_vals"], d["sph"])
             fname = f"Polar_TM-z_Azimuth_Cut_90deg_{ts}.png"
             fpath = os.path.join(results_dir, fname)
-            _plot_polar(
-                phi_arr, sth_arr, d["sph"][:len(phi_arr)], fpath,
-                title   = "Polar RCS Map — TM-z polarisation",
-                subtitle= (f"Azimuth cut  θ = 90°    "
-                           f"f = {freq:.1f} GHz    λ = {wl:.4f} m\n"
-                           f"scale: {gmin:.0f} dBsm (centre) → {gmax:.0f} dBsm (rim)"),
-                color   = "crimson",
-                rcs_min = gmin,
-                rcs_max = gmax,
-            )
+            _plot_polar(phi_full, sth_full, sph_full, fpath,
+                title="Polar RCS Map — TM-z polarisation",
+                subtitle=(f"Azimuth cut  θ = 90°    f = {freq:.1f} GHz    λ = {wl:.4f} m\n"
+                          f"scale: {gmin:.0f} dBsm (centre) → {gmax:.0f} dBsm (rim)"),
+                color="crimson", rcs_min=gmin, rcs_max=gmax)
             out["polar_az_tm"] = fpath
 
         # ── ELEVATION LINEAR PLOT (both polarisations, one figure) ────────────

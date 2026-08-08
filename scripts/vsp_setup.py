@@ -182,9 +182,12 @@ def export_stl_cfdmesh(
 def run_openrcs_rcs(
     stl_filename : str = "aircraft.stl",
     freq         : float = 12.0,
-    pol          : str = "both",   # "TE-z", "TM-z", or "both"
-    cuts         : str = "all",    # see options below
+    pol          : str = "both",
+    cuts         : str = "all",
+    az_range     : str = "full",   # "full" or "half" — pass through to solver
+    delp         : float = 1.0,
 ) -> None:
+
     """
     Launch the OpenRCS pipeline.
 
@@ -221,6 +224,8 @@ def run_openrcs_rcs(
             freq        = freq,
             pol         = pol,
             cuts        = cuts,
+            az_range    = az_range,
+            delp        = delp,
         )
         if result_dict:
             print("✅ OpenRCS finished.")
