@@ -12,16 +12,16 @@ SCRIPT_DIR   = Path(__file__).resolve().parent
 ROOT_DIR     = SCRIPT_DIR.parent
 GEOMETRY_DIR = ROOT_DIR / "Geometry"
 
-VSP3_FILE    = str(GEOMETRY_DIR / "SSAM_final_geom_to_be_used_scaled_by_19_nozzle_mod.vsp3")
-SETS_FILE    = str(GEOMETRY_DIR / "SSAM_final_geom_to_be_used_scaled_by_19_nozzle_mod_sets.json")
-SWEEP_PARAMS_FILE = str(GEOMETRY_DIR / "SSAM_final_geom_to_be_used_scaled_by_19_nozzle_mod_sweep_params.json")
+VSP3_FILE    = str(GEOMETRY_DIR / "SSAM_final_geom_to_be_used_NOT_scaled_by_19_nozzle_mod.vsp3")
+SETS_FILE    = str(GEOMETRY_DIR / "SSAM_final_geom_to_be_used_NOT_scaled_by_19_nozzle_mod_sets.json")
+SWEEP_PARAMS_FILE = str(GEOMETRY_DIR / "SSAM_final_geom_to_be_used_NOT_scaled_by_19_nozzle_mod_sweep_params.json")
 
 with open(SWEEP_PARAMS_FILE) as f:
     SWEEP_PARAMS = json.load(f)
 
-SWEEP_ROOT   = ROOT_DIR / "Results" / "Sweeps"
-MANIFEST_DIR = ROOT_DIR / "Results" / "Manifest"
-LOG_DIR      = ROOT_DIR / "Results" / "SweepLogs"
+SWEEP_ROOT   = ROOT_DIR / "Results" / "SensitivityStudy" / "Sweeps"
+MANIFEST_DIR = ROOT_DIR / "Results" / "SensitivityStudy" / "Manifest"
+LOG_DIR      = ROOT_DIR / "Results" / "SensitivityStudy" / "SweepLogs"
 for d in (SWEEP_ROOT, MANIFEST_DIR, LOG_DIR):
     d.mkdir(parents=True, exist_ok=True)
 
@@ -30,8 +30,8 @@ TIMEOUT_SEC = 70 * 60
 BASE = dict(
     vsp3=VSP3_FILE, sets_file=SETS_FILE, ref_wing="Main_Wing",
     manifest_dir=str(MANIFEST_DIR), sweep_dir=str(SWEEP_ROOT),
-    alpha_start=-2.0, alpha_end=10.0, alpha_npts=7,
-    mach=0.6, re_cref=1e6, wake_iters=3,
+    alpha_start=-8.0, alpha_end=14.0, alpha_npts=12,
+    mach=0.6, re_cref=1e6, wake_iters=6,
     run_rcs=False,
     freq_ghz=12.0, pol="both", cuts="azimuth", az_range="half", delp=1.0,
     min_edge_factor=3, max_edge_factor=1, max_gap_factor=3,
@@ -63,7 +63,7 @@ def run_one(cfg):
 
     log_path = LOG_DIR / f"{cfg['tag']}.log"
     worker = str(SCRIPT_DIR / "sweep_worker.py")
-    with open(log_path, "w") as logf:
+    with open(log_path, "w", encoding="utf-8") as logf:
         try:
             subprocess.run([sys.executable, worker, json.dumps(cfg)],
                             stdout=logf, stderr=subprocess.STDOUT, timeout=TIMEOUT_SEC, check=True)
@@ -75,11 +75,31 @@ def run_one(cfg):
 
 
 if __name__ == "__main__":
-    DELTAS = [-15, -10, -5, 5, 10, 15]
+    STAGE = "S1"
 
-    configs  = build_sweep("WingSweep_root", DELTAS, "WingSweep_aligned", extra_param_keys=["HTSweep_root"])
-    configs += build_sweep("WingSweep_root", DELTAS, "WingSweep_misaligned")
-    configs += build_sweep("VTCant",         DELTAS, "VTCant")
+    if STAGE == "S1":
+        DELTAS_WING_SWEEP = [0.0, -15, -10, -5, 5, 10, 15]
+        DELTAS_VT_CANT    = [0.0, -20, -10, -5, 5, 10, 20]
+        DELTAS_WING_TWIST = [0.0, -3, -2, -1, 1, 2, 3]
+        RUN_RCS = False
+    else:
+        DELTAS_WING_SWEEP = [0.0, -12, -8, -4, 4, 8, 12]
+        DELTAS_VT_CANT    = [0.0, -15, -8, 8, 15]
+        DELTAS_WING_TWIST = [0.0, -2, -1, 1, 2]
+        RUN_RCS = True
+
+    def tagged(base_tag):
+        return f"{base_tag}_{STAGE}"
+
+    configs  = build_sweep("WingSweep_sec1", DELTAS_WING_SWEEP, tagged("WingSweep_aligned"),
+                        extra_param_keys=["WingSweep_sec2", "HTSweep_sec1", "HTSweep_sec2"])
+    # configs += build_sweep("WingSweep_sec1", DELTAS_WING_SWEEP, tagged("WingSweep_misaligned"),
+    #                     extra_param_keys=["WingSweep_sec2"])   # wing moves, HT stays put
+    # configs += build_sweep("VTCant",         DELTAS_VT_CANT,    tagged("VTCant"))
+    # configs += build_sweep("WingTwist_sec1", DELTAS_WING_TWIST, tagged("WingTwist"))
+
+    for c in configs:
+        c["run_rcs"] = RUN_RCS
 
     results = {cfg["tag"]: run_one(cfg) for cfg in configs}
     print(json.dumps(results, indent=2))

@@ -9,7 +9,7 @@ import vsp_setup
 from pathlib import Path
 
 SCRIPT_DIR = Path(__file__).resolve().parent
-VSP3_FILE  = SCRIPT_DIR.parent / "Geometry" / "SSAM_final_geom_to_be_used_scaled_by_19_nozzle_mod.vsp3"
+VSP3_FILE  = SCRIPT_DIR.parent / "Geometry" / "SSAM_final_geom_to_be_used_NOT_scaled_by_19_nozzle_mod.vsp3"
 OUT_FILE   = VSP3_FILE.parent / (VSP3_FILE.stem + "_params_dump.json")
 
 vsp_setup.dump_geom_params(str(VSP3_FILE), str(OUT_FILE))

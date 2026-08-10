@@ -258,6 +258,15 @@ def dump_geom_params(vsp3_path: str, out_json_path: str) -> dict:
         entry["parms"] = {vsp.GetParmName(pid): vsp.GetParmVal(pid)
                            for pid in vsp.GetGeomParmIDs(gid)}
 
+        WING_SHAPE_PARMS = {"Sweep", "Sweep_Location", "Dihedral", "Twist", "Root_Chord", "Tip_Chord"}
+        FUSELAGE_SHAPE_PARMS = {
+            "Width", "Height", "MaxWidthLoc", "CornerRad",
+            "TopLAngle", "TopLStrength", "TopRAngle", "TopRStrength",
+            "BottomLAngle", "BottomLStrength", "BottomRAngle", "BottomRStrength",
+            "LeftLAngle", "LeftLStrength", "RightLAngle", "RightLStrength",
+        }
+        shape_filter = WING_SHAPE_PARMS if gtype == "Wing" else FUSELAGE_SHAPE_PARMS
+
         n_surf = vsp.GetNumXSecSurfs(gid) if hasattr(vsp, "GetNumXSecSurfs") else 0
         for si in range(n_surf):
             xsec_surf_id = vsp.GetXSecSurf(gid, si)
@@ -269,14 +278,14 @@ def dump_geom_params(vsp3_path: str, out_json_path: str) -> dict:
                     pname = vsp.GetParmName(pid)
                     pval  = vsp.GetParmVal(pid)
                     sec_parms[pname] = pval
-                    # only surface shaping-relevant parms as sweep candidates
-                    if pname in ("Sweep", "Dihedral", "Twist", "Root_Chord", "Tip_Chord"):
+                    if pname in shape_filter:
                         key = f"{gname}_{pname}_surf{si}sec{xi}"
                         sweep_candidates[key] = {
                             "geom": gname, "surf": si, "section": xi,
                             "parm": pname, "baseline": pval,
                         }
                 entry["sections"][f"surf{si}_sec{xi}"] = sec_parms
+                
 
         dump[gname] = entry
 

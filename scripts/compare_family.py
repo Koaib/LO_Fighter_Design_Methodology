@@ -13,8 +13,8 @@ from pathlib import Path
 
 SCRIPT_DIR   = Path(__file__).resolve().parent
 ROOT_DIR     = SCRIPT_DIR.parent
-MANIFEST_DIR = ROOT_DIR / "Results" / "Manifest"
-OUT_DIR      = ROOT_DIR / "Results" / "Comparisons"
+MANIFEST_DIR = ROOT_DIR / "Results" / "SensitivityStudy" / "Manifest"
+OUT_DIR      = ROOT_DIR / "Results" / "SensitivityStudy" / "Comparisons"
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 
 
@@ -49,9 +49,13 @@ def overlay_curves(entries, prefix):
     plt.close(fig1); plt.close(fig2)
 
 
-def threshold_curve(entries, prefix, baseline_max_LD):
+def threshold_curve(entries, prefix):
     deltas = sorted(_delta(e["tag"], prefix) for e in entries)
     ld = {_delta(e["tag"], prefix): e["max_LD"] for e in entries}
+    if 0.0 not in ld:
+        raise ValueError(f"No baseline (delta=0.0) entry found for '{prefix}' — "
+                          f"make sure 0.0 is included in DELTAS.")
+    baseline_max_LD = ld[0.0]
     pct = [100.0 * (baseline_max_LD - ld[d]) / baseline_max_LD for d in deltas]
     fig, ax = plt.subplots(figsize=(7,5))
     ax.plot(deltas, pct, "-o", color="darkred")
@@ -67,9 +71,8 @@ def threshold_curve(entries, prefix, baseline_max_LD):
 
 if __name__ == "__main__":
     prefix = sys.argv[1]
-    baseline_max_LD = float(sys.argv[2])
     entries = load_family(prefix)
     if not entries:
         print(f"No completed runs for '{prefix}'"); sys.exit(1)
     overlay_curves(entries, prefix)
-    print(json.dumps(threshold_curve(entries, prefix, baseline_max_LD), indent=2))
+    print(json.dumps(threshold_curve(entries, prefix), indent=2))

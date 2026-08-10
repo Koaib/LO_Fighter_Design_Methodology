@@ -12,6 +12,11 @@ run_rcs=False -> Stage 1 aero-only screening.
 run_rcs=True  -> Stage 2 full aero + RCS sensitivity point.
 """
 import sys, os, json, shutil
+
+import sys
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8")
+    
 import numpy as np
 import pandas as pd
 
@@ -95,6 +100,13 @@ def main():
         tagged_csv = os.path.join(aero_dir, f"{tag}.csv")
         shutil.copy2(polar_dst.replace(".polar", ".csv"), tagged_csv)
         entry["aero_csv"] = tagged_csv
+
+        df_check = pd.read_csv(tagged_csv)
+        if (df_check["CDtot"] < 0).any():
+            entry["status"] = "aero_diverged"
+            entry["note"] = "Negative CDtot detected — VSPAero wake iteration did not converge"
+            _write(manifest_path, entry)
+            return
 
         max_LD, cl_at_max, alpha_at_max = _max_LD_from_csv(tagged_csv)
         entry["max_LD"], entry["CL_at_max_LD"], entry["alpha_at_max_LD"] = max_LD, cl_at_max, alpha_at_max
