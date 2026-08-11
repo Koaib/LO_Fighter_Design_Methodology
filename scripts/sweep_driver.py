@@ -54,7 +54,7 @@ def build_sweep(param_key, deltas, family_tag, extra_param_keys=None):
     return configs
 
 
-def run_one(cfg):
+def run_one(cfg, retry=True):
     manifest_file = MANIFEST_DIR / f"{cfg['tag']}.json"
     if manifest_file.exists():
         with open(manifest_file) as f:
@@ -65,14 +65,30 @@ def run_one(cfg):
     worker = str(SCRIPT_DIR / "sweep_worker.py")
     with open(log_path, "w", encoding="utf-8") as logf:
         try:
+            import time
+            time.sleep(5)
             subprocess.run([sys.executable, worker, json.dumps(cfg)],
                             stdout=logf, stderr=subprocess.STDOUT, timeout=TIMEOUT_SEC, check=True)
-            print(f"OK {cfg['tag']}"); return True
         except subprocess.TimeoutExpired:
             print(f"TIMEOUT — {cfg['tag']} skipped"); return False
         except subprocess.CalledProcessError:
             print(f"FAILED — {cfg['tag']}, see {log_path}"); return False
 
+    if not manifest_file.exists():
+        print(f"RAN BUT NO MANIFEST — {cfg['tag']}"); return False
+    with open(manifest_file) as f:
+        status = json.load(f).get("status")
+    if status == "done":
+        print(f"OK {cfg['tag']}"); return True
+
+    if status == "aero_failed" and retry:
+        print(f"RETRYING (possible file-lock race) — {cfg['tag']}")
+        import time; time.sleep(5)
+        manifest_file.unlink(missing_ok=True)
+        return run_one(cfg, retry=False)   # one retry only, no infinite loop
+
+    print(f"RAN BUT NOT DONE ({status}) — {cfg['tag']}"); return False
+    
 
 if __name__ == "__main__":
     STAGE = "S1"
@@ -93,9 +109,9 @@ if __name__ == "__main__":
 
     configs  = build_sweep("WingSweep_sec1", DELTAS_WING_SWEEP, tagged("WingSweep_aligned"),
                         extra_param_keys=["WingSweep_sec2", "HTSweep_sec1", "HTSweep_sec2"])
-    # configs += build_sweep("WingSweep_sec1", DELTAS_WING_SWEEP, tagged("WingSweep_misaligned"),
-    #                     extra_param_keys=["WingSweep_sec2"])   # wing moves, HT stays put
-    # configs += build_sweep("VTCant",         DELTAS_VT_CANT,    tagged("VTCant"))
+    configs += build_sweep("WingSweep_sec1", DELTAS_WING_SWEEP, tagged("WingSweep_misaligned"),
+                        extra_param_keys=["WingSweep_sec2"])   # wing moves, HT stays put
+    configs += build_sweep("VTCant",         DELTAS_VT_CANT,    tagged("VTCant"))
     # configs += build_sweep("WingTwist_sec1", DELTAS_WING_TWIST, tagged("WingTwist"))
 
     for c in configs:
