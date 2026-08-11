@@ -416,6 +416,7 @@ def run_vspaero_aero(
     thick_geom_set = 0,
     ref_mode       = "auto",
     sref = None, bref = None, cref = None,
+    run_name       = "aircraft",
 ):
     
     import openvsp as vsp
@@ -445,7 +446,7 @@ def run_vspaero_aero(
     vsp.PrintAnalysisInputs("DegenGeom")
 
     # ── 2. SAVE VSP3 ─────────────────────────────────────────────────────────
-    vsp_file = os.path.join(VSP_FILES, "aircraft.vsp3")
+    vsp_file = os.path.join(VSP_FILES, f"{run_name}.vsp3")
     vsp.WriteVSPFile(vsp_file)
     print(f"   VSP3 saved : {vsp_file}")
     
@@ -524,12 +525,12 @@ def run_vspaero_aero(
         os.chdir(original_cwd)
 
     # ── 6. LOCATE .polar FILE ─────────────────────────────────────────────────
-    polar_files = glob.glob(os.path.join(VSP_FILES, "*.polar"))
+    polar_files = glob.glob(os.path.join(VSP_FILES, f"{run_name}.polar"))
     if not polar_files:
-        print("⚠️  No .polar file found in VSP_Files/")
+        print(f"⚠️  No {run_name}.polar found in VSP_Files/")
         print(f"   Contents: {os.listdir(VSP_FILES)}")
         return None
-    polar_src = max(polar_files, key=os.path.getmtime)
+    polar_src = polar_files[0]
     print(f"   Polar file found: {polar_src}")
 
     # ── 7. COPY TO RESULTS FOLDER ─────────────────────────────────────────────

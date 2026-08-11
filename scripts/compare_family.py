@@ -35,18 +35,25 @@ def _delta(tag, prefix):
 def overlay_curves(entries, prefix):
     fig1, ax1 = plt.subplots(figsize=(7,5))
     fig2, ax2 = plt.subplots(figsize=(7,5))
+    fig3, ax3 = plt.subplots(figsize=(7,5))
     for e in sorted(entries, key=lambda e: _delta(e["tag"], prefix)):
         df = pd.read_csv(e["aero_csv"])
         label = f"{_delta(e['tag'], prefix):+.1f}°"
         ax1.plot(df["CDtot"], df["CL"], "-o", ms=3, label=label)
         ax2.plot(df["Alpha"], df["CL"], "-o", ms=3, label=label)
+        line, = ax3.plot(df["Alpha"], df["L/D"], "-o", ms=3, label=label)
+        ax3.plot(e["alpha_at_max_LD"], e["max_LD"], "*", ms=14, color=line.get_color(),
+                  markeredgecolor="black", markeredgewidth=0.6)
     ax1.set_xlabel("CD"); ax1.set_ylabel("CL"); ax1.set_title(f"Drag Polar — {prefix}")
     ax1.legend(title="Δ"); ax1.grid(True, ls="--", alpha=0.6)
     ax2.set_xlabel("Alpha (deg)"); ax2.set_ylabel("CL"); ax2.set_title(f"CL-Alpha — {prefix}")
     ax2.legend(title="Δ"); ax2.grid(True, ls="--", alpha=0.6)
+    ax3.set_xlabel("Alpha (deg)"); ax3.set_ylabel("L/D"); ax3.set_title(f"L/D-Alpha — {prefix}")
+    ax3.legend(title="Δ"); ax3.grid(True, ls="--", alpha=0.6)
     fig1.tight_layout(); fig1.savefig(OUT_DIR / f"{prefix}_drag_polar_overlay.png", dpi=150)
     fig2.tight_layout(); fig2.savefig(OUT_DIR / f"{prefix}_cl_alpha_overlay.png", dpi=150)
-    plt.close(fig1); plt.close(fig2)
+    fig3.tight_layout(); fig3.savefig(OUT_DIR / f"{prefix}_ld_alpha_overlay.png", dpi=150)
+    plt.close(fig1); plt.close(fig2); plt.close(fig3)
 
 
 def threshold_curve(entries, prefix):

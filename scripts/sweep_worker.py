@@ -39,7 +39,7 @@ def _max_LD_from_csv(csv_path):
     alpha = df["Alpha"].to_numpy()
     LD    = df["L/D"].to_numpy()
     CL    = df["CL"].to_numpy()
-    mask  = np.isfinite(alpha) & np.isfinite(LD)
+    mask  = np.isfinite(alpha) & np.isfinite(LD) & (alpha >= 0)
     alpha, LD, CL = alpha[mask], LD[mask], CL[mask]
     if len(alpha) < 3:
         i = int(np.argmax(LD))
@@ -74,11 +74,14 @@ def main():
         name_to_id = {vsp.GetGeomName(g): g for g in vsp.FindGeoms()}
 
         # parm_overrides: list of [geom_name, surf_idx, section_idx, parm_name, value]
+        applied = {}
         for geom_name, surf_idx, section_idx, parm, val in cfg["parm_overrides"]:
             gid = name_to_id[geom_name]
             pid = _find_section_parm(gid, surf_idx, section_idx, parm)
             vsp.SetParmVal(pid, val)
+            applied[f"{geom_name}/{parm}/sec{section_idx}"] = vsp.GetParmVal(pid)
         vsp.Update()
+        entry["applied_parms"] = applied
 
         wing_id = name_to_id[cfg.get("ref_wing", "Main_Wing")]
 
@@ -91,6 +94,7 @@ def main():
             re_cref_start = cfg["re_cref"], wake_iters = cfg["wake_iters"],
             thin_geom_set = thin_set, thick_geom_set = thick_set,
             ref_mode      = "auto",
+            run_name      = tag,
         )
         if polar_dst is None:
             entry["status"] = "aero_failed"; _write(manifest_path, entry); return

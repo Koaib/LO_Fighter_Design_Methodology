@@ -109,9 +109,9 @@ if __name__ == "__main__":
 
     configs  = build_sweep("WingSweep_sec1", DELTAS_WING_SWEEP, tagged("WingSweep_aligned"),
                         extra_param_keys=["WingSweep_sec2", "HTSweep_sec1", "HTSweep_sec2"])
-    configs += build_sweep("WingSweep_sec1", DELTAS_WING_SWEEP, tagged("WingSweep_misaligned"),
-                        extra_param_keys=["WingSweep_sec2"])   # wing moves, HT stays put
-    configs += build_sweep("VTCant",         DELTAS_VT_CANT,    tagged("VTCant"))
+    # configs += build_sweep("WingSweep_sec1", DELTAS_WING_SWEEP, tagged("WingSweep_misaligned"),
+    #                     extra_param_keys=["WingSweep_sec2"])   # wing moves, HT stays put
+    # configs += build_sweep("VTCant",         DELTAS_VT_CANT,    tagged("VTCant"))
     # configs += build_sweep("WingTwist_sec1", DELTAS_WING_TWIST, tagged("WingTwist"))
 
     for c in configs:
