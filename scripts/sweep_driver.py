@@ -12,9 +12,9 @@ SCRIPT_DIR   = Path(__file__).resolve().parent
 ROOT_DIR     = SCRIPT_DIR.parent
 GEOMETRY_DIR = ROOT_DIR / "Geometry"
 
-VSP3_FILE    = str(GEOMETRY_DIR / "SSAM_final_geom_to_be_used_NOT_scaled_by_19_nozzle_mod.vsp3")
-SETS_FILE    = str(GEOMETRY_DIR / "SSAM_final_geom_to_be_used_NOT_scaled_by_19_nozzle_mod_sets.json")
-SWEEP_PARAMS_FILE = str(GEOMETRY_DIR / "SSAM_final_geom_to_be_used_NOT_scaled_by_19_nozzle_mod_sweep_params.json")
+VSP3_FILE    = str(GEOMETRY_DIR / "SSAM_final_geom_to_be_used_scaled_by_19_simplified.vsp3")
+SETS_FILE    = str(GEOMETRY_DIR / "SSAM_final_geom_to_be_used_scaled_by_19_simplified_sets.json")
+SWEEP_PARAMS_FILE = str(GEOMETRY_DIR / "SSAM_final_geom_to_be_used_scaled_by_19_simplified_sweep_params.json")
 
 with open(SWEEP_PARAMS_FILE) as f:
     SWEEP_PARAMS = json.load(f)
@@ -109,9 +109,9 @@ if __name__ == "__main__":
 
     configs  = build_sweep("WingSweep_sec1", DELTAS_WING_SWEEP, tagged("WingSweep_aligned"),
                         extra_param_keys=["WingSweep_sec2", "HTSweep_sec1", "HTSweep_sec2"])
-    # configs += build_sweep("WingSweep_sec1", DELTAS_WING_SWEEP, tagged("WingSweep_misaligned"),
-    #                     extra_param_keys=["WingSweep_sec2"])   # wing moves, HT stays put
-    # configs += build_sweep("VTCant",         DELTAS_VT_CANT,    tagged("VTCant"))
+    configs += build_sweep("WingSweep_sec1", DELTAS_WING_SWEEP, tagged("WingSweep_misaligned"),
+                        extra_param_keys=["WingSweep_sec2"])   # wing moves, HT stays put
+    configs += build_sweep("VTCant",         DELTAS_VT_CANT,    tagged("VTCant"))
     # configs += build_sweep("WingTwist_sec1", DELTAS_WING_TWIST, tagged("WingTwist"))
 
     for c in configs:

@@ -525,13 +525,25 @@ def run_vspaero_aero(
         os.chdir(original_cwd)
 
     # ── 6. LOCATE .polar FILE ─────────────────────────────────────────────────
+    # ExecAnalysis("VSPAEROSweep") appears to return before vspaero.exe has
+    # actually finished writing the .polar file (solve continues after RID
+    # comes back). Poll instead of checking once — a single immediate check
+    # randomly "fails" runs that are still solving, unrelated to sweep angle.
+    poll_timeout  = 1800   # sec, generous vs. the 13-20 min solves seen so far
+    poll_interval = 5
+    waited = 0
     polar_files = glob.glob(os.path.join(VSP_FILES, f"{run_name}.polar"))
+    while not polar_files and waited < poll_timeout:
+        time.sleep(poll_interval)
+        waited += poll_interval
+        polar_files = glob.glob(os.path.join(VSP_FILES, f"{run_name}.polar"))
+
     if not polar_files:
-        print(f"⚠️  No {run_name}.polar found in VSP_Files/")
+        print(f"⚠️  No {run_name}.polar found in VSP_Files/ after waiting {waited}s")
         print(f"   Contents: {os.listdir(VSP_FILES)}")
         return None
     polar_src = polar_files[0]
-    print(f"   Polar file found: {polar_src}")
+    print(f"   Polar file found: {polar_src} (waited {waited}s)")
 
     # ── 7. COPY TO RESULTS FOLDER ─────────────────────────────────────────────
     timestamp = time.strftime('%Y%m%d_%H%M%S')
