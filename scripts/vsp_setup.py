@@ -475,12 +475,39 @@ def run_vspaero_aero(
             return None
         print(f"   Geometry done. RID: {geom_rid}")
 
-        vspgeom_file = os.path.join(VSP_FILES, "aircraft.vspgeom")
+        vspgeom_file = os.path.join(VSP_FILES, f"{run_name}.vspgeom")
+        poll_timeout, poll_interval, waited = 30, 0.5, 0.0
+        while not os.path.exists(vspgeom_file) and waited < poll_timeout:
+            time.sleep(poll_interval)
+            waited += poll_interval
         if not os.path.exists(vspgeom_file):
-            print("❌ .vspgeom not created. Cannot proceed.")
+            print(f"❌ .vspgeom not created after waiting {waited}s. Cannot proceed.")
             print(f"   VSP_Files contents: {os.listdir(VSP_FILES)}")
             return None
-        print("   .vspgeom exists ✅")
+        print(f"   .vspgeom exists ✅ (waited {waited}s)")
+
+        # ── Auto Re from actual wing planform cref (replaces fixed re_cref) ──
+        ATMO_ALT_M = 0.0
+        GAMMA, R_AIR = 1.4, 287.05
+        T = 288.15 - 0.0065 * ATMO_ALT_M
+        RHO = 1.225 * (T / 288.15) ** 4.2561
+        MU  = 1.458e-6 * T**1.5 / (T + 110.4)
+        a_sound = (GAMMA * R_AIR * T) ** 0.5
+
+        try:
+            cref_actual = vsp.GetParmVal(wing_id, "TotalChord", "WingGeom")
+        except Exception as e:
+            print(f"   ⚠️  Could not read TotalChord off wing_id: {e}")
+            cref_actual = None
+
+        if cref_actual:
+            V = mach_start * a_sound
+            re_cref_start = re_cref_end = (RHO * V * cref_actual) / MU
+            print(f"   [DEBUG] auto Re: cref={cref_actual:.4f}m, V={V:.1f}m/s, "
+                  f"rho={RHO:.4f}, mu={MU:.3e} -> Re={re_cref_start:.3e}")
+        else:
+            print("   ⚠️  Falling back to passed-in re_cref_start")
+
         
         
         # ── 5. VSPAEROSweep — alpha sweep ─────────────────────────────────────

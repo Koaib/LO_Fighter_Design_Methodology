@@ -94,7 +94,8 @@ if __name__ == "__main__":
     STAGE = "S1"
 
     if STAGE == "S1":
-        DELTAS_WING_SWEEP = [0.0, -15, -10, -5, 5, 10, 15]
+        #DELTAS_WING_SWEEP = [0.0, -15, -10, -5, 5, 10, 15]
+        DELTAS_WING_SWEEP = [0.0, 5]
         DELTAS_VT_CANT    = [0.0, -20, -10, -5, 5, 10, 20]
         DELTAS_WING_TWIST = [0.0, -3, -2, -1, 1, 2, 3]
         RUN_RCS = False
@@ -109,9 +110,9 @@ if __name__ == "__main__":
 
     configs  = build_sweep("WingSweep_sec1", DELTAS_WING_SWEEP, tagged("WingSweep_aligned"),
                         extra_param_keys=["WingSweep_sec2", "HTSweep_sec1", "HTSweep_sec2"])
-    configs += build_sweep("WingSweep_sec1", DELTAS_WING_SWEEP, tagged("WingSweep_misaligned"),
-                        extra_param_keys=["WingSweep_sec2"])   # wing moves, HT stays put
-    configs += build_sweep("VTCant",         DELTAS_VT_CANT,    tagged("VTCant"))
+    # configs += build_sweep("WingSweep_sec1", DELTAS_WING_SWEEP, tagged("WingSweep_misaligned"),
+    #                     extra_param_keys=["WingSweep_sec2"])   # wing moves, HT stays put
+    # configs += build_sweep("VTCant",         DELTAS_VT_CANT,    tagged("VTCant"))
     # configs += build_sweep("WingTwist_sec1", DELTAS_WING_TWIST, tagged("WingTwist"))
 
     for c in configs:
