@@ -670,17 +670,33 @@ def run_vspaero_aero(
     print(f"   ✅ Drag polar    : {polar_path}")
 
     print("\n✅ VSPAero analysis complete.\n")
-    return polar_dst
 
     # ── 12. L/D vs AoA PLOT ───────────────────────────────────────────────────
     fig, ax = plt.subplots(figsize=(7, 5))
     ax.plot(alpha, LD, 'g-o', markersize=4, linewidth=1.5)
     ax.set_xlabel("Angle of Attack α (deg)", fontsize=12)
     ax.set_ylabel("L/D", fontsize=12)
-    ax.set_title("L/D vs Alpha — VSPAero VLM", fontsize=13)
+    ax.set_title(f"L/D vs Alpha — VSPAero VLM (M={mach_start:.2f})", fontsize=13)
     ax.grid(True, linestyle='--', alpha=0.6)
     fig.tight_layout()
     ld_path = os.path.join(AERO_RESULTS_DIR, f"ld_alpha_{run_name}_{timestamp}.png")
     fig.savefig(ld_path, dpi=150)
     plt.close(fig)
     print(f"   ✅ L/D-alpha plot: {ld_path}")
+
+    # ── 13. CD0/K DRAG POLAR FIT (skip cleanly if data is NaN/degenerate) ────
+    CD0 = K = r2 = None
+    valid = ~(np.isnan(CL) | np.isnan(CDtot))
+    if valid.sum() >= 3:
+        cl2 = CL[valid]**2
+        K, CD0 = np.polyfit(cl2, CDtot[valid], 1)
+        fit = CD0 + K*cl2
+        ss_res = np.sum((CDtot[valid]-fit)**2)
+        ss_tot = np.sum((CDtot[valid]-CDtot[valid].mean())**2)
+        r2 = 1 - ss_res/ss_tot if ss_tot > 0 else np.nan
+        print(f"   Drag polar fit: CD0={CD0:.5f}  K={K:.4f}  R²={r2:.4f}  (M={mach_start:.2f})")
+    else:
+        print(f"   ⚠️  Not enough valid points to fit CD0/K (M={mach_start:.2f}) — likely diverged run.")
+
+    print("\n✅ VSPAero analysis complete.\n")
+    return polar_dst, CD0, K, r2   # now returning fit params too — update main.py's unpacking accordingly

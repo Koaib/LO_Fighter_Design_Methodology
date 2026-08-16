@@ -27,7 +27,8 @@ RCS SETTINGS section at the bottom or pass them into run_openrcs_rcs().
 import vsp_setup  
 import openvsp as vsp
 import os
-
+import matplotlib.pyplot as plt
+import pandas as pd
 
 """
 Single entry point for the LO Fighter Design Methodology pipeline.
@@ -43,7 +44,7 @@ INPUT_MODE options:
 # =========================
 
 INPUT_MODE    = "import_vsp3"       # "generate" | "import_stl" | "import_vsp3"
-IMPORT_FILE   = "SSAM_final_geom_to_be_used_NOT_scaled_by_19.vsp3"  # filename inside Geometry/ folder (for import modes)
+IMPORT_FILE   = "SSAM_final_geom_to_be_used_NOT_scaled_by_19_nozzle_mod.vsp3"  # filename inside Geometry/ folder (for import modes)
 REF_MODE      = "auto"      # use "manual" for box_template — it has no wing
 REF_WING_NAME = "Main_Wing"   # only matters once REF_MODE = "auto" (SSAM run)
 
@@ -56,10 +57,10 @@ REF_WING_NAME = "Main_Wing"   # only matters once REF_MODE = "auto" (SSAM run)
 # lambda/6 is the time/accuracy compromise currently in use.
 # min and max no longer have to match — e.g. MAX=4, MIN=8 refines curved
 # regions to lambda/8 while flatter regions stay at lambda/4.
-USE_CFD_MESH     = True    # False -> old plain ExportFile(EXPORT_STL)
+USE_CFD_MESH     = False    # False -> old plain ExportFile(EXPORT_STL)
 FREQ_GHZ         = 12.0     # also drives the RCS run below
 AZ_RANGE         = "half"   # "full" or "half" — half valid for bilaterally symmetric aircraft
-DELP             = 1.0      # phi step, deg
+DELP             = 30.0      # phi step, deg
 MAX_EDGE_FACTOR  = 1        # coarse bound: edge = lambda / MAX_EDGE_FACTOR
 MIN_EDGE_FACTOR  = 3        # fine bound:   edge = lambda / MIN_EDGE_FACTOR
 MAX_GAP_FACTOR   = 3        # max_gap = lambda / MAX_GAP_FACTOR
@@ -181,14 +182,14 @@ else:  # "generate"
 # RCS PIPELINE
 # =========================
 
-vsp_setup.run_openrcs_rcs(
-    stl_filename = stl_for_rcs,
-    freq         = FREQ_GHZ,
-    pol          = "TE-z",
-    cuts         = "azimuth",
-    az_range     = AZ_RANGE,
-    delp         = DELP,
-)
+# vsp_setup.run_openrcs_rcs(
+#     stl_filename = stl_for_rcs,
+#     freq         = FREQ_GHZ,
+#     pol          = "TE-z",
+#     cuts         = "azimuth",
+#     az_range     = AZ_RANGE,
+#     delp         = DELP,
+# )
 
 # =========================
 # AERO SETTINGS
@@ -197,7 +198,7 @@ vsp_setup.run_openrcs_rcs(
 ALPHA_START  = -8.0
 ALPHA_END    = 12.0
 ALPHA_NPTS   = 11
-MACH_LIST    = [0.1, 0.3, 1.3]   # placeholder test values — edit as needed
+MACH_LIST    = [0.1, 1.3]   # placeholder test values — edit as needed
 RE_CREF      = 1e6
 WAKE_ITERS   = 3
 
@@ -207,21 +208,40 @@ WAKE_ITERS   = 3
 
 geom_stem = os.path.splitext(IMPORT_FILE)[0]
 
+mach_results = []  # (M, polar_dst, CD0, K, r2)
 for M in MACH_LIST:
-    vsp_setup.run_vspaero_aero(
-        wing_id        = wing_id,
-        alpha_start    = ALPHA_START,
-        alpha_end      = ALPHA_END,
-        alpha_npts     = ALPHA_NPTS,
-        mach_start     = M,
-        mach_end       = M,
-        mach_npts      = 1,
-        re_cref_start  = RE_CREF,
-        wake_iters     = WAKE_ITERS,
-        thin_geom_set  = thin_set,
-        thick_geom_set = thick_set,
-        ref_mode       = REF_MODE,
-        run_name       = f"{geom_stem}_M{M:.2f}",
+    # supersonic panel/mixed-body limitation: thick surfaces only valid subsonic —
+    # for M>=1, exclude thick geometry entirely and run thin-surfaces-only VLM
+    thick_set_this_run = thick_set if M < 1.0 else vsp.SET_NONE
+
+    polar_dst, CD0, K, r2 = vsp_setup.run_vspaero_aero(
+        wing_id=wing_id,
+        alpha_start=ALPHA_START, alpha_end=ALPHA_END, alpha_npts=ALPHA_NPTS,
+        mach_start=M, mach_end=M, mach_npts=1,
+        re_cref_start=RE_CREF, wake_iters=WAKE_ITERS,
+        thin_geom_set=thin_set,
+        thick_geom_set=thick_set_this_run,
+        ref_mode=REF_MODE,
+        run_name=f"{geom_stem}_M{M:.2f}",
     )
-    
-    
+    if polar_dst is not None:
+        mach_results.append((M, polar_dst, CD0, K, r2))
+        
+# overlay
+fig, ax = plt.subplots(figsize=(7, 5))
+for M, polar_dst, CD0, K, r2 in mach_results:
+    df = pd.read_csv(polar_dst.replace(".polar", ".csv"))
+    if df["CL"].isna().all():
+        print(f"   Skipping M={M:.2f} in overlay — all-NaN (diverged)")
+        continue
+    ax.plot(df["Alpha"], df["L/D"], "-o", ms=4, label=f"M={M:.2f}")
+
+ax.set_xlabel("Alpha (deg)")
+ax.set_ylabel("L/D")
+ax.set_title(f"L/D vs Alpha — {geom_stem}, Mach comparison")
+ax.legend()
+ax.grid(True, ls="--", alpha=0.6)
+fig.tight_layout()
+fig.savefig(os.path.join(vsp_setup.AERO_RESULTS_DIR, f"ld_alpha_overlay_{geom_stem}.png"), dpi=150)
+plt.close(fig)
+print(f"   ✅ Overlay plot saved for {geom_stem}")
