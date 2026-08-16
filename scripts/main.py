@@ -190,33 +190,38 @@ vsp_setup.run_openrcs_rcs(
     delp         = DELP,
 )
 
-# # =========================
-# # AERO SETTINGS
-# # =========================
+# =========================
+# AERO SETTINGS
+# =========================
 
-# ALPHA_START  = -8.0
-# ALPHA_END    = 12.0
-# ALPHA_NPTS   = 11       # gives 2-deg steps
-# MACH         = 0.4      # cruise approximation
-# RE_CREF      = 1e6      # Reynolds based on ref chord
-# WAKE_ITERS   = 3
+ALPHA_START  = -8.0
+ALPHA_END    = 12.0
+ALPHA_NPTS   = 11
+MACH_LIST    = [0.1, 0.3, 1.3]   # placeholder test values — edit as needed
+RE_CREF      = 1e6
+WAKE_ITERS   = 3
 
-# # =========================
-# # TRIGGER AERO PIPELINE
-# # =========================
+# =========================
+# TRIGGER AERO PIPELINE
+# =========================
 
-# vsp_setup.run_vspaero_aero(
-#     wing_id        = wing_id,
-#     alpha_start    = ALPHA_START,
-#     alpha_end      = ALPHA_END,
-#     alpha_npts     = ALPHA_NPTS,
-#     mach_start     = MACH,
-#     mach_end       = MACH,
-#     mach_npts      = 1,
-#     re_cref_start  = RE_CREF,
-#     wake_iters     = WAKE_ITERS,
-#     thin_geom_set  = thin_set,
-#     thick_geom_set = thick_set,
-#     ref_mode       = REF_MODE,
-#     sref = 1.0, bref = 1.0, cref = 1.0,   # ← add this line, only used when REF_MODE="manual"
-# )
+geom_stem = os.path.splitext(IMPORT_FILE)[0]
+
+for M in MACH_LIST:
+    vsp_setup.run_vspaero_aero(
+        wing_id        = wing_id,
+        alpha_start    = ALPHA_START,
+        alpha_end      = ALPHA_END,
+        alpha_npts     = ALPHA_NPTS,
+        mach_start     = M,
+        mach_end       = M,
+        mach_npts      = 1,
+        re_cref_start  = RE_CREF,
+        wake_iters     = WAKE_ITERS,
+        thin_geom_set  = thin_set,
+        thick_geom_set = thick_set,
+        ref_mode       = REF_MODE,
+        run_name       = f"{geom_stem}_M{M:.2f}",
+    )
+    
+    
