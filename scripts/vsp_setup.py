@@ -671,3 +671,16 @@ def run_vspaero_aero(
 
     print("\n✅ VSPAero analysis complete.\n")
     return polar_dst
+
+    # ── 12. L/D vs AoA PLOT ───────────────────────────────────────────────────
+    fig, ax = plt.subplots(figsize=(7, 5))
+    ax.plot(alpha, LD, 'g-o', markersize=4, linewidth=1.5)
+    ax.set_xlabel("Angle of Attack α (deg)", fontsize=12)
+    ax.set_ylabel("L/D", fontsize=12)
+    ax.set_title("L/D vs Alpha — VSPAero VLM", fontsize=13)
+    ax.grid(True, linestyle='--', alpha=0.6)
+    fig.tight_layout()
+    ld_path = os.path.join(AERO_RESULTS_DIR, f"ld_alpha_{timestamp}.png")
+    fig.savefig(ld_path, dpi=150)
+    plt.close(fig)
+    print(f"   ✅ L/D-alpha plot: {ld_path}")
