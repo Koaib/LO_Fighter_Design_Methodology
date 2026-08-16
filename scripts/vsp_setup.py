@@ -574,7 +574,7 @@ def run_vspaero_aero(
 
     # ── 7. COPY TO RESULTS FOLDER ─────────────────────────────────────────────
     timestamp = time.strftime('%Y%m%d_%H%M%S')
-    polar_dst = os.path.join(AERO_RESULTS_DIR, f"aero_{timestamp}.polar")
+    polar_dst = os.path.join(AERO_RESULTS_DIR, f"aero_{run_name}_{timestamp}.polar")    
     shutil.copy2(polar_src, polar_dst)
     print(f"   Polar file saved : {polar_dst}")
 
@@ -648,7 +648,7 @@ def run_vspaero_aero(
     ax.axhline(0, color='k', linewidth=0.8)
     ax.axvline(0, color='k', linewidth=0.8)
     fig.tight_layout()
-    cl_path = os.path.join(AERO_RESULTS_DIR, f"cl_alpha_{timestamp}.png")
+    cl_path = os.path.join(AERO_RESULTS_DIR, f"cl_alpha_{run_name}_{timestamp}.png")
     fig.savefig(cl_path, dpi=150)
     plt.close(fig)
     print(f"\n   ✅ CL-alpha plot : {cl_path}")
@@ -664,7 +664,7 @@ def run_vspaero_aero(
     ax.legend(fontsize=10)
     ax.grid(True, linestyle='--', alpha=0.6)
     fig.tight_layout()
-    polar_path = os.path.join(AERO_RESULTS_DIR, f"drag_polar_{timestamp}.png")
+    polar_path = os.path.join(AERO_RESULTS_DIR, f"drag_polar_{run_name}_{timestamp}.png")
     fig.savefig(polar_path, dpi=150)
     plt.close(fig)
     print(f"   ✅ Drag polar    : {polar_path}")
@@ -680,7 +680,7 @@ def run_vspaero_aero(
     ax.set_title("L/D vs Alpha — VSPAero VLM", fontsize=13)
     ax.grid(True, linestyle='--', alpha=0.6)
     fig.tight_layout()
-    ld_path = os.path.join(AERO_RESULTS_DIR, f"ld_alpha_{timestamp}.png")
+    ld_path = os.path.join(AERO_RESULTS_DIR, f"ld_alpha_{run_name}_{timestamp}.png")
     fig.savefig(ld_path, dpi=150)
     plt.close(fig)
     print(f"   ✅ L/D-alpha plot: {ld_path}")

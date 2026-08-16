@@ -752,7 +752,7 @@ def run_openrcs_pipeline(
             if d_tm is None: d_tm = d_te
             x_te, idx_te = _phi_to_display(d_te["phi_vals"])
             x_tm, idx_tm = _phi_to_display(d_tm["phi_vals"])
-            fname = f"Linear_Azimuth_Cut_90deg_{ts}.png"
+            fname = f"Linear_Azimuth_Cut_90deg_{stem}_{ts}.png"
             fpath = os.path.join(results_dir, fname)
             _plot_dual_linear(
                 x_te, d_te["sph"][idx_te], d_te["sth"][idx_te],
@@ -783,7 +783,7 @@ def run_openrcs_pipeline(
             d = parsed["AZ_TE"]
             phi_full, sph_full = _azimuth_to_full_circle(d["phi_vals"], d["sph"])
             _,        sth_full = _azimuth_to_full_circle(d["phi_vals"], d["sth"])
-            fname = f"Polar_TE-z_Azimuth_Cut_90deg_{ts}.png"
+            fname = f"Polar_TE-z_Azimuth_Cut_90deg_{stem}_{ts}.png"
             fpath = os.path.join(results_dir, fname)
             _plot_polar(phi_full, sph_full, sth_full, fpath,
                 title="Polar RCS Map — TE-z polarisation",
@@ -796,7 +796,7 @@ def run_openrcs_pipeline(
             d = parsed["AZ_TM"]
             phi_full, sth_full = _azimuth_to_full_circle(d["phi_vals"], d["sth"])
             _,        sph_full = _azimuth_to_full_circle(d["phi_vals"], d["sph"])
-            fname = f"Polar_TM-z_Azimuth_Cut_90deg_{ts}.png"
+            fname = f"Polar_TM-z_Azimuth_Cut_90deg_{stem}_{ts}.png"
             fpath = os.path.join(results_dir, fname)
             _plot_polar(phi_full, sth_full, sph_full, fpath,
                 title="Polar RCS Map — TM-z polarisation",
@@ -821,7 +821,7 @@ def run_openrcs_pipeline(
             el_tm = 90.0 - d_tm["theta_vals"]
             idx_te = np.argsort(el_te)
             idx_tm = np.argsort(el_tm)
-            fname = f"Linear_Elevation_Cut_0deg_{ts}.png"
+            fname = f"Linear_Elevation_Cut_0deg_{stem}_{ts}.png"
             fpath = os.path.join(results_dir, fname)
             _plot_dual_linear(
                 el_te[idx_te], d_te["sph"][idx_te], d_te["sth"][idx_te],
@@ -886,7 +886,7 @@ def run_openrcs_pipeline(
             d    = parsed["EL_TE"]
             el   = 90.0 - d["theta_vals"]
             ph_c, rc_c = _elevation_to_polar_circle(el, d["sph"])
-            fname = f"Polar_TE-z_Elevation_Cut_0deg_{ts}.png"
+            fname = f"Polar_TE-z_Elevation_Cut_0deg_{stem}_{ts}.png"
             fpath = os.path.join(results_dir, fname)
             ph_xp_te, rx_xp_te = _elevation_to_polar_circle(el, d["sth"])
             _plot_polar(
@@ -907,7 +907,7 @@ def run_openrcs_pipeline(
             d    = parsed["EL_TM"]
             el   = 90.0 - d["theta_vals"]
             ph_c, rc_c = _elevation_to_polar_circle(el, d["sth"])
-            fname = f"Polar_TM-z_Elevation_Cut_0deg_{ts}.png"
+            fname = f"Polar_TM-z_Elevation_Cut_0deg_{stem}_{ts}.png"
             fpath = os.path.join(results_dir, fname)
             ph_xp_tm, rx_xp_tm = _elevation_to_polar_circle(el, d["sph"])
             _plot_polar(
@@ -943,7 +943,7 @@ def run_openrcs_pipeline(
                 mean_rows.append((label, float("nan")))
 
         if any(np.isfinite(v) for _, v in mean_rows):
-            fname = f"MeanRCS_Table_{ts}.png"
+            fname = f"MeanRCS_Table_{stem}_{ts}.png"
             fpath = os.path.join(results_dir, fname)
             _save_mean_table(mean_rows, fpath, freq, stl_filename)
             out["mean_table"] = fpath
