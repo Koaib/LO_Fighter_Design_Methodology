@@ -472,7 +472,7 @@ def run_vspaero_aero(
         
         if not geom_rid:
             print("❌ VSPAEROComputeGeometry failed — check model geometry.")
-            return None
+            return None, None, None, None
         print(f"   Geometry done. RID: {geom_rid}")
 
         vspgeom_file = os.path.join(VSP_FILES, f"{run_name}.vspgeom")
@@ -483,7 +483,7 @@ def run_vspaero_aero(
         if not os.path.exists(vspgeom_file):
             print(f"❌ .vspgeom not created after waiting {waited}s. Cannot proceed.")
             print(f"   VSP_Files contents: {os.listdir(VSP_FILES)}")
-            return None
+            return None, None, None, None
         print(f"   .vspgeom exists ✅ (waited {waited}s)")
 
         # ── Auto Re from actual wing planform cref (replaces fixed re_cref) ──
@@ -545,7 +545,7 @@ def run_vspaero_aero(
         vsp.Update()
         if not rid:
             print("❌ VSPAEROSweep failed.")
-            return None
+            return None, None, None, None
         print(f"   Sweep finished. RID: {rid}")
 
     finally:
@@ -568,7 +568,7 @@ def run_vspaero_aero(
     if not polar_files:
         print(f"⚠️  No {run_name}.polar found in VSP_Files/ after waiting {waited}s")
         print(f"   Contents: {os.listdir(VSP_FILES)}")
-        return None
+        return None, None, None, None
     polar_src = polar_files[0]
     print(f"   Polar file found: {polar_src} (waited {waited}s)")
 

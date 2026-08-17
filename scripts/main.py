@@ -29,6 +29,7 @@ import openvsp as vsp
 import os
 import matplotlib.pyplot as plt
 import pandas as pd
+import time
 
 """
 Single entry point for the LO Fighter Design Methodology pipeline.
@@ -198,7 +199,7 @@ else:  # "generate"
 ALPHA_START  = -8.0
 ALPHA_END    = 12.0
 ALPHA_NPTS   = 11
-MACH_LIST    = [0.1, 1.3]   # placeholder test values — edit as needed
+MACH_LIST    = [0.1, 0.5]   # placeholder test values — edit as needed
 RE_CREF      = 1e6
 WAKE_ITERS   = 3
 
@@ -208,12 +209,15 @@ WAKE_ITERS   = 3
 
 geom_stem = os.path.splitext(IMPORT_FILE)[0]
 
+import glob
+for f in glob.glob(os.path.join(vsp_setup.VSP_FILES, f"{geom_stem}_M*.*")):
+    os.remove(f)
+
 mach_results = []  # (M, polar_dst, CD0, K, r2)
 for M in MACH_LIST:
     # supersonic panel/mixed-body limitation: thick surfaces only valid subsonic —
     # for M>=1, exclude thick geometry entirely and run thin-surfaces-only VLM
     thick_set_this_run = thick_set if M < 1.0 else vsp.SET_NONE
-
     polar_dst, CD0, K, r2 = vsp_setup.run_vspaero_aero(
         wing_id=wing_id,
         alpha_start=ALPHA_START, alpha_end=ALPHA_END, alpha_npts=ALPHA_NPTS,
@@ -226,16 +230,31 @@ for M in MACH_LIST:
     )
     if polar_dst is not None:
         mach_results.append((M, polar_dst, CD0, K, r2))
+    time.sleep(5)
+
+# ── everything below runs ONCE, after the loop finishes ──────────────
+import csv
+summary_path = os.path.join(vsp_setup.AERO_RESULTS_DIR, f"drag_polar_fits_{geom_stem}.csv")
+write_header = not os.path.exists(summary_path)
+with open(summary_path, "a", newline="") as f:
+    writer = csv.writer(f)
+    if write_header:
+        writer.writerow(["Mach", "CD0", "K", "R2", "polar_file"])
+    for M, polar_dst, CD0, K, r2 in mach_results:
+        writer.writerow([M, CD0, K, r2, os.path.basename(polar_dst)])
+print(f"   ✅ CD0/K summary: {summary_path}")
+      
         
-# overlay
+# ── OVERLAY PLOTS — all Mach points on same axes, one per metric ────────
+
+# L/D vs Alpha
 fig, ax = plt.subplots(figsize=(7, 5))
 for M, polar_dst, CD0, K, r2 in mach_results:
     df = pd.read_csv(polar_dst.replace(".polar", ".csv"))
     if df["CL"].isna().all():
-        print(f"   Skipping M={M:.2f} in overlay — all-NaN (diverged)")
+        print(f"   Skipping M={M:.2f} in L/D overlay — all-NaN (diverged)")
         continue
     ax.plot(df["Alpha"], df["L/D"], "-o", ms=4, label=f"M={M:.2f}")
-
 ax.set_xlabel("Alpha (deg)")
 ax.set_ylabel("L/D")
 ax.set_title(f"L/D vs Alpha — {geom_stem}, Mach comparison")
@@ -244,4 +263,40 @@ ax.grid(True, ls="--", alpha=0.6)
 fig.tight_layout()
 fig.savefig(os.path.join(vsp_setup.AERO_RESULTS_DIR, f"ld_alpha_overlay_{geom_stem}.png"), dpi=150)
 plt.close(fig)
-print(f"   ✅ Overlay plot saved for {geom_stem}")
+print(f"   ✅ L/D overlay saved for {geom_stem}")
+
+# CL vs Alpha
+fig, ax = plt.subplots(figsize=(7, 5))
+for M, polar_dst, CD0, K, r2 in mach_results:
+    df = pd.read_csv(polar_dst.replace(".polar", ".csv"))
+    if df["CL"].isna().all():
+        print(f"   Skipping M={M:.2f} in CL-alpha overlay — all-NaN (diverged)")
+        continue
+    ax.plot(df["Alpha"], df["CL"], "-o", ms=4, label=f"M={M:.2f}")
+ax.set_xlabel("Alpha (deg)")
+ax.set_ylabel("CL")
+ax.set_title(f"CL vs Alpha — {geom_stem}, Mach comparison")
+ax.legend()
+ax.grid(True, ls="--", alpha=0.6)
+fig.tight_layout()
+fig.savefig(os.path.join(vsp_setup.AERO_RESULTS_DIR, f"cl_alpha_overlay_{geom_stem}.png"), dpi=150)
+plt.close(fig)
+print(f"   ✅ CL-alpha overlay saved for {geom_stem}")
+
+# CL vs CD (drag polar)
+fig, ax = plt.subplots(figsize=(7, 5))
+for M, polar_dst, CD0, K, r2 in mach_results:
+    df = pd.read_csv(polar_dst.replace(".polar", ".csv"))
+    if df["CL"].isna().all():
+        print(f"   Skipping M={M:.2f} in drag-polar overlay — all-NaN (diverged)")
+        continue
+    ax.plot(df["CDtot"], df["CL"], "-o", ms=4, label=f"M={M:.2f}")
+ax.set_xlabel("CD")
+ax.set_ylabel("CL")
+ax.set_title(f"Drag Polar — {geom_stem}, Mach comparison")
+ax.legend()
+ax.grid(True, ls="--", alpha=0.6)
+fig.tight_layout()
+fig.savefig(os.path.join(vsp_setup.AERO_RESULTS_DIR, f"drag_polar_overlay_{geom_stem}.png"), dpi=150)
+plt.close(fig)
+print(f"   ✅ Drag polar overlay saved for {geom_stem}")
