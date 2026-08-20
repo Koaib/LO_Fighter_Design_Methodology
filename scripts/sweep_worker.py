@@ -85,8 +85,8 @@ def main():
 
         wing_id = name_to_id[cfg.get("ref_wing", "Main_Wing")]
 
-        # ── AERO ──────────────────────────────────────────────────────────
-        polar_dst = vsp_setup.run_vspaero_aero(
+                # ── AERO ──────────────────────────────────────────────────────────
+        polar_dst, CD0, K, aero_r2 = vsp_setup.run_vspaero_aero(
             wing_id       = wing_id,
             alpha_start   = cfg["alpha_start"], alpha_end = cfg["alpha_end"],
             alpha_npts    = cfg["alpha_npts"],
@@ -94,8 +94,10 @@ def main():
             re_cref_start = cfg["re_cref"], wake_iters = cfg["wake_iters"],
             thin_geom_set = thin_set, thick_geom_set = thick_set,
             ref_mode      = "auto",
+            x_cg = cfg.get("x_cg"), y_cg = cfg.get("y_cg"), z_cg = cfg.get("z_cg"),
             run_name      = tag,
         )
+        entry["CD0"], entry["K"], entry["aero_r2"] = CD0, K, aero_r2
         if polar_dst is None:
             entry["status"] = "aero_failed"; _write(manifest_path, entry); return
 
@@ -115,6 +117,17 @@ def main():
         max_LD, cl_at_max, alpha_at_max = _max_LD_from_csv(tagged_csv)
         entry["max_LD"], entry["CL_at_max_LD"], entry["alpha_at_max_LD"] = max_LD, cl_at_max, alpha_at_max
 
+        # ── STABILITY — same aero_csv, no second solve ─────────────────────
+        cl_target = cfg.get("cl_target", 0.2)   # placeholder until perf module gives real cruise CL
+        try:
+            sm, sm_r2 = vsp_setup.compute_static_margin(tagged_csv, cl_target)
+            _, _, _, _, linear_range = vsp_setup.local_slope_curve(tagged_csv)
+            entry["static_margin"], entry["SM_r2"] = sm, sm_r2
+            entry["linear_alpha_min"], entry["linear_alpha_max"] = linear_range
+        except Exception as e:
+            entry["stability_error"] = str(e)
+            
+        
         # ── RCS (Stage 2 only) ────────────────────────────────────────────
         if cfg.get("run_rcs", False):
             stl_name = f"{tag}.stl"

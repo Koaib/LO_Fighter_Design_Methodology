@@ -32,6 +32,7 @@ BASE = dict(
     manifest_dir=str(MANIFEST_DIR), sweep_dir=str(SWEEP_ROOT),
     alpha_start=-8.0, alpha_end=14.0, alpha_npts=12,
     mach=0.6, re_cref=1e6, wake_iters=6,
+    x_cg=8.3315, y_cg=0.0, z_cg=0.0, cl_target=0.2,   # full-scale CG value — NOT the 0.4385 WTT-scale one
     run_rcs=False,
     freq_ghz=12.0, pol="both", cuts="azimuth", az_range="half", delp=1.0,
     min_edge_factor=3, max_edge_factor=1, max_gap_factor=3,
