@@ -199,15 +199,16 @@ else:  # "generate"
 ALPHA_START  = -8.0
 ALPHA_END    = 12.0
 ALPHA_NPTS   = 11
-MACH_LIST    = [0.1, 0.5]   # placeholder test values — edit as needed
+MACH_LIST    = [0.1, 0.3]   # placeholder test values — edit as needed
 RE_CREF      = 1e6
 WAKE_ITERS   = 3
 
 # =========================
 # STABILITY SETTINGS
 # =========================
-X_CG = 8.3315
-
+X_CG = 0.4385
+Y_CG = 0.0   
+Z_CG = 0.0   
 
 # =========================
 # TRIGGER AERO PIPELINE
@@ -232,6 +233,7 @@ for M in MACH_LIST:
         thin_geom_set=thin_set,
         thick_geom_set=thick_set_this_run,
         ref_mode=REF_MODE,
+        x_cg=X_CG, y_cg=Y_CG, z_cg=Z_CG,
         run_name=f"{geom_stem}_M{M:.2f}",
     )
     if polar_dst is not None:
@@ -306,3 +308,53 @@ fig.tight_layout()
 fig.savefig(os.path.join(vsp_setup.AERO_RESULTS_DIR, f"drag_polar_overlay_{geom_stem}.png"), dpi=150)
 plt.close(fig)
 print(f"   ✅ Drag polar overlay saved for {geom_stem}")
+
+# ── STABILITY ────────────────────────────────────────────────────────
+
+CL_TARGET = 0.2   # placeholder — replace with real cruise CL once perf module is wired
+
+for M, polar_dst, CD0, K, r2 in mach_results:
+    aero_csv = polar_dst.replace(".polar", ".csv")
+
+    alpha_c, cl_c, sm_curve, r2_curve, linear_range = vsp_setup.local_slope_curve(aero_csv)
+    print(f"   M={M:.2f}: linear region ≈ {linear_range[0]:.1f}° to {linear_range[1]:.1f}°" 
+          if linear_range[0] is not None else f"   M={M:.2f}: no region met R² threshold")
+
+    sm, sm_r2 = vsp_setup.compute_static_margin(aero_csv, CL_TARGET)
+    print(f"   M={M:.2f}: SM at CL={CL_TARGET} = {sm:.4f}  (R²={sm_r2:.4f})")
+
+    # Cm vs Alpha
+    df = pd.read_csv(aero_csv)
+    fig, ax = plt.subplots(figsize=(7,5))
+    ax.plot(df["Alpha"], df["CMytot"], "b-o", ms=4)
+    ax.set_xlabel("Alpha (deg)"); ax.set_ylabel("Cm")
+    ax.set_title(f"Cm vs Alpha — M={M:.2f}, Xcg={X_CG}")
+    ax.grid(True, ls="--", alpha=0.6)
+    fig.savefig(os.path.join(vsp_setup.STABILITY_DIR, f"cm_alpha_{geom_stem}_M{M:.2f}.png"), dpi=150)
+    plt.close(fig)
+
+    # Cm vs CL
+    fig, ax = plt.subplots(figsize=(7,5))
+    ax.plot(df["CL"], df["CMytot"], "r-o", ms=4)
+    ax.set_xlabel("CL"); ax.set_ylabel("Cm")
+    ax.set_title(f"Cm vs CL — M={M:.2f}, Xcg={X_CG}")
+    ax.grid(True, ls="--", alpha=0.6)
+    fig.savefig(os.path.join(vsp_setup.STABILITY_DIR, f"cm_cl_{geom_stem}_M{M:.2f}.png"), dpi=150)
+    plt.close(fig)
+
+    # local-slope diagnostic
+    fig, ax = plt.subplots(figsize=(7,5))
+    ax.plot(alpha_c, sm_curve, "g-o", ms=3)
+    ax.set_xlabel("Alpha (deg)"); ax.set_ylabel("Local SM (windowed)")
+    ax.set_title(f"Local SM vs Alpha — M={M:.2f}")
+    ax.grid(True, ls="--", alpha=0.6)
+    fig.savefig(os.path.join(vsp_setup.STABILITY_DIR, f"sm_local_{geom_stem}_M{M:.2f}.png"), dpi=150)
+    plt.close(fig)
+
+    summary_path = os.path.join(vsp_setup.STABILITY_DIR, f"stability_summary_{geom_stem}.csv")
+    write_header = not os.path.exists(summary_path)
+    with open(summary_path, "a", newline="") as f:
+        w = csv.writer(f)
+        if write_header:
+            w.writerow(["Mach", "X_cg", "CL_target", "SM", "SM_R2", "linear_alpha_min", "linear_alpha_max"])
+        w.writerow([M, X_CG, CL_TARGET, sm, sm_r2, linear_range[0], linear_range[1]])
