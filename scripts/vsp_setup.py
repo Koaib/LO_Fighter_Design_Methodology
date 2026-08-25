@@ -51,8 +51,8 @@ STL_FILES = os.path.join(ROOT_DIR, "STL_Files")
 RESULTS_DIR  = os.path.join(ROOT_DIR, "Results",  "RCS")
 OPENRCS_DIR  = os.path.join(ROOT_DIR, "OpenRCS",  "open-rcs")
 AERO_RESULTS_DIR = os.path.join(ROOT_DIR, "Results", "Aero")
+STABILITY_DIR     = os.path.join(ROOT_DIR, "Results", "Stability")
 VSPAERO_EXE = os.path.join(VSP_INSTALL, "vspaero.exe")
-
 
 # Path to our bridge script (scripts/ folder, same folder as this file)
 RUN_OPENRCS_SCRIPT = os.path.join(ROOT_DIR, "scripts", "run_openrcs.py")
@@ -89,6 +89,7 @@ os.makedirs(STP_FILES,   exist_ok=True)
 os.makedirs(STL_FILES,   exist_ok=True)
 os.makedirs(RESULTS_DIR, exist_ok=True)
 os.makedirs(AERO_RESULTS_DIR, exist_ok=True)
+os.makedirs(STABILITY_DIR, exist_ok=True)
 
 # =========================
 # OPENVSP INITIALIZATION
@@ -416,6 +417,7 @@ def run_vspaero_aero(
     thick_geom_set = 0,
     ref_mode       = "auto",
     sref = None, bref = None, cref = None,
+    x_cg = None, y_cg = None, z_cg = None,   
     run_name       = "aircraft",
 ):
     
@@ -442,8 +444,17 @@ def run_vspaero_aero(
         print(f"   [DEBUG] Ref values manual: Sref={sref}, bref={bref}, cref={cref}")
     else:
         raise ValueError("ref_mode must be 'auto' or 'manual'.")
-    vsp.PrintAnalysisInputs("VSPAERODegenGeom")
-    vsp.PrintAnalysisInputs("DegenGeom")
+        vsp.PrintAnalysisInputs("VSPAERODegenGeom")
+        vsp.PrintAnalysisInputs("DegenGeom")
+
+    for axis_name, axis_val, parm_name in [("X", x_cg, "Xcg"), ("Y", y_cg, "Ycg"), ("Z", z_cg, "Zcg")]:
+        if axis_val is not None:
+            pid = vsp.FindParm(vsp.FindContainer("VSPAEROSettings", 0), parm_name, "VSPAERO")
+            if pid:
+                vsp.SetParmVal(pid, axis_val)
+                print(f"   [DEBUG] {parm_name} set to {axis_val}")
+            else:
+                print(f"   ⚠️  Could not find {parm_name} parm — falling back to .vsp3's saved value")
 
     # ── 2. SAVE VSP3 ─────────────────────────────────────────────────────────
     vsp_file = os.path.join(VSP_FILES, f"{run_name}.vsp3")
@@ -557,7 +568,7 @@ def run_vspaero_aero(
     # comes back). Poll instead of checking once — a single immediate check
     # randomly "fails" runs that are still solving, unrelated to sweep angle.
     poll_timeout  = 1800   # sec, generous vs. the 13-20 min solves seen so far
-    poll_interval = 5
+    poll_interval = 10
     waited = 0
     polar_files = glob.glob(os.path.join(VSP_FILES, f"{run_name}.polar"))
     while not polar_files and waited < poll_timeout:
@@ -611,7 +622,8 @@ def run_vspaero_aero(
     CDtot  = data[:, col["CDtot"]]
     CDi    = data[:, col["CDi"]]
     CDo    = data[:, col["CDo"]]
-    LD     = data[:, col["L/D"]] if "L/D" in col else np.where(CDtot > 1e-9, CL/CDtot, 0.0)        
+    LD     = data[:, col["L/D"]] if "L/D" in col else np.where(CDtot > 1e-9, CL/CDtot, 0.0)
+    CMy    = data[:, col["CMytot"]] if "CMytot" in col else np.full_like(alpha, np.nan)        
 
     # interpolate NaNs in L/D only
     from scipy.interpolate import interp1d
@@ -626,9 +638,9 @@ def run_vspaero_aero(
     csv_path = polar_dst.replace(".polar", ".csv")
     with open(csv_path, "w", newline="") as f:
         writer = csv.writer(f)
-        writer.writerow(["Alpha", "CL", "CDtot", "CDi", "CDo", "L/D"])
+        writer.writerow(["Alpha", "CL", "CDtot", "CDi", "CDo", "L/D", "CMytot"])
         for i in range(len(alpha)):
-            writer.writerow([alpha[i], CL[i], CDtot[i], CDi[i], CDo[i], LD[i]])
+            writer.writerow([alpha[i], CL[i], CDtot[i], CDi[i], CDo[i], LD[i], CMy[i]])
     print(f"   ✅ CSV saved: {csv_path}")
     
     
@@ -700,3 +712,48 @@ def run_vspaero_aero(
 
     print("\n✅ VSPAero analysis complete.\n")
     return polar_dst, CD0, K, r2   # now returning fit params too — update main.py's unpacking accordingly
+
+def local_slope_curve(aero_csv, window_pts=5, r2_threshold=0.98):
+    """Rolling local dCm/dCL (= -SM) across the swept CL range, plus the
+    alpha range where R2 stays above threshold (the 'linear region')."""
+    import pandas as pd
+    df = pd.read_csv(aero_csv)
+    cl, cm, alpha = df["CL"].to_numpy(), df["CMytot"].to_numpy(), df["Alpha"].to_numpy()
+    order = np.argsort(cl)
+    cl, cm, alpha = cl[order], cm[order], alpha[order]
+
+    n, half = len(cl), window_pts // 2
+    sm, r2s, cl_c, alpha_c = [], [], [], []
+    for i in range(n):
+        lo, hi = max(0, i-half), min(n, i+half+1)
+        if hi - lo < 3:
+            continue
+        cl_w, cm_w = cl[lo:hi], cm[lo:hi]
+        slope, intercept = np.polyfit(cl_w, cm_w, 1)
+        fit = intercept + slope*cl_w
+        ss_res = np.sum((cm_w-fit)**2)
+        ss_tot = np.sum((cm_w-cm_w.mean())**2)
+        r2 = 1 - ss_res/ss_tot if ss_tot > 0 else np.nan
+        sm.append(-slope); r2s.append(r2); cl_c.append(cl[i]); alpha_c.append(alpha[i])
+
+    sm, r2s, cl_c, alpha_c = map(np.array, (sm, r2s, cl_c, alpha_c))
+    good = r2s >= r2_threshold
+    linear_range = (alpha_c[good].min(), alpha_c[good].max()) if good.any() else (None, None)
+    return alpha_c, cl_c, sm, r2s, linear_range
+
+
+def compute_static_margin(aero_csv, cl_target, window_pts=5):
+    """Local windowed SM = -dCm/dCL at one target CL. Returns (SM, R2)."""
+    import pandas as pd
+    df = pd.read_csv(aero_csv)
+    cl, cm = df["CL"].to_numpy(), df["CMytot"].to_numpy()
+    order = np.argsort(cl)
+    cl, cm = cl[order], cm[order]
+    idx = np.sort(np.argsort(np.abs(cl - cl_target))[:window_pts])
+    cl_w, cm_w = cl[idx], cm[idx]
+    slope, intercept = np.polyfit(cl_w, cm_w, 1)
+    fit = intercept + slope*cl_w
+    ss_res = np.sum((cm_w-fit)**2)
+    ss_tot = np.sum((cm_w-cm_w.mean())**2)
+    r2 = 1 - ss_res/ss_tot if ss_tot > 0 else np.nan
+    return -slope, r2
