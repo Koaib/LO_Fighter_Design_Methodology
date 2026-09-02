@@ -18,10 +18,35 @@ from build_engine_deck import build_deck, T_SL_DRY
 
 AIRCRAFT_CSV = os.path.join(os.path.dirname(__file__), "ssam_aircraft.csv")
 
-# fixed F-16C-derived mass values — see placeholder table
-EMPTY_MASS_LBM = 18238.0/19
-GROSS_MASS_LBM = 26463.0/19
-FUEL_MASS_LBM  = 6972.0/19
+# F-16C published reference specs (the mass-fraction / wing-loading basis
+# below, and eventually the real full-scale run's mass values directly).
+F16C_EMPTY_MASS_LBM = 18238.0
+F16C_GROSS_MASS_LBM = 26463.0
+F16C_FUEL_MASS_LBM  = 6972.0
+F16C_WING_AREA_FT2  = 300.0   # published F-16C reference wing area
+
+# Dividing the real F-16C masses by 19 (a *linear* scale factor) made no
+# sense against this test config's wing area (1.174343 ft^2, from
+# ssam_aircraft.csv) - that wing is a small, unrelated dev geometry, not a
+# true 1/19 scale-down of the real jet. That combination gave a wing
+# loading of ~1187 lbm/ft^2 (vs. the real F-16C's ~88 lbm/ft^2) - physically
+# impossible (would need CL~9.5 for level flight) - which is exactly why
+# the mission's climb aerodynamics Newton solve couldn't converge: no
+# achievable alpha/CL exists at that wing loading anywhere in the polar
+# table. Scaling mass to match the real F-16C's wing loading against this
+# wing's *actual* area keeps the run physically self-consistent instead.
+# Still a placeholder, not real masses — matches this project's real
+# full-scale run still pending (real x19 geometry + true F-16C mass values,
+# unscaled). If climb still fails to converge with this fix, the likely
+# next culprit is CL demand at the low-Mach/low-altitude start of climb
+# outrunning the -8..12 deg alpha polar's covered CL range.
+TEST_WING_AREA_FT2 = 1.174343  # must match aircraft:wing:area in ssam_aircraft.csv
+_wing_loading_lbm_per_ft2 = F16C_GROSS_MASS_LBM / F16C_WING_AREA_FT2
+GROSS_MASS_LBM = _wing_loading_lbm_per_ft2 * TEST_WING_AREA_FT2
+EMPTY_MASS_LBM = GROSS_MASS_LBM * (F16C_EMPTY_MASS_LBM / F16C_GROSS_MASS_LBM)
+FUEL_MASS_LBM  = GROSS_MASS_LBM * (F16C_FUEL_MASS_LBM / F16C_GROSS_MASS_LBM)
+print(f"   [mass] wing-loading-scaled GROSS={GROSS_MASS_LBM:.2f} lbm, "
+      f"EMPTY={EMPTY_MASS_LBM:.2f} lbm, FUEL={FUEL_MASS_LBM:.2f} lbm")
 
 def main():
     engine_deck_path = build_deck()
