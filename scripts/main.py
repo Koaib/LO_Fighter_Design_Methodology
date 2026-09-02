@@ -61,7 +61,10 @@ REF_WING_NAME = "Main_Wing"   # only matters once REF_MODE = "auto" (SSAM run)
 USE_CFD_MESH     = False    # False -> old plain ExportFile(EXPORT_STL)
 FREQ_GHZ         = 12.0     # also drives the RCS run below
 AZ_RANGE         = "half"   # "full" or "half" — half valid for bilaterally symmetric aircraft
-DELP             = 30.0      # phi step, deg
+DELP             = 1.0       # phi step, deg — 30° (7 pts across a half-circle) was
+                              # far too coarse to resolve real RCS features (specular
+                              # flashes/nulls are often only a few degrees wide);
+                              # matches sweep_driver.py's own delp=1.0
 MAX_EDGE_FACTOR  = 1        # coarse bound: edge = lambda / MAX_EDGE_FACTOR
 MIN_EDGE_FACTOR  = 3        # fine bound:   edge = lambda / MIN_EDGE_FACTOR
 MAX_GAP_FACTOR   = 3        # max_gap = lambda / MAX_GAP_FACTOR
@@ -183,14 +186,14 @@ else:  # "generate"
 # RCS PIPELINE
 # =========================
 
-# vsp_setup.run_openrcs_rcs(
-#     stl_filename = stl_for_rcs,
-#     freq         = FREQ_GHZ,
-#     pol          = "TE-z",
-#     cuts         = "azimuth",
-#     az_range     = AZ_RANGE,
-#     delp         = DELP,
-# )
+vsp_setup.run_openrcs_rcs(
+    stl_filename = stl_for_rcs,
+    freq         = FREQ_GHZ,
+    pol          = "TE-z",
+    cuts         = "azimuth",
+    az_range     = AZ_RANGE,
+    delp         = DELP,
+)
 
 # =========================
 # AERO SETTINGS
@@ -201,7 +204,11 @@ ALPHA_END    = 12.0
 ALPHA_NPTS   = 11
 MACH_LIST      = [0.2, 0.4, 0.6]
 ALTITUDE_LIST  = [0.0, 15000.0, 35000.0]
-RE_CREF      = 1e6
+RE_CREF      = 1e6   # fallback only — run_vspaero_aero() auto-computes the real
+                      # Reynolds number from actual wing chord + ISA atmosphere
+                      # whenever it can read the wing geometry (always, in
+                      # practice), silently overriding this value. Only takes
+                      # effect if that auto-calc fails.
 WAKE_ITERS   = 3
 
 # =========================
