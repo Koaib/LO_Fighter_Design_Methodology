@@ -6,17 +6,20 @@ Created on Wed Aug 26 19:09:02 2026
 """
 
 """
-Single entry point for the Aviary mission-analysis stage of the pipeline.
+Aviary mission-analysis stage of the pipeline. Normally called automatically
+by main.py's RUN_AVIARY step at the end of a full run (geom_stem is passed
+in from main.py's own IMPORT_FILE, so there's nothing to keep in sync by
+hand). Can still be run standalone for testing against DEFAULT_GEOM_STEM
+below.
 
-Requires main.py to have already produced a complete 9-file Mach x Altitude
-aero-polar grid (Results/Aero/aero_<GEOM_STEM>_M#_ALT#_*.csv) for the SAME
-GEOM_STEM configured below.
+Requires the aero stage (main.py) to have already produced a complete
+9-file Mach x Altitude aero-polar grid (Results/Aero/aero_<geom_stem>_M#_
+ALT#_*.csv) for the SAME geom_stem.
 
-To change ANY Aviary-related input (which geometry, mass basis, engine
-specs, mission profile), edit the USER CONFIG block below. Everything else
-in this file reads from those values - nothing else needs to change.
+To change any OTHER Aviary-related input (mass basis, engine specs,
+mission profile), edit the USER CONFIG block below.
 
-Usage:
+Usage (standalone):
     python scripts/aviary/run_aviary.py
 """
 
@@ -37,10 +40,9 @@ from build_engine_deck import build_deck
 # USER CONFIG — edit this to change any Aviary-related input
 # =============================================================================
 
-# Must match the IMPORT_FILE used in main.py's most recent run — that run's
-# 9 aero CSVs (Results/Aero/aero_<GEOM_STEM>_M#_ALT#_*.csv) are what this
-# script builds the lift/drag polar table from.
-GEOM_STEM = "SSAM_final_geom_to_be_used_NOT_scaled_by_19_nozzle_mod"
+# Only used when this file is run standalone (not via main.py, which passes
+# its own geom_stem in directly - see run_aviary_mission()'s signature).
+DEFAULT_GEOM_STEM = "SSAM_final_geom_to_be_used_NOT_scaled_by_19_nozzle_mod"
 
 # Must match aircraft:wing:area in ssam_aircraft.csv — the wing this test
 # geometry actually has, NOT a scaled-down F-16C value (see mass basis note
@@ -91,7 +93,13 @@ EMPTY_MASS_LBM = GROSS_MASS_LBM * (F16C_EMPTY_MASS_LBM / F16C_GROSS_MASS_LBM)
 FUEL_MASS_LBM  = GROSS_MASS_LBM * (F16C_FUEL_MASS_LBM / F16C_GROSS_MASS_LBM)
 
 
-def main():
+def run_aviary_mission(geom_stem=None):
+    """Run the Aviary mission analysis for geom_stem's already-produced aero
+    CSVs (see module docstring). geom_stem defaults to DEFAULT_GEOM_STEM for
+    standalone use; main.py always passes its own geom_stem explicitly."""
+    if geom_stem is None:
+        geom_stem = DEFAULT_GEOM_STEM
+
     os.makedirs(vsp_setup.AVIARY_FILES, exist_ok=True)
     os.makedirs(vsp_setup.AVIARY_PERF_DIR, exist_ok=True)
 
@@ -109,7 +117,7 @@ def main():
     from build_aero_polar import reshape_to_grid
 
     external_aero = ExternalAeroBuilder(
-        geom_stem=GEOM_STEM,
+        geom_stem=geom_stem,
         expected_machs=EXPECTED_MACHS,
         expected_altitudes=EXPECTED_ALTITUDES_FT,
     )
@@ -218,10 +226,10 @@ def main():
     print(f"   Fuel mass residual : {fuel_residual[0]:.2f} lbm  "
           f"(positive = margin, negative = infeasible)")
 
-    _save_curated_reports()
+    _save_curated_reports(geom_stem)
 
 
-def _save_curated_reports():
+def _save_curated_reports(geom_stem):
     """
     Copies the report files that actually matter (mission summary + full
     timeseries + the two auto-generated input/override checks) from
@@ -253,10 +261,10 @@ def _save_curated_reports():
             print(f"   ⚠️  {fname} not found in {reports_dir} — skipped")
             continue
         stem, ext = os.path.splitext(fname)
-        dst = os.path.join(vsp_setup.AVIARY_PERF_DIR, f"{stem}_{GEOM_STEM}_{ts}{ext}")
+        dst = os.path.join(vsp_setup.AVIARY_PERF_DIR, f"{stem}_{geom_stem}_{ts}{ext}")
         shutil.copy2(src, dst)
         print(f"   ✅ saved: {dst}")
 
 
 if __name__ == "__main__":
-    main()
+    run_aviary_mission()

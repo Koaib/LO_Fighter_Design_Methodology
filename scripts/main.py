@@ -7,21 +7,27 @@ Created on Thu Apr 16 20:24:37 2026
 
 """
 Single entry point for the LO Fighter Design Methodology pipeline.
- 
-Pipeline:
-  1. OpenVSP  — parametric aircraft geometry generation
-  2. Export   — VSP3 + STEP + STL files
-  3. OpenRCS  — Physical Optics monostatic RCS computation (pure Python,
-                no MATLAB, no Octave, no license required)
-  4. Results  — Polar plot, RCS vs phi plot, 3D figure, .dat data file
-                all saved to Results/RCS/
- 
+
+Pipeline (all controlled from the config sections below — one file,
+edited in one place):
+  1. OpenVSP    — parametric aircraft geometry generation, VSP3/STEP/STL export
+  2. OpenRCS    — Physical Optics monostatic RCS (pure Python, no MATLAB/
+                  Octave/license) → Results/RCS/            [RUN_RCS toggle]
+  3. VSPAero    — VLM aero sweep across the Mach x Altitude grid below →
+                  Results/Aero/
+  4. Stability  — static margin / Cm-alpha analysis on each aero run →
+                  Results/Stability/
+  5. Aviary     — fixed-mission fuel/range analysis, built from this run's
+                  aero CSVs → Results/aviary_perf/           [RUN_AVIARY toggle]
+
 Usage:
     python scripts/main.py
- 
+
 To change design parameters, edit the geometry section below.
 To change RCS settings (frequency, angles, polarisation), edit the
 RCS SETTINGS section at the bottom or pass them into run_openrcs_rcs().
+To change Aviary/mission settings (mass basis, engine specs, cruise
+profile), edit the USER CONFIG block in scripts/aviary/run_aviary.py.
 """
 
 import vsp_setup  
@@ -48,6 +54,14 @@ INPUT_MODE    = "import_vsp3"       # "generate" | "import_stl" | "import_vsp3"
 IMPORT_FILE   = "SSAM_final_geom_to_be_used_NOT_scaled_by_19_nozzle_mod.vsp3"  # filename inside Geometry/ folder (for import modes)
 REF_MODE      = "auto"      # use "manual" for box_template — it has no wing
 REF_WING_NAME = "Main_Wing"   # only matters once REF_MODE = "auto" (SSAM run)
+
+# =========================
+# PIPELINE STAGE TOGGLES — edit this
+# =========================
+RUN_RCS    = True   # OpenRCS monostatic RCS pass (Results/RCS/)
+RUN_AVIARY = True   # Aviary mission analysis, runs AFTER the aero+stability
+                     # loop below finishes — needs this run's full 9-file
+                     # Mach x Altitude aero-CSV grid to build its polar table
 
 # =========================
 # STL MESH SETTINGS — edit this
@@ -186,14 +200,15 @@ else:  # "generate"
 # RCS PIPELINE
 # =========================
 
-vsp_setup.run_openrcs_rcs(
-    stl_filename = stl_for_rcs,
-    freq         = FREQ_GHZ,
-    pol          = "TE-z",
-    cuts         = "azimuth",
-    az_range     = AZ_RANGE,
-    delp         = DELP,
-)
+if RUN_RCS:
+    vsp_setup.run_openrcs_rcs(
+        stl_filename = stl_for_rcs,
+        freq         = FREQ_GHZ,
+        pol          = "TE-z",
+        cuts         = "azimuth",
+        az_range     = AZ_RANGE,
+        delp         = DELP,
+    )
 
 # =========================
 # AERO SETTINGS
@@ -368,3 +383,19 @@ for M, ALT, polar_dst, CD0, K, r2 in mach_results:
         if write_header:
             w.writerow(["Mach", "Altitude_ft", "X_cg", "CL_target", "SM", "SM_R2", "linear_alpha_min", "linear_alpha_max"])
         w.writerow([M, ALT, X_CG, CL_TARGET, sm, sm_r2, linear_range[0], linear_range[1]])
+
+# =========================
+# AVIARY MISSION ANALYSIS
+# =========================
+# Runs last — needs the full 9-file Mach x Altitude aero-CSV grid this
+# script just produced (above) for this same geom_stem. To change any
+# Aviary-specific input (mass basis, engine specs, cruise profile), edit
+# the USER CONFIG block in scripts/aviary/run_aviary.py — geom_stem is the
+# only thing threaded through from here, so nothing else needs to stay in
+# sync by hand.
+
+if RUN_AVIARY:
+    import sys
+    sys.path.insert(0, os.path.join(ROOT_DIR, "scripts", "aviary"))
+    from run_aviary import run_aviary_mission
+    run_aviary_mission(geom_stem=geom_stem)
