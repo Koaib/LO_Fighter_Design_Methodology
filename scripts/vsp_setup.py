@@ -398,8 +398,29 @@ def run_matlab_rcs():
 # VSPAERO AERO LAUNCHER
 # =============================================================================
 
+def isa_atmosphere(alt_ft):
+    """Two-layer ISA (troposphere + lower stratosphere), valid 0-65,000 ft.
+    Returns T (K), rho (kg/m^3), mu (Pa*s, Sutherland's law), a (m/s)."""
+    alt_m = alt_ft * 0.3048
+    GAMMA, R_AIR = 1.4, 287.05
+    T_SL, RHO_SL = 288.15, 1.225
+
+    if alt_m <= 11000.0:
+        T = T_SL - 0.0065 * alt_m
+        RHO = RHO_SL * (T / T_SL) ** 4.2561
+    else:
+        T_11 = T_SL - 0.0065 * 11000.0     # 216.65 K
+        RHO_11 = RHO_SL * (T_11 / T_SL) ** 4.2561
+        T = T_11                             # isothermal above 11 km
+        RHO = RHO_11 * np.exp(-9.80665 * (alt_m - 11000.0) / (R_AIR * T_11))
+
+    MU = 1.458e-6 * T**1.5 / (T + 110.4)
+    a_sound = (GAMMA * R_AIR * T) ** 0.5
+    return T, RHO, MU, a_sound
+
 def run_vspaero_aero(
     wing_id,
+    altitude_ft    = 0.0,   # NEW — drives Re calc via ISA atmosphere
     alpha_start    = -5.0,
     alpha_end      = 15.0,
     alpha_npts     = 21,
@@ -497,13 +518,10 @@ def run_vspaero_aero(
             return None, None, None, None
         print(f"   .vspgeom exists ✅ (waited {waited}s)")
 
+        
         # ── Auto Re from actual wing planform cref (replaces fixed re_cref) ──
-        ATMO_ALT_M = 0.0
-        GAMMA, R_AIR = 1.4, 287.05
-        T = 288.15 - 0.0065 * ATMO_ALT_M
-        RHO = 1.225 * (T / 288.15) ** 4.2561
-        MU  = 1.458e-6 * T**1.5 / (T + 110.4)
-        a_sound = (GAMMA * R_AIR * T) ** 0.5
+        T, RHO, MU, a_sound = isa_atmosphere(altitude_ft)
+        print(f"   [DEBUG] ISA @ {altitude_ft:.0f}ft: T={T:.2f}K, rho={RHO:.4f}, mu={MU:.3e}")
 
         try:
             cref_actual = vsp.GetParmVal(wing_id, "TotalChord", "WingGeom")
