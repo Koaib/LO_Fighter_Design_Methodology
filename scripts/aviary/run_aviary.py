@@ -126,9 +126,33 @@ def main():
     # Aviary's own run_aviary_problem(run_driver=False) convenience wrapper
     # doesn't call it for you, it's a separate required step.
     prob.set_initial_guesses()
+
+    # set_initial_guesses() reportedly had zero effect on Mission.RANGE last
+    # run — checking the raw Dymos phase durations directly (rather than
+    # trusting Mission.RANGE to mean what it sounds like) to find out
+    # whether the guess actually landed, before run_model() does anything.
+    for ph in ("climb", "cruise", "descent"):
+        for path in (f"traj.{ph}.t_duration", f"traj.phases.{ph}.t_duration"):
+            try:
+                print(f"   [debug] {path} = {prob.get_val(path)}")
+            except Exception as e:
+                print(f"   [debug] {path}: could not read ({e})")
     prob.run_model()
 
     print("\n--- RESULTS ---")
+    # Also check the raw distance STATE directly (Dynamic.Mission.DISTANCE
+    # = 'distance'), in case Mission.RANGE isn't actually wired to reflect
+    # what got flown for our specific mission_method/EOM combination.
+    for path in (
+        "traj.descent.timeseries.distance",
+        "traj.phases.descent.timeseries.distance",
+        "traj.descent.states:distance",
+    ):
+        try:
+            val = prob.get_val(path)
+            print(f"   [debug] {path} (post-run) = {val[-1] if hasattr(val, '__len__') else val}")
+        except Exception as e:
+            print(f"   [debug] {path} (post-run): could not read ({e})")
     # MASS_RESIDUAL is just total_fuel_mass - mission_fuel_burned - reserve_fuel_mass
     # (plain subtraction, aviary/core/aviary_group.py) — it can't itself produce
     # NaN from finite inputs, so print each term to find which one is NaN.
