@@ -29,7 +29,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))  # for vsp_set
 
 import vsp_setup
 import aviary.api as av
-from aviary.api import Aircraft, Mission
+from aviary.api import Aircraft, Mission, Settings
+from aviary.variable_info.enums import EquationsOfMotion, LegacyCode
 from aviary.interface.reports import mission_report, timeseries_csv
 
 from phase_info import phase_info
@@ -44,10 +45,17 @@ from build_engine_deck import build_deck
 # its own geom_stem in directly - see run_aviary_mission()'s signature).
 DEFAULT_GEOM_STEM = "SSAM_final_geom_to_be_used_NOT_scaled_by_19_nozzle_mod"
 
-# Must match aircraft:wing:area in ssam_aircraft.csv — the wing this test
-# geometry actually has, NOT a scaled-down F-16C value (see mass basis note
-# below for why that distinction matters).
+# This test geometry's actual wing planform — NOT a scaled-down F-16C value
+# (see mass basis note below for why that distinction matters). Project
+# notes flag that this "nozzle_mod" geometry may not be identical to
+# whatever geometry these numbers were originally measured from — re-derive
+# from the real .vsp3 (scripts/aviary/print_wing_ref_params.py) before
+# trusting these for anything beyond plumbing validation.
 TEST_WING_AREA_FT2 = 1.174343
+TEST_WING_SPAN_FT = 1.755249
+TEST_WING_ASPECT_RATIO = 3.46
+TEST_WING_HAS_STRUT = False
+TEST_WING_HAS_FOLD = False
 
 # ── Mass basis ───────────────────────────────────────────────────────────
 # Real F-16C published reference specs, used ONLY as a wing-loading basis to
@@ -72,8 +80,9 @@ ENGINE_T_SL_AB_LBF  = 29100.0   # published F100-PW-229 afterburner static thrus
 ENGINE_TSFC_DRY     = 0.8       # lb/(lb*hr), typical for this engine class
 ENGINE_TSFC_AB      = 2.0       # lb/(lb*hr), typical for this engine class
 
-# ── Mission profile (must match ssam_aircraft.csv's aircraft:design:*) ────
+# ── Mission profile ────────────────────────────────────────────────────────
 CRUISE_MACH = 0.6
+CRUISE_ALTITUDE_FT = 35000.0
 DESIGN_RANGE_NMI = 400.0
 
 # ── Aero polar grid this run's Results/Aero CSVs must cover (must match
@@ -81,7 +90,12 @@ DESIGN_RANGE_NMI = 400.0
 EXPECTED_MACHS = {0.2, 0.4, 0.6}
 EXPECTED_ALTITUDES_FT = {0.0, 15000.0, 35000.0}
 
-AIRCRAFT_CSV = os.path.join(os.path.dirname(__file__), "ssam_aircraft.csv")
+# ── Fixed architecture choices — NOT freely changeable, other files assume
+# these exact values (phase_info.py's 'tabular_cruise' aero method is
+# GASP-specific; the mass overrides above assume FLOPS's mass buildup) ────
+EQUATIONS_OF_MOTION = EquationsOfMotion.ENERGY_STATE
+MASS_METHOD = LegacyCode.FLOPS
+AERODYNAMICS_METHOD = LegacyCode.GASP
 
 # =============================================================================
 # Derived mass values (wing-loading-scaled — see USER CONFIG note above)
@@ -91,6 +105,32 @@ _wing_loading_lbm_per_ft2 = F16C_GROSS_MASS_LBM / F16C_WING_AREA_FT2
 GROSS_MASS_LBM = _wing_loading_lbm_per_ft2 * TEST_WING_AREA_FT2
 EMPTY_MASS_LBM = GROSS_MASS_LBM * (F16C_EMPTY_MASS_LBM / F16C_GROSS_MASS_LBM)
 FUEL_MASS_LBM  = GROSS_MASS_LBM * (F16C_FUEL_MASS_LBM / F16C_GROSS_MASS_LBM)
+
+
+def _build_aircraft_inputs():
+    """
+    Aircraft/mission input data, built directly as an AviaryValues object
+    instead of a CSV file. load_inputs()'s own docstring confirms
+    aircraft_data accepts "a path to a CSV file OR an existing AviaryValues
+    object" - and AviaryValues.set_val() does exactly the same metadata-
+    driven type/unit checking either way (confirmed against the v1.0.1
+    source: aviary/utils/process_input_decks.py's CSV parser just calls
+    set_val() too, with no special handling of its own - so this is a pure
+    mechanical swap in how these values get set, not a behavior change).
+    """
+    aviary_inputs = av.AviaryValues()
+    aviary_inputs.set_val(Settings.EQUATIONS_OF_MOTION, EQUATIONS_OF_MOTION)
+    aviary_inputs.set_val(Settings.MASS_METHOD, MASS_METHOD)
+    aviary_inputs.set_val(Settings.AERODYNAMICS_METHOD, AERODYNAMICS_METHOD)
+    aviary_inputs.set_val(Aircraft.Wing.AREA, TEST_WING_AREA_FT2, units="ft**2")
+    aviary_inputs.set_val(Aircraft.Wing.SPAN, TEST_WING_SPAN_FT, units="ft")
+    aviary_inputs.set_val(Aircraft.Wing.ASPECT_RATIO, TEST_WING_ASPECT_RATIO, units="unitless")
+    aviary_inputs.set_val(Aircraft.Wing.HAS_STRUT, TEST_WING_HAS_STRUT)
+    aviary_inputs.set_val(Aircraft.Wing.HAS_FOLD, TEST_WING_HAS_FOLD)
+    aviary_inputs.set_val(Aircraft.Design.RANGE, DESIGN_RANGE_NMI, units="NM")
+    aviary_inputs.set_val(Aircraft.Design.CRUISE_MACH, CRUISE_MACH, units="unitless")
+    aviary_inputs.set_val(Aircraft.Design.CRUISE_ALTITUDE, CRUISE_ALTITUDE_FT, units="ft")
+    return aviary_inputs
 
 
 def run_aviary_mission(geom_stem=None):
@@ -138,10 +178,10 @@ def run_aviary_mission(geom_stem=None):
     os.chdir(vsp_setup.AVIARY_FILES)
     try:
         prob = av.AviaryProblem()
-        prob.load_inputs(AIRCRAFT_CSV, phase_info)
+        prob.load_inputs(_build_aircraft_inputs(), phase_info)
         prob.load_external_subsystems([external_aero])
 
-        # Fixed mass overrides — settings:mass_method stays FLOPS (CSV), but
+        # Fixed mass overrides — settings:mass_method stays FLOPS, but
         # since EMPTY_MASS is set here on aviary_inputs *before*
         # build_model()/setup(), Aviary's override-variable mechanism
         # disconnects FLOPS's own empirical EmptyMass computation and treats
