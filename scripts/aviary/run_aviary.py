@@ -120,6 +120,21 @@ def main():
     prob.run_model()
 
     print("\n--- RESULTS ---")
+    # MASS_RESIDUAL is just total_fuel_mass - mission_fuel_burned - reserve_fuel_mass
+    # (plain subtraction, aviary/core/aviary_group.py) — it can't itself produce
+    # NaN from finite inputs, so print each term to find which one is NaN.
+    for label, var in [
+        ("Mission.TOTAL_FUEL_MASS (fuel loaded)", Mission.TOTAL_FUEL_MASS),
+        ("Mission.FUEL_MASS (mission fuel burned)", Mission.FUEL_MASS),
+        ("Mission.TOTAL_RESERVE_FUEL_MASS", Mission.TOTAL_RESERVE_FUEL_MASS),
+        ("Mission.RANGE (actual flown range)", Mission.RANGE),
+        ("Aircraft.Fuel.TOTAL_CAPACITY", Aircraft.Fuel.TOTAL_CAPACITY),
+    ]:
+        try:
+            print(f"   [debug] {label} = {prob.get_val(var)}")
+        except Exception as e:
+            print(f"   [debug] {label}: could not read ({e})")
+
     fuel_residual = prob.get_val(Mission.Constraints.MASS_RESIDUAL)
     print(f"Fuel mass residual: {fuel_residual}  (positive = margin, negative = infeasible)")
 
