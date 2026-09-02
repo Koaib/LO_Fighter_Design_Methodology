@@ -168,6 +168,31 @@ def main():
         except Exception as e:
             print(f"   [debug] {label}: could not read ({e})")
 
+    # TOTAL_FUEL_MASS = Mission.GROSS_MASS - Mission.ZERO_FUEL_MASS (pre_mission,
+    # plain subtraction, aviary/core/aviary_group.py:~622). ZERO_FUEL_MASS =
+    # OperatingMass + TOTAL_PAYLOAD_MASS (flops_based/mass_summation.py), and
+    # OperatingMass = Aircraft.Design.EMPTY_MASS + OPERATING_ITEMS_MASS, which
+    # itself sums 7 terms - printing the whole chain to find which one is NaN
+    # instead of guessing further.
+    for label, var in [
+        ("Mission.GROSS_MASS", Mission.GROSS_MASS),
+        ("Mission.ZERO_FUEL_MASS", Mission.ZERO_FUEL_MASS),
+        ("Mission.OPERATING_MASS", Mission.OPERATING_MASS),
+        ("Aircraft.CrewPayload.TOTAL_PAYLOAD_MASS", Aircraft.CrewPayload.TOTAL_PAYLOAD_MASS),
+        ("Mission.OPERATING_ITEMS_MASS", Mission.OPERATING_ITEMS_MASS),
+        ("Aircraft.CrewPayload.CARGO_CONTAINER_MASS", Aircraft.CrewPayload.CARGO_CONTAINER_MASS),
+        ("Aircraft.CrewPayload.CABIN_CREW_MASS", Aircraft.CrewPayload.CABIN_CREW_MASS),
+        ("Aircraft.CrewPayload.FLIGHT_CREW_MASS", Aircraft.CrewPayload.FLIGHT_CREW_MASS),
+        ("Aircraft.CrewPayload.PASSENGER_SERVICE_MASS", Aircraft.CrewPayload.PASSENGER_SERVICE_MASS),
+        ("Aircraft.Fuel.UNUSABLE_FUEL_MASS", Aircraft.Fuel.UNUSABLE_FUEL_MASS),
+        ("Aircraft.Propulsion.TOTAL_ENGINE_OIL_MASS", Aircraft.Propulsion.TOTAL_ENGINE_OIL_MASS),
+        ("Mission.OPERATING_ITEMS_MASS_ADDITIONAL", Mission.OPERATING_ITEMS_MASS_ADDITIONAL),
+    ]:
+        try:
+            print(f"   [debug] {label} = {prob.get_val(var)}")
+        except Exception as e:
+            print(f"   [debug] {label}: could not read ({e})")
+
     fuel_residual = prob.get_val(Mission.Constraints.MASS_RESIDUAL)
     print(f"Fuel mass residual: {fuel_residual}  (positive = margin, negative = infeasible)")
 
