@@ -12,11 +12,8 @@ OpenVSP*/
 Octave*/
 POFACETS/
 
-# ── OpenRCS repo (clone separately into OpenRCS/open-rcs/) ───────────────────
-# The open-rcs folder itself is a git submodule / separate clone.
-# Only our bridge scripts (run_openrcs.py) are committed here.
-# Intermediate text files that OpenRCS writes during a run are excluded:
-OpenRCS/open-rcs/
+# ── OpenRCS repo (vendored, patched fork committed into OpenRCS/open-rcs/) ────
+# No longer ignored — see setup notes for how it was added.
 
 # ── Virtual environment ───────────────────────────────────────────────────────
 .venv/
