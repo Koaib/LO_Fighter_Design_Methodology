@@ -117,6 +117,15 @@ def main():
 
     # NO driver / design variables / objective — pure fixed-input analysis
     prob.setup()
+    # Dymos collocation needs a real starting guess for trajectory states/
+    # controls/phase durations even outside optimization - without a driver
+    # to pick them, phase duration silently stayed near zero (Mission.RANGE
+    # came back 0.00054 nmi, Mission.FUEL_MASS burned was exactly 0, which
+    # cascaded into Mission.TOTAL_FUEL_MASS = NaN). set_initial_guesses()
+    # (aviary/core/aviary_problem.py) is the official call for this - even
+    # Aviary's own run_aviary_problem(run_driver=False) convenience wrapper
+    # doesn't call it for you, it's a separate required step.
+    prob.set_initial_guesses()
     prob.run_model()
 
     print("\n--- RESULTS ---")
