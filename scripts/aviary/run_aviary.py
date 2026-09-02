@@ -79,6 +79,17 @@ def main():
     prob.aviary_inputs.set_val(Aircraft.Design.GROSS_MASS, GROSS_MASS_LBM, units="lbm")
     prob.aviary_inputs.set_val(Aircraft.Fuel.TOTAL_CAPACITY, FUEL_MASS_LBM, units="lbm")
 
+    # Mission.Constraints.MAX_MACH defaults to 0.0 (aviary's own metadata has
+    # a "TODO: derived default value" comment acknowledging this) and is read
+    # by FLOPS's PassengerServiceMass component as (design_range / max_mach)
+    # ** 0.225 - with max_mach=0.0 that's a straight division by zero,
+    # matching the "divide by zero encountered in divide" warning seen on
+    # every run, and it's what eventually cascades into the NaN chain
+    # (ZERO_FUEL_MASS -> OPERATING_MASS -> OPERATING_ITEMS_MASS ->
+    # PASSENGER_SERVICE_MASS). Setting it to our actual cruise Mach (matches
+    # aircraft:design:cruise_mach in ssam_aircraft.csv).
+    prob.aviary_inputs.set_val(Mission.Constraints.MAX_MACH, 0.6, units="unitless")
+
     engine_options = av.AviaryValues()
     engine_options.set_val(Aircraft.Engine.DATA_FILE, engine_deck_path)
     engine_options.set_val(Aircraft.Engine.NUM_ENGINES, 1)
