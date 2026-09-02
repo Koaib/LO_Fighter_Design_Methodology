@@ -59,6 +59,12 @@ def main():
     engine_options.set_val(Aircraft.Engine.NUM_ENGINES, 1)
     engine_options.set_val(Aircraft.Engine.NUM_WING_ENGINES, 0)
     engine_options.set_val(Aircraft.Engine.NUM_FUSELAGE_ENGINES, 1)
+    # Left at its default (True, unset by us) this crashed FLOPS's EngineMass
+    # component: `np.where(scale_mass)` on a 0-d array ("Calling nonzero on
+    # 0d arrays is not allowed"). Setting it explicitly avoids that shape bug.
+    # We don't need FLOPS's thrust-scaled engine-mass equation anyway, since
+    # EMPTY_MASS is overridden wholesale above — False just means "don't scale".
+    engine_options.set_val(Aircraft.Engine.SCALE_MASS, False)
     engine_deck = av.EngineDeck(name="f100", options=engine_options)
     av.preprocess_propulsion(aviary_options=prob.aviary_inputs, engine_models=[engine_deck])
     
