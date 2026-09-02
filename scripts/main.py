@@ -27,7 +27,9 @@ RCS SETTINGS section at the bottom or pass them into run_openrcs_rcs().
 import vsp_setup  
 import openvsp as vsp
 import os
-
+import matplotlib.pyplot as plt
+import pandas as pd
+import time
 
 """
 Single entry point for the LO Fighter Design Methodology pipeline.
@@ -43,7 +45,7 @@ INPUT_MODE options:
 # =========================
 
 INPUT_MODE    = "import_vsp3"       # "generate" | "import_stl" | "import_vsp3"
-IMPORT_FILE   = "SSAM_final_geom_to_be_used_scaled_by_19_nozzle_mod.vsp3"  # filename inside Geometry/ folder (for import modes)
+IMPORT_FILE   = "SSAM_final_geom_to_be_used_NOT_scaled_by_19_nozzle_mod.vsp3"  # filename inside Geometry/ folder (for import modes)
 REF_MODE      = "auto"      # use "manual" for box_template — it has no wing
 REF_WING_NAME = "Main_Wing"   # only matters once REF_MODE = "auto" (SSAM run)
 
@@ -56,11 +58,13 @@ REF_WING_NAME = "Main_Wing"   # only matters once REF_MODE = "auto" (SSAM run)
 # lambda/6 is the time/accuracy compromise currently in use.
 # min and max no longer have to match — e.g. MAX=4, MIN=8 refines curved
 # regions to lambda/8 while flatter regions stay at lambda/4.
-USE_CFD_MESH     = False     # False -> old plain ExportFile(EXPORT_STL)
+USE_CFD_MESH     = False    # False -> old plain ExportFile(EXPORT_STL)
 FREQ_GHZ         = 12.0     # also drives the RCS run below
+AZ_RANGE         = "half"   # "full" or "half" — half valid for bilaterally symmetric aircraft
+DELP             = 30.0      # phi step, deg
 MAX_EDGE_FACTOR  = 1        # coarse bound: edge = lambda / MAX_EDGE_FACTOR
 MIN_EDGE_FACTOR  = 3        # fine bound:   edge = lambda / MIN_EDGE_FACTOR
-MAX_GAP_FACTOR   = 3      # max_gap = lambda / MAX_GAP_FACTOR
+MAX_GAP_FACTOR   = 3        # max_gap = lambda / MAX_GAP_FACTOR
 GROWTH_RATIO     = 1.6      # OpenVSP default -- grading ON (was 10.0 = off)
 NUM_CIRCLE_SEGS  = 12.0     # OpenVSP default -- curvature detection ON (was ~0 = off)
 
@@ -175,44 +179,185 @@ else:  # "generate"
     print("✅ Aircraft created and saved successfully!")
     stl_for_rcs = "aircraft.stl"
 
-# # =========================
-# # RCS PIPELINE
-# # =========================
+# =========================
+# RCS PIPELINE
+# =========================
 
 # vsp_setup.run_openrcs_rcs(
 #     stl_filename = stl_for_rcs,
 #     freq         = FREQ_GHZ,
 #     pol          = "TE-z",
 #     cuts         = "azimuth",
+#     az_range     = AZ_RANGE,
+#     delp         = DELP,
 # )
 
-# # =========================
-# # AERO SETTINGS
-# # =========================
+# =========================
+# AERO SETTINGS
+# =========================
 
-# ALPHA_START  = -8.0
-# ALPHA_END    = 12.0
-# ALPHA_NPTS   = 11       # gives 2-deg steps
-# MACH         = 0.4      # cruise approximation
-# RE_CREF      = 1e6      # Reynolds based on ref chord
-# WAKE_ITERS   = 3
+ALPHA_START  = -8.0
+ALPHA_END    = 12.0
+ALPHA_NPTS   = 11
+MACH_LIST      = [0.2, 0.4, 0.6]
+ALTITUDE_LIST  = [0.0, 15000.0, 35000.0]
+RE_CREF      = 1e6
+WAKE_ITERS   = 3
 
-# # =========================
-# # TRIGGER AERO PIPELINE
-# # =========================
+# =========================
+# STABILITY SETTINGS
+# =========================
+X_CG = 0.4385
+Y_CG = 0.0   
+Z_CG = 0.0   
 
-# vsp_setup.run_vspaero_aero(
-#     wing_id        = wing_id,
-#     alpha_start    = ALPHA_START,
-#     alpha_end      = ALPHA_END,
-#     alpha_npts     = ALPHA_NPTS,
-#     mach_start     = MACH,
-#     mach_end       = MACH,
-#     mach_npts      = 1,
-#     re_cref_start  = RE_CREF,
-#     wake_iters     = WAKE_ITERS,
-#     thin_geom_set  = thin_set,
-#     thick_geom_set = thick_set,
-#     ref_mode       = REF_MODE,
-#     sref = 1.0, bref = 1.0, cref = 1.0,   # ← add this line, only used when REF_MODE="manual"
-# )
+# =========================
+# TRIGGER AERO PIPELINE
+# =========================
+
+geom_stem = os.path.splitext(IMPORT_FILE)[0]
+
+import glob
+for f in glob.glob(os.path.join(vsp_setup.VSP_FILES, f"{geom_stem}_M*.*")):
+    os.remove(f)
+
+mach_results = []  # (M, alt, polar_dst, CD0, K, r2)
+for ALT in ALTITUDE_LIST:
+    for M in MACH_LIST:
+        # supersonic panel/mixed-body limitation: thick surfaces only valid subsonic —
+        # for M>=1, exclude thick geometry entirely and run thin-surfaces-only VLM
+        thick_set_this_run = thick_set if M < 1.0 else vsp.SET_NONE
+        polar_dst, CD0, K, r2 = vsp_setup.run_vspaero_aero(
+            wing_id=wing_id,
+            altitude_ft=ALT,
+            alpha_start=ALPHA_START, alpha_end=ALPHA_END, alpha_npts=ALPHA_NPTS,
+            mach_start=M, mach_end=M, mach_npts=1,
+            re_cref_start=RE_CREF, wake_iters=WAKE_ITERS,
+            thin_geom_set=thin_set,
+            thick_geom_set=thick_set_this_run,
+            ref_mode=REF_MODE,
+            x_cg=X_CG, y_cg=Y_CG, z_cg=Z_CG,
+            run_name=f"{geom_stem}_M{M:.2f}_ALT{int(ALT)}",
+        )
+        if polar_dst is not None:
+            mach_results.append((M, ALT, polar_dst, CD0, K, r2))
+        time.sleep(5)
+        
+# ── everything below runs ONCE, after the loop finishes ──────────────
+import csv
+summary_path = os.path.join(vsp_setup.AERO_RESULTS_DIR, f"drag_polar_fits_{geom_stem}.csv")
+write_header = not os.path.exists(summary_path)
+with open(summary_path, "a", newline="") as f:
+    writer = csv.writer(f)
+    if write_header:
+        writer.writerow(["Mach", "Altitude_ft", "CD0", "K", "R2", "polar_file"])
+    for M, ALT, polar_dst, CD0, K, r2 in mach_results:
+        writer.writerow([M, ALT, CD0, K, r2, os.path.basename(polar_dst)])
+print(f"   ✅ CD0/K summary: {summary_path}")
+      
+        
+# # ── OVERLAY PLOTS — all Mach points on same axes, one per metric ────────
+
+# # L/D vs Alpha
+# fig, ax = plt.subplots(figsize=(7, 5))
+# for M, polar_dst, CD0, K, r2 in mach_results:
+#     df = pd.read_csv(polar_dst.replace(".polar", ".csv"))
+#     if df["CL"].isna().all():
+#         print(f"   Skipping M={M:.2f} in L/D overlay — all-NaN (diverged)")
+#         continue
+#     ax.plot(df["Alpha"], df["L/D"], "-o", ms=4, label=f"M={M:.2f}")
+# ax.set_xlabel("Alpha (deg)")
+# ax.set_ylabel("L/D")
+# ax.set_title(f"L/D vs Alpha — {geom_stem}, Mach comparison")
+# ax.legend()
+# ax.grid(True, ls="--", alpha=0.6)
+# fig.tight_layout()
+# fig.savefig(os.path.join(vsp_setup.AERO_RESULTS_DIR, f"ld_alpha_overlay_{geom_stem}.png"), dpi=150)
+# plt.close(fig)
+# print(f"   ✅ L/D overlay saved for {geom_stem}")
+
+# # CL vs Alpha
+# fig, ax = plt.subplots(figsize=(7, 5))
+# for M, polar_dst, CD0, K, r2 in mach_results:
+#     df = pd.read_csv(polar_dst.replace(".polar", ".csv"))
+#     if df["CL"].isna().all():
+#         print(f"   Skipping M={M:.2f} in CL-alpha overlay — all-NaN (diverged)")
+#         continue
+#     ax.plot(df["Alpha"], df["CL"], "-o", ms=4, label=f"M={M:.2f}")
+# ax.set_xlabel("Alpha (deg)")
+# ax.set_ylabel("CL")
+# ax.set_title(f"CL vs Alpha — {geom_stem}, Mach comparison")
+# ax.legend()
+# ax.grid(True, ls="--", alpha=0.6)
+# fig.tight_layout()
+# fig.savefig(os.path.join(vsp_setup.AERO_RESULTS_DIR, f"cl_alpha_overlay_{geom_stem}.png"), dpi=150)
+# plt.close(fig)
+# print(f"   ✅ CL-alpha overlay saved for {geom_stem}")
+
+# # CL vs CD (drag polar)
+# fig, ax = plt.subplots(figsize=(7, 5))
+# for M, polar_dst, CD0, K, r2 in mach_results:
+#     df = pd.read_csv(polar_dst.replace(".polar", ".csv"))
+#     if df["CL"].isna().all():
+#         print(f"   Skipping M={M:.2f} in drag-polar overlay — all-NaN (diverged)")
+#         continue
+#     ax.plot(df["CDtot"], df["CL"], "-o", ms=4, label=f"M={M:.2f}")
+# ax.set_xlabel("CD")
+# ax.set_ylabel("CL")
+# ax.set_title(f"Drag Polar — {geom_stem}, Mach comparison")
+# ax.legend()
+# ax.grid(True, ls="--", alpha=0.6)
+# fig.tight_layout()
+# fig.savefig(os.path.join(vsp_setup.AERO_RESULTS_DIR, f"drag_polar_overlay_{geom_stem}.png"), dpi=150)
+# plt.close(fig)
+# print(f"   ✅ Drag polar overlay saved for {geom_stem}")
+
+# ── STABILITY ────────────────────────────────────────────────────────
+
+CL_TARGET = 0.2   # placeholder — replace with real cruise CL once perf module is wired
+
+for M, ALT, polar_dst, CD0, K, r2 in mach_results:
+    aero_csv = polar_dst.replace(".polar", ".csv")
+
+    alpha_c, cl_c, sm_curve, r2_curve, linear_range = vsp_setup.local_slope_curve(aero_csv)
+    print(f"   M={M:.2f}, ALT={int(ALT)}: linear region ≈ {linear_range[0]:.1f}° to {linear_range[1]:.1f}°"
+          if linear_range[0] is not None else f"   M={M:.2f}, ALT={int(ALT)}: no region met R² threshold")
+
+    sm, sm_r2 = vsp_setup.compute_static_margin(aero_csv, CL_TARGET)
+    print(f"   M={M:.2f}, ALT={int(ALT)}: SM at CL={CL_TARGET} = {sm:.4f}  (R²={sm_r2:.4f})")
+
+    # Cm vs Alpha
+    df = pd.read_csv(aero_csv)
+    fig, ax = plt.subplots(figsize=(7,5))
+    ax.plot(df["Alpha"], df["CMytot"], "b-o", ms=4)
+    ax.set_xlabel("Alpha (deg)"); ax.set_ylabel("Cm")
+    ax.set_title(f"Cm vs Alpha — M={M:.2f}, ALT={int(ALT)}ft, Xcg={X_CG}")
+    ax.grid(True, ls="--", alpha=0.6)
+    fig.savefig(os.path.join(vsp_setup.STABILITY_DIR, f"cm_alpha_{geom_stem}_M{M:.2f}_ALT{int(ALT)}.png"), dpi=150)
+    plt.close(fig)
+
+    # Cm vs CL
+    fig, ax = plt.subplots(figsize=(7,5))
+    ax.plot(df["CL"], df["CMytot"], "r-o", ms=4)
+    ax.set_xlabel("CL"); ax.set_ylabel("Cm")
+    ax.set_title(f"Cm vs CL — M={M:.2f}, ALT={int(ALT)}ft, Xcg={X_CG}")
+    ax.grid(True, ls="--", alpha=0.6)
+    fig.savefig(os.path.join(vsp_setup.STABILITY_DIR, f"cm_cl_{geom_stem}_M{M:.2f}_ALT{int(ALT)}.png"), dpi=150)
+    plt.close(fig)
+
+    # local-slope diagnostic
+    fig, ax = plt.subplots(figsize=(7,5))
+    ax.plot(alpha_c, sm_curve, "g-o", ms=3)
+    ax.set_xlabel("Alpha (deg)"); ax.set_ylabel("Local SM (windowed)")
+    ax.set_title(f"Local SM vs Alpha — M={M:.2f}, ALT={int(ALT)}ft")
+    ax.grid(True, ls="--", alpha=0.6)
+    fig.savefig(os.path.join(vsp_setup.STABILITY_DIR, f"sm_local_{geom_stem}_M{M:.2f}_ALT{int(ALT)}.png"), dpi=150)
+    plt.close(fig)
+
+    summary_path = os.path.join(vsp_setup.STABILITY_DIR, f"stability_summary_{geom_stem}.csv")
+    write_header = not os.path.exists(summary_path)
+    with open(summary_path, "a", newline="") as f:
+        w = csv.writer(f)
+        if write_header:
+            w.writerow(["Mach", "Altitude_ft", "X_cg", "CL_target", "SM", "SM_R2", "linear_alpha_min", "linear_alpha_max"])
+        w.writerow([M, ALT, X_CG, CL_TARGET, sm, sm_r2, linear_range[0], linear_range[1]])

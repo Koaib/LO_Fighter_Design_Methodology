@@ -1,0 +1,24 @@
+# SSAM Gen-5 baseline - small-scale/unscaled "nozzle_mod" TEST geometry
+# (SSAM_final_geom_to_be_used_NOT_scaled_by_19_nozzle_mod), used to validate
+# the Aviary plumbing before the real full-scale (x19) run.
+#
+# WARNING: aircraft:wing:area / span / aspect_ratio below are carried over
+# from an earlier OpenVSP params dump of a similar but NOT confirmed-identical
+# WTT-scale geometry. The project's own notes flag that "nozzle_mod" was found
+# to NOT be a uniform scale-up of that baseline (Cref-derived vs Sref-derived
+# scale factors disagreed, 1.576x vs 1.410x) - so these three numbers are
+# placeholders, not verified for this exact geometry. Re-derive them from this
+# exact .vsp3 (Main_Wing's TotalArea/TotalSpan/TotalAR parms) before trusting
+# any Aviary output numerically. Fine to run as-is just to validate that the
+# pipeline completes end-to-end.
+aircraft:wing:area,1.174343,ft**2
+aircraft:wing:span,1.755249,ft
+aircraft:wing:aspect_ratio,3.46,unitless
+settings:equations_of_motion,energy_state
+settings:mass_method,FLOPS
+settings:aerodynamics_method,GASP
+aircraft:design:range,400.0,NM
+aircraft:design:cruise_mach,0.6,unitless
+aircraft:design:cruise_altitude,35000.0,ft
+aircraft:wing:has_strut,False,unitless
+aircraft:wing:has_fold,False,unitless
