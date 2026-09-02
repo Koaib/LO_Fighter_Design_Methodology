@@ -58,7 +58,7 @@ REF_WING_NAME = "Main_Wing"   # only matters once REF_MODE = "auto" (SSAM run)
 # =========================
 # PIPELINE STAGE TOGGLES — edit this
 # =========================
-RUN_RCS    = True   # OpenRCS monostatic RCS pass (Results/RCS/)
+RUN_RCS    = False   # OpenRCS monostatic RCS pass (Results/RCS/)
 RUN_AVIARY = True   # Aviary mission analysis, runs AFTER the aero+stability
                      # loop below finishes — needs this run's full 9-file
                      # Mach x Altitude aero-CSV grid to build its polar table
@@ -244,26 +244,26 @@ for f in glob.glob(os.path.join(vsp_setup.VSP_FILES, f"{geom_stem}_M*.*")):
     os.remove(f)
 
 mach_results = []  # (M, alt, polar_dst, CD0, K, r2)
-for ALT in ALTITUDE_LIST:
-    for M in MACH_LIST:
-        # supersonic panel/mixed-body limitation: thick surfaces only valid subsonic —
-        # for M>=1, exclude thick geometry entirely and run thin-surfaces-only VLM
-        thick_set_this_run = thick_set if M < 1.0 else vsp.SET_NONE
-        polar_dst, CD0, K, r2 = vsp_setup.run_vspaero_aero(
-            wing_id=wing_id,
-            altitude_ft=ALT,
-            alpha_start=ALPHA_START, alpha_end=ALPHA_END, alpha_npts=ALPHA_NPTS,
-            mach_start=M, mach_end=M, mach_npts=1,
-            re_cref_start=RE_CREF, wake_iters=WAKE_ITERS,
-            thin_geom_set=thin_set,
-            thick_geom_set=thick_set_this_run,
-            ref_mode=REF_MODE,
-            x_cg=X_CG, y_cg=Y_CG, z_cg=Z_CG,
-            run_name=f"{geom_stem}_M{M:.2f}_ALT{int(ALT)}",
-        )
-        if polar_dst is not None:
-            mach_results.append((M, ALT, polar_dst, CD0, K, r2))
-        time.sleep(5)
+# for ALT in ALTITUDE_LIST:
+#     for M in MACH_LIST:
+#         # supersonic panel/mixed-body limitation: thick surfaces only valid subsonic —
+#         # for M>=1, exclude thick geometry entirely and run thin-surfaces-only VLM
+#         thick_set_this_run = thick_set if M < 1.0 else vsp.SET_NONE
+#         polar_dst, CD0, K, r2 = vsp_setup.run_vspaero_aero(
+#             wing_id=wing_id,
+#             altitude_ft=ALT,
+#             alpha_start=ALPHA_START, alpha_end=ALPHA_END, alpha_npts=ALPHA_NPTS,
+#             mach_start=M, mach_end=M, mach_npts=1,
+#             re_cref_start=RE_CREF, wake_iters=WAKE_ITERS,
+#             thin_geom_set=thin_set,
+#             thick_geom_set=thick_set_this_run,
+#             ref_mode=REF_MODE,
+#             x_cg=X_CG, y_cg=Y_CG, z_cg=Z_CG,
+#             run_name=f"{geom_stem}_M{M:.2f}_ALT{int(ALT)}",
+#         )
+#         if polar_dst is not None:
+#             mach_results.append((M, ALT, polar_dst, CD0, K, r2))
+#         time.sleep(5)
         
 # ── everything below runs ONCE, after the loop finishes ──────────────
 import csv
