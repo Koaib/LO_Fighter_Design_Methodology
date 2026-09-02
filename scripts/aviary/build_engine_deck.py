@@ -6,23 +6,17 @@ Created on Wed Aug 26 19:04:36 2026
 """
 
 """
-Simplified F100-PW-229 engine deck, built from published static thrust
+Simplified engine deck generator, built from published static thrust
 ratings + a standard density-lapse approximation. NOT real proprietary
 engine test data — an explicit, stated placeholder.
+
+All engine-specific numbers are passed in by the caller (see the USER
+CONFIG block in run_aviary.py) rather than hardcoded here, so there is
+one place to edit them.
 """
 
 import os
-import numpy as np
-import vsp_setup
 
-T_SL_DRY = 17800.0   # lbf, published F100-PW-229 dry static thrust
-T_SL_AB  = 29100.0   # lbf, published F100-PW-229 afterburner static thrust
-TSFC_DRY = 0.8        # lb/(lb*hr), typical for this engine class
-TSFC_AB  = 2.0        # lb/(lb*hr), typical for this engine class
-
-ALTITUDES_FT = [0, 10000, 20000, 30000, 35000, 40000]
-MACHS        = [0.0, 0.2, 0.4, 0.6]   # 0.0 required — EngineDeck needs a sea-level static (M=0, alt=0) point
-THROTTLES    = [0.0, 0.5, 1.0]   # 0=idle, 0.5=dry, 1.0=full afterburner
 
 def isa_density_ratio(alt_ft):
     alt_m = alt_ft * 0.3048
@@ -30,28 +24,40 @@ def isa_density_ratio(alt_ft):
     rho = 1.225 * (T / 288.15) ** 4.2561
     return rho / 1.225
 
-def build_deck():
-    out_path = os.path.join(vsp_setup.VSP_FILES, "..", "engines", "f100_pw229_simplified.deck")
-    os.makedirs(os.path.dirname(out_path), exist_ok=True)
+
+def build_deck(
+    out_dir,
+    deck_name="engine_simplified.deck",
+    t_sl_dry=17800.0,
+    t_sl_ab=29100.0,
+    tsfc_dry=0.8,
+    tsfc_ab=2.0,
+    altitudes_ft=(0, 10000, 20000, 30000, 35000, 40000),
+    machs=(0.0, 0.2, 0.4, 0.6),   # 0.0 required — EngineDeck needs a sea-level static (M=0, alt=0) point
+    throttles=(0.0, 0.5, 1.0),    # 0=idle, 0.5=dry, 1.0=full afterburner
+):
+    """Write a simplified engine deck to <out_dir>/<deck_name> and return its path."""
+    out_path = os.path.join(out_dir, deck_name)
+    os.makedirs(out_dir, exist_ok=True)
 
     lines = [
-        "# Simplified F100-PW-229 engine deck",
-        "# Based on published static thrust (dry 17,800 lbf / AB 29,100 lbf)",
+        f"# Simplified engine deck - {deck_name}",
+        f"# Based on published static thrust (dry {t_sl_dry:.0f} lbf / AB {t_sl_ab:.0f} lbf)",
         "# and a simple density-ratio thrust lapse model - NOT real engine test data.",
         "Mach_Number,Altitude(ft),Throttle,Net_Thrust(lbf),Fuel_Flow_Rate(lbm/h)",
     ]
-    for alt in ALTITUDES_FT:
+    for alt in altitudes_ft:
         sigma = isa_density_ratio(alt)
-        for mach in MACHS:
-            for throttle in THROTTLES:
+        for mach in machs:
+            for throttle in throttles:
                 if throttle <= 0.5:
                     t_frac = throttle / 0.5
-                    thrust = T_SL_DRY * t_frac * sigma
-                    fuel_flow = thrust * TSFC_DRY
+                    thrust = t_sl_dry * t_frac * sigma
+                    fuel_flow = thrust * tsfc_dry
                 else:
                     ab_frac = (throttle - 0.5) / 0.5
-                    thrust = (T_SL_DRY + ab_frac * (T_SL_AB - T_SL_DRY)) * sigma
-                    tsfc = TSFC_DRY + ab_frac * (TSFC_AB - TSFC_DRY)
+                    thrust = (t_sl_dry + ab_frac * (t_sl_ab - t_sl_dry)) * sigma
+                    tsfc = tsfc_dry + ab_frac * (tsfc_ab - tsfc_dry)
                     fuel_flow = thrust * tsfc
                 lines.append(f"{mach},{alt},{throttle},{thrust:.1f},{fuel_flow:.1f}")
 
@@ -59,6 +65,3 @@ def build_deck():
         f.write("\n".join(lines))
     print(f"✅ Engine deck written: {out_path}")
     return out_path
-
-if __name__ == "__main__":
-    build_deck()

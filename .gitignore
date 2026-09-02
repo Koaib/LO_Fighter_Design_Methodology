@@ -26,6 +26,9 @@ Results/
 STL_Files/
 VSP_Files/
 STP_Files/
+Aviary_Files/
+engines/
+scripts/aviary/run_aviary_out/
 
 # ── Input Geometry ─────────────────────────────────────────────────────────
 Geometry*/

@@ -37,12 +37,12 @@ class ExternalAero(om.ExplicitComponent):
 
 
 class ExternalAeroBuilder(av.AerodynamicsBuilder):
-    def __init__(self, geom_stem, name="external_aero"):
+    def __init__(self, geom_stem, expected_machs=None, expected_altitudes=None, name="external_aero"):
         super().__init__(name)
         self._data = build_polar_arrays(
             geom_stem,
-            expected_machs={0.2, 0.4, 0.6},
-            expected_altitudes={0.0, 15000.0, 35000.0},
+            expected_machs=expected_machs,
+            expected_altitudes=expected_altitudes,
         )
 
     

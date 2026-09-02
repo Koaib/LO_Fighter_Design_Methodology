@@ -52,6 +52,8 @@ RESULTS_DIR  = os.path.join(ROOT_DIR, "Results",  "RCS")
 OPENRCS_DIR  = os.path.join(ROOT_DIR, "OpenRCS",  "open-rcs")
 AERO_RESULTS_DIR = os.path.join(ROOT_DIR, "Results", "Aero")
 STABILITY_DIR     = os.path.join(ROOT_DIR, "Results", "Stability")
+AVIARY_FILES      = os.path.join(ROOT_DIR, "Aviary_Files")       # raw/working Aviary+OpenMDAO output (engine deck, native _out/reports/)
+AVIARY_PERF_DIR   = os.path.join(ROOT_DIR, "Results", "aviary_perf")  # curated mission-analysis results
 VSPAERO_EXE = os.path.join(VSP_INSTALL, "vspaero.exe")
 
 # Path to our bridge script (scripts/ folder, same folder as this file)
@@ -90,6 +92,8 @@ os.makedirs(STL_FILES,   exist_ok=True)
 os.makedirs(RESULTS_DIR, exist_ok=True)
 os.makedirs(AERO_RESULTS_DIR, exist_ok=True)
 os.makedirs(STABILITY_DIR, exist_ok=True)
+os.makedirs(AVIARY_FILES, exist_ok=True)
+os.makedirs(AVIARY_PERF_DIR, exist_ok=True)
 
 # =========================
 # OPENVSP INITIALIZATION
