@@ -12,8 +12,15 @@ OpenVSP*/
 Octave*/
 POFACETS/
 
-# ── OpenRCS repo (vendored, patched fork committed into OpenRCS/open-rcs/) ────
-# No longer ignored — see setup notes for how it was added.
+# ── OpenRCS repo (vendored, patched fork — code/docs only, not geometry/data) ─
+# Ignore everything under open-rcs by default...
+OpenRCS/open-rcs/**
+# ...but let git traverse into subfolders...
+!OpenRCS/open-rcs/**/
+# ...and keep source/doc file types only (no .stl models, no binaries/results):
+!OpenRCS/open-rcs/**/*.py
+!OpenRCS/open-rcs/**/*.m
+!OpenRCS/open-rcs/**/*.md
 
 # ── Virtual environment ───────────────────────────────────────────────────────
 .venv/
