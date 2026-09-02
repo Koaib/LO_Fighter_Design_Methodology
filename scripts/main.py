@@ -199,8 +199,8 @@ else:  # "generate"
 ALPHA_START  = -8.0
 ALPHA_END    = 12.0
 ALPHA_NPTS   = 11
-MACH_LIST      = [0.4]
-ALTITUDE_LIST  = [35000.0]
+MACH_LIST      = [0.2, 0.4, 0.6]
+ALTITUDE_LIST  = [0.0, 15000.0, 35000.0]
 RE_CREF      = 1e6
 WAKE_ITERS   = 3
 
@@ -250,9 +250,9 @@ write_header = not os.path.exists(summary_path)
 with open(summary_path, "a", newline="") as f:
     writer = csv.writer(f)
     if write_header:
-        writer.writerow(["Mach", "CD0", "K", "R2", "polar_file"])
-    for M, polar_dst, CD0, K, r2 in mach_results:
-        writer.writerow([M, CD0, K, r2, os.path.basename(polar_dst)])
+        writer.writerow(["Mach", "Altitude_ft", "CD0", "K", "R2", "polar_file"])
+    for M, ALT, polar_dst, CD0, K, r2 in mach_results:
+        writer.writerow([M, ALT, CD0, K, r2, os.path.basename(polar_dst)])
 print(f"   ✅ CD0/K summary: {summary_path}")
       
         
@@ -316,42 +316,42 @@ print(f"   ✅ CD0/K summary: {summary_path}")
 
 CL_TARGET = 0.2   # placeholder — replace with real cruise CL once perf module is wired
 
-for M, polar_dst, CD0, K, r2 in mach_results:
+for M, ALT, polar_dst, CD0, K, r2 in mach_results:
     aero_csv = polar_dst.replace(".polar", ".csv")
 
     alpha_c, cl_c, sm_curve, r2_curve, linear_range = vsp_setup.local_slope_curve(aero_csv)
-    print(f"   M={M:.2f}: linear region ≈ {linear_range[0]:.1f}° to {linear_range[1]:.1f}°" 
-          if linear_range[0] is not None else f"   M={M:.2f}: no region met R² threshold")
+    print(f"   M={M:.2f}, ALT={int(ALT)}: linear region ≈ {linear_range[0]:.1f}° to {linear_range[1]:.1f}°"
+          if linear_range[0] is not None else f"   M={M:.2f}, ALT={int(ALT)}: no region met R² threshold")
 
     sm, sm_r2 = vsp_setup.compute_static_margin(aero_csv, CL_TARGET)
-    print(f"   M={M:.2f}: SM at CL={CL_TARGET} = {sm:.4f}  (R²={sm_r2:.4f})")
+    print(f"   M={M:.2f}, ALT={int(ALT)}: SM at CL={CL_TARGET} = {sm:.4f}  (R²={sm_r2:.4f})")
 
     # Cm vs Alpha
     df = pd.read_csv(aero_csv)
     fig, ax = plt.subplots(figsize=(7,5))
     ax.plot(df["Alpha"], df["CMytot"], "b-o", ms=4)
     ax.set_xlabel("Alpha (deg)"); ax.set_ylabel("Cm")
-    ax.set_title(f"Cm vs Alpha — M={M:.2f}, Xcg={X_CG}")
+    ax.set_title(f"Cm vs Alpha — M={M:.2f}, ALT={int(ALT)}ft, Xcg={X_CG}")
     ax.grid(True, ls="--", alpha=0.6)
-    fig.savefig(os.path.join(vsp_setup.STABILITY_DIR, f"cm_alpha_{geom_stem}_M{M:.2f}.png"), dpi=150)
+    fig.savefig(os.path.join(vsp_setup.STABILITY_DIR, f"cm_alpha_{geom_stem}_M{M:.2f}_ALT{int(ALT)}.png"), dpi=150)
     plt.close(fig)
 
     # Cm vs CL
     fig, ax = plt.subplots(figsize=(7,5))
     ax.plot(df["CL"], df["CMytot"], "r-o", ms=4)
     ax.set_xlabel("CL"); ax.set_ylabel("Cm")
-    ax.set_title(f"Cm vs CL — M={M:.2f}, Xcg={X_CG}")
+    ax.set_title(f"Cm vs CL — M={M:.2f}, ALT={int(ALT)}ft, Xcg={X_CG}")
     ax.grid(True, ls="--", alpha=0.6)
-    fig.savefig(os.path.join(vsp_setup.STABILITY_DIR, f"cm_cl_{geom_stem}_M{M:.2f}.png"), dpi=150)
+    fig.savefig(os.path.join(vsp_setup.STABILITY_DIR, f"cm_cl_{geom_stem}_M{M:.2f}_ALT{int(ALT)}.png"), dpi=150)
     plt.close(fig)
 
     # local-slope diagnostic
     fig, ax = plt.subplots(figsize=(7,5))
     ax.plot(alpha_c, sm_curve, "g-o", ms=3)
     ax.set_xlabel("Alpha (deg)"); ax.set_ylabel("Local SM (windowed)")
-    ax.set_title(f"Local SM vs Alpha — M={M:.2f}")
+    ax.set_title(f"Local SM vs Alpha — M={M:.2f}, ALT={int(ALT)}ft")
     ax.grid(True, ls="--", alpha=0.6)
-    fig.savefig(os.path.join(vsp_setup.STABILITY_DIR, f"sm_local_{geom_stem}_M{M:.2f}.png"), dpi=150)
+    fig.savefig(os.path.join(vsp_setup.STABILITY_DIR, f"sm_local_{geom_stem}_M{M:.2f}_ALT{int(ALT)}.png"), dpi=150)
     plt.close(fig)
 
     summary_path = os.path.join(vsp_setup.STABILITY_DIR, f"stability_summary_{geom_stem}.csv")
@@ -359,5 +359,5 @@ for M, polar_dst, CD0, K, r2 in mach_results:
     with open(summary_path, "a", newline="") as f:
         w = csv.writer(f)
         if write_header:
-            w.writerow(["Mach", "X_cg", "CL_target", "SM", "SM_R2", "linear_alpha_min", "linear_alpha_max"])
-        w.writerow([M, X_CG, CL_TARGET, sm, sm_r2, linear_range[0], linear_range[1]])
+            w.writerow(["Mach", "Altitude_ft", "X_cg", "CL_target", "SM", "SM_R2", "linear_alpha_min", "linear_alpha_max"])
+        w.writerow([M, ALT, X_CG, CL_TARGET, sm, sm_r2, linear_range[0], linear_range[1]])
