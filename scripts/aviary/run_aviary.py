@@ -11,7 +11,7 @@ sys.path.insert(0, os.path.dirname(__file__))
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))  # for vsp_setup
 
 import aviary.api as av
-from aviary.api import Aircraft
+from aviary.api import Aircraft, Mission
 from phase_info import phase_info
 from external_aero_builder import ExternalAeroBuilder
 from build_engine_deck import build_deck
@@ -43,13 +43,20 @@ def main():
     prob.load_inputs(AIRCRAFT_CSV, phase_info)
     prob.load_external_subsystems([external_aero])
     
-    # fixed mass overrides — no internal FLOPS/GASP calc since mass_method=external
+    # fixed mass overrides — settings:mass_method stays FLOPS (CSV), but since
+    # EMPTY_MASS is set here on aviary_inputs *before* build_model()/setup(),
+    # Aviary's override-variable mechanism disconnects FLOPS's own empirical
+    # EmptyMass computation and treats this fixed value as the input instead
+    # (see aviary/subsystems/premission.py:override_aviary_vars). GROSS_MASS
+    # is already a plain input in FLOPS's mass buildup (never computed), so
+    # setting it here is a normal input assignment, not an override.
     prob.aviary_inputs.set_val(Aircraft.Design.EMPTY_MASS, EMPTY_MASS_LBM, units="lbm")
     prob.aviary_inputs.set_val(Aircraft.Design.GROSS_MASS, GROSS_MASS_LBM, units="lbm")
     prob.aviary_inputs.set_val(Aircraft.Fuel.TOTAL_CAPACITY, FUEL_MASS_LBM, units="lbm")
 
     engine_options = av.AviaryValues()
     engine_options.set_val(Aircraft.Engine.DATA_FILE, engine_deck_path)
+    engine_options.set_val(Aircraft.Engine.NUM_ENGINES, 1)
     engine_options.set_val(Aircraft.Engine.NUM_WING_ENGINES, 0)
     engine_options.set_val(Aircraft.Engine.NUM_FUSELAGE_ENGINES, 1)
     engine_deck = av.EngineDeck(name="f100", options=engine_options)
@@ -70,7 +77,7 @@ def main():
     prob.run_model()
 
     print("\n--- RESULTS ---")
-    fuel_residual = prob.get_val("mission:constraints:mass_residual")
+    fuel_residual = prob.get_val(Mission.Constraints.MASS_RESIDUAL)
     print(f"Fuel mass residual: {fuel_residual}  (positive = margin, negative = infeasible)")
 
 if __name__ == "__main__":
