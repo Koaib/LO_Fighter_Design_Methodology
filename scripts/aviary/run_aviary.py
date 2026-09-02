@@ -14,7 +14,7 @@ import aviary.api as av
 from aviary.api import Aircraft, Mission
 from phase_info import phase_info
 from external_aero_builder import ExternalAeroBuilder
-from build_engine_deck import build_deck
+from build_engine_deck import build_deck, T_SL_DRY
 
 AIRCRAFT_CSV = os.path.join(os.path.dirname(__file__), "ssam_aircraft.csv")
 
@@ -65,6 +65,18 @@ def main():
     # We don't need FLOPS's thrust-scaled engine-mass equation anyway, since
     # EMPTY_MASS is overridden wholesale above — False just means "don't scale".
     engine_options.set_val(Aircraft.Engine.SCALE_MASS, False)
+    # REFERENCE_MASS/REFERENCE_SLS_THRUST are also engine-model *options* in
+    # the installed aviary==1.0.1 (add_aviary_option, not add_aviary_input) —
+    # left unset they fell back to a bare-float default instead of an array,
+    # crashing the same way SCALE_MASS did (`ref_engine_mass[scale_idx]`,
+    # 'float' object is not subscriptable). With SCALE_MASS=False, scale_idx
+    # is empty for every engine, so REFERENCE_MASS becomes Aircraft.Engine.MASS
+    # unscaled/unchanged. 3740 lbm is the commonly cited F100-PW-229 dry
+    # weight — approximate, not sourced from Pratt & Whitney data, same
+    # placeholder tier as the rest of this deck. REFERENCE_SLS_THRUST reuses
+    # the deck's own T_SL_DRY so thrust_ratio stays consistent at 1.0.
+    engine_options.set_val(Aircraft.Engine.REFERENCE_MASS, 3740.0, units="lbm")
+    engine_options.set_val(Aircraft.Engine.REFERENCE_SLS_THRUST, T_SL_DRY, units="lbf")
     engine_deck = av.EngineDeck(name="f100", options=engine_options)
     av.preprocess_propulsion(aviary_options=prob.aviary_inputs, engine_models=[engine_deck])
     
