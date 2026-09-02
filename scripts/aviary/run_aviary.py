@@ -6,20 +6,18 @@ Created on Wed Aug 26 19:09:02 2026
 """
 
 """
-Aviary mission-analysis stage of the pipeline. Normally called automatically
-by main.py's RUN_AVIARY step at the end of a full run (geom_stem is passed
-in from main.py's own IMPORT_FILE, so there's nothing to keep in sync by
-hand). Can still be run standalone for testing against DEFAULT_GEOM_STEM
-below.
+Aviary mission-analysis stage of the pipeline. Called by main.py's
+RUN_AVIARY step at the end of a full run — main.py's AVIARY / MISSION
+CONFIG section owns every user-facing input (mass basis, engine specs,
+mission profile, wing geometry, Mach/altitude grid) and passes all of them
+into run_aviary_mission() below, so there is nothing left to edit in this
+file for a normal run.
 
 Requires the aero stage (main.py) to have already produced a complete
-9-file Mach x Altitude aero-polar grid (Results/Aero/aero_<geom_stem>_M#_
-ALT#_*.csv) for the SAME geom_stem.
+Mach x Altitude aero-polar grid (Results/Aero/aero_<geom_stem>_M#_ALT#_*.csv)
+for the SAME geom_stem, covering the same mach_list/altitude_list passed in.
 
-To change any OTHER Aviary-related input (mass basis, engine specs,
-mission profile), edit the USER CONFIG block below.
-
-Usage (standalone):
+Usage (standalone, uses this file's own placeholder defaults):
     python scripts/aviary/run_aviary.py
 """
 
@@ -38,76 +36,45 @@ from external_aero_builder import ExternalAeroBuilder
 from build_engine_deck import build_deck
 
 # =============================================================================
-# USER CONFIG — edit this to change any Aviary-related input
+# FIXED ARCHITECTURE CHOICES — not user config, don't move to main.py.
+# Other files assume these exact values: phase_info.py's 'tabular_cruise'
+# aero method is GASP-specific; the mass overrides below assume FLOPS's
+# mass buildup. Changing either means reworking phase_info.py, not just
+# editing a number here.
 # =============================================================================
-
-# Only used when this file is run standalone (not via main.py, which passes
-# its own geom_stem in directly - see run_aviary_mission()'s signature).
-DEFAULT_GEOM_STEM = "SSAM_final_geom_to_be_used_NOT_scaled_by_19_nozzle_mod"
-
-# This test geometry's actual wing planform — NOT a scaled-down F-16C value
-# (see mass basis note below for why that distinction matters). Project
-# notes flag that this "nozzle_mod" geometry may not be identical to
-# whatever geometry these numbers were originally measured from — re-derive
-# from the real .vsp3 (scripts/aviary/print_wing_ref_params.py) before
-# trusting these for anything beyond plumbing validation.
-TEST_WING_AREA_FT2 = 1.174343
-TEST_WING_SPAN_FT = 1.755249
-TEST_WING_ASPECT_RATIO = 3.46
-TEST_WING_HAS_STRUT = False
-TEST_WING_HAS_FOLD = False
-
-# ── Mass basis ───────────────────────────────────────────────────────────
-# Real F-16C published reference specs, used ONLY as a wing-loading basis to
-# derive a physically self-consistent placeholder mass for this small test
-# geometry — NOT a claim that this geometry IS an F-16C or a uniform scale
-# of one. Dividing F-16C mass by a linear scale factor against this wing's
-# actual (unrelated) area previously gave a wing loading of ~1187 lbm/ft^2
-# (vs. the real F-16C's ~88 lbm/ft^2) - physically impossible, requiring
-# CL~9.5 for level flight, which is why the mission's climb aerodynamics
-# Newton solve couldn't converge until this was fixed. Still a placeholder
-# pending the real full-scale run (real x19 geometry + true F-16C mass
-# values, unscaled).
-F16C_EMPTY_MASS_LBM = 18238.0   # published F-16C empty mass
-F16C_GROSS_MASS_LBM = 26463.0   # published F-16C max gross takeoff mass
-F16C_FUEL_MASS_LBM  = 6972.0    # published F-16C internal fuel capacity
-F16C_WING_AREA_FT2  = 300.0     # published F-16C reference wing area
-
-# ── Engine specs (simplified F100-PW-229-class deck — NOT real engine test
-# data, see build_engine_deck.py) ──────────────────────────────────────────
-ENGINE_T_SL_DRY_LBF = 17800.0   # published F100-PW-229 dry static thrust
-ENGINE_T_SL_AB_LBF  = 29100.0   # published F100-PW-229 afterburner static thrust
-ENGINE_TSFC_DRY     = 0.8       # lb/(lb*hr), typical for this engine class
-ENGINE_TSFC_AB      = 2.0       # lb/(lb*hr), typical for this engine class
-
-# ── Mission profile ────────────────────────────────────────────────────────
-CRUISE_MACH = 0.6
-CRUISE_ALTITUDE_FT = 35000.0
-DESIGN_RANGE_NMI = 400.0
-
-# ── Aero polar grid this run's Results/Aero CSVs must cover (must match
-# main.py's MACH_LIST / ALTITUDE_LIST for this GEOM_STEM) ─────────────────
-EXPECTED_MACHS = {0.2, 0.4, 0.6}
-EXPECTED_ALTITUDES_FT = {0.0, 15000.0, 35000.0}
-
-# ── Fixed architecture choices — NOT freely changeable, other files assume
-# these exact values (phase_info.py's 'tabular_cruise' aero method is
-# GASP-specific; the mass overrides above assume FLOPS's mass buildup) ────
 EQUATIONS_OF_MOTION = EquationsOfMotion.ENERGY_STATE
 MASS_METHOD = LegacyCode.FLOPS
 AERODYNAMICS_METHOD = LegacyCode.GASP
 
 # =============================================================================
-# Derived mass values (wing-loading-scaled — see USER CONFIG note above)
+# STANDALONE-ONLY DEFAULTS — only used when this file is run directly
+# (not via main.py). main.py's AVIARY / MISSION CONFIG section passes every
+# one of these in explicitly, so nothing here needs to stay in sync by hand.
 # =============================================================================
+DEFAULT_GEOM_STEM = "SSAM_final_geom_to_be_used_NOT_scaled_by_19_nozzle_mod"
+DEFAULT_WING_AREA_FT2 = 1.174343
+DEFAULT_WING_SPAN_FT = 1.755249
+DEFAULT_WING_ASPECT_RATIO = 3.46
+DEFAULT_WING_HAS_STRUT = False
+DEFAULT_WING_HAS_FOLD = False
+DEFAULT_F16C_EMPTY_MASS_LBM = 18238.0
+DEFAULT_F16C_GROSS_MASS_LBM = 26463.0
+DEFAULT_F16C_FUEL_MASS_LBM = 6972.0
+DEFAULT_F16C_WING_AREA_FT2 = 300.0
+DEFAULT_ENGINE_T_SL_DRY_LBF = 17800.0
+DEFAULT_ENGINE_T_SL_AB_LBF = 29100.0
+DEFAULT_ENGINE_TSFC_DRY = 0.8
+DEFAULT_ENGINE_TSFC_AB = 2.0
+DEFAULT_CRUISE_MACH = 0.6
+DEFAULT_CRUISE_ALTITUDE_FT = 35000.0
+DEFAULT_DESIGN_RANGE_NMI = 400.0
+DEFAULT_MACH_LIST = [0.2, 0.4, 0.6]
+DEFAULT_ALTITUDE_LIST = [0.0, 15000.0, 35000.0]
 
-_wing_loading_lbm_per_ft2 = F16C_GROSS_MASS_LBM / F16C_WING_AREA_FT2
-GROSS_MASS_LBM = _wing_loading_lbm_per_ft2 * TEST_WING_AREA_FT2
-EMPTY_MASS_LBM = GROSS_MASS_LBM * (F16C_EMPTY_MASS_LBM / F16C_GROSS_MASS_LBM)
-FUEL_MASS_LBM  = GROSS_MASS_LBM * (F16C_FUEL_MASS_LBM / F16C_GROSS_MASS_LBM)
 
-
-def _build_aircraft_inputs():
+def _build_aircraft_inputs(wing_area_ft2, wing_span_ft, wing_aspect_ratio,
+                            wing_has_strut, wing_has_fold,
+                            design_range_nmi, cruise_mach, cruise_altitude_ft):
     """
     Aircraft/mission input data, built directly as an AviaryValues object
     instead of a CSV file. load_inputs()'s own docstring confirms
@@ -122,35 +89,77 @@ def _build_aircraft_inputs():
     aviary_inputs.set_val(Settings.EQUATIONS_OF_MOTION, EQUATIONS_OF_MOTION)
     aviary_inputs.set_val(Settings.MASS_METHOD, MASS_METHOD)
     aviary_inputs.set_val(Settings.AERODYNAMICS_METHOD, AERODYNAMICS_METHOD)
-    aviary_inputs.set_val(Aircraft.Wing.AREA, TEST_WING_AREA_FT2, units="ft**2")
-    aviary_inputs.set_val(Aircraft.Wing.SPAN, TEST_WING_SPAN_FT, units="ft")
-    aviary_inputs.set_val(Aircraft.Wing.ASPECT_RATIO, TEST_WING_ASPECT_RATIO, units="unitless")
-    aviary_inputs.set_val(Aircraft.Wing.HAS_STRUT, TEST_WING_HAS_STRUT)
-    aviary_inputs.set_val(Aircraft.Wing.HAS_FOLD, TEST_WING_HAS_FOLD)
-    aviary_inputs.set_val(Aircraft.Design.RANGE, DESIGN_RANGE_NMI, units="NM")
-    aviary_inputs.set_val(Aircraft.Design.CRUISE_MACH, CRUISE_MACH, units="unitless")
-    aviary_inputs.set_val(Aircraft.Design.CRUISE_ALTITUDE, CRUISE_ALTITUDE_FT, units="ft")
+    aviary_inputs.set_val(Aircraft.Wing.AREA, wing_area_ft2, units="ft**2")
+    aviary_inputs.set_val(Aircraft.Wing.SPAN, wing_span_ft, units="ft")
+    aviary_inputs.set_val(Aircraft.Wing.ASPECT_RATIO, wing_aspect_ratio, units="unitless")
+    aviary_inputs.set_val(Aircraft.Wing.HAS_STRUT, wing_has_strut)
+    aviary_inputs.set_val(Aircraft.Wing.HAS_FOLD, wing_has_fold)
+    aviary_inputs.set_val(Aircraft.Design.RANGE, design_range_nmi, units="NM")
+    aviary_inputs.set_val(Aircraft.Design.CRUISE_MACH, cruise_mach, units="unitless")
+    aviary_inputs.set_val(Aircraft.Design.CRUISE_ALTITUDE, cruise_altitude_ft, units="ft")
     return aviary_inputs
 
 
-def run_aviary_mission(geom_stem=None):
+def run_aviary_mission(
+    geom_stem=None,
+    wing_area_ft2=None, wing_span_ft=None, wing_aspect_ratio=None,
+    wing_has_strut=None, wing_has_fold=None,
+    f16c_empty_mass_lbm=None, f16c_gross_mass_lbm=None,
+    f16c_fuel_mass_lbm=None, f16c_wing_area_ft2=None,
+    engine_t_sl_dry_lbf=None, engine_t_sl_ab_lbf=None,
+    engine_tsfc_dry=None, engine_tsfc_ab=None,
+    cruise_mach=None, cruise_altitude_ft=None, design_range_nmi=None,
+    mach_list=None, altitude_list=None,
+):
     """Run the Aviary mission analysis for geom_stem's already-produced aero
-    CSVs (see module docstring). geom_stem defaults to DEFAULT_GEOM_STEM for
-    standalone use; main.py always passes its own geom_stem explicitly."""
-    if geom_stem is None:
-        geom_stem = DEFAULT_GEOM_STEM
+    CSVs (see module docstring). Every argument defaults to this module's
+    own placeholder values (DEFAULT_* above) when left as None, for
+    standalone use; main.py's AVIARY / MISSION CONFIG section passes its
+    own values for all of them on a real pipeline run."""
+    geom_stem = geom_stem if geom_stem is not None else DEFAULT_GEOM_STEM
+    wing_area_ft2 = wing_area_ft2 if wing_area_ft2 is not None else DEFAULT_WING_AREA_FT2
+    wing_span_ft = wing_span_ft if wing_span_ft is not None else DEFAULT_WING_SPAN_FT
+    wing_aspect_ratio = wing_aspect_ratio if wing_aspect_ratio is not None else DEFAULT_WING_ASPECT_RATIO
+    wing_has_strut = wing_has_strut if wing_has_strut is not None else DEFAULT_WING_HAS_STRUT
+    wing_has_fold = wing_has_fold if wing_has_fold is not None else DEFAULT_WING_HAS_FOLD
+    f16c_empty_mass_lbm = f16c_empty_mass_lbm if f16c_empty_mass_lbm is not None else DEFAULT_F16C_EMPTY_MASS_LBM
+    f16c_gross_mass_lbm = f16c_gross_mass_lbm if f16c_gross_mass_lbm is not None else DEFAULT_F16C_GROSS_MASS_LBM
+    f16c_fuel_mass_lbm = f16c_fuel_mass_lbm if f16c_fuel_mass_lbm is not None else DEFAULT_F16C_FUEL_MASS_LBM
+    f16c_wing_area_ft2 = f16c_wing_area_ft2 if f16c_wing_area_ft2 is not None else DEFAULT_F16C_WING_AREA_FT2
+    engine_t_sl_dry_lbf = engine_t_sl_dry_lbf if engine_t_sl_dry_lbf is not None else DEFAULT_ENGINE_T_SL_DRY_LBF
+    engine_t_sl_ab_lbf = engine_t_sl_ab_lbf if engine_t_sl_ab_lbf is not None else DEFAULT_ENGINE_T_SL_AB_LBF
+    engine_tsfc_dry = engine_tsfc_dry if engine_tsfc_dry is not None else DEFAULT_ENGINE_TSFC_DRY
+    engine_tsfc_ab = engine_tsfc_ab if engine_tsfc_ab is not None else DEFAULT_ENGINE_TSFC_AB
+    cruise_mach = cruise_mach if cruise_mach is not None else DEFAULT_CRUISE_MACH
+    cruise_altitude_ft = cruise_altitude_ft if cruise_altitude_ft is not None else DEFAULT_CRUISE_ALTITUDE_FT
+    design_range_nmi = design_range_nmi if design_range_nmi is not None else DEFAULT_DESIGN_RANGE_NMI
+    mach_list = mach_list if mach_list is not None else DEFAULT_MACH_LIST
+    altitude_list = altitude_list if altitude_list is not None else DEFAULT_ALTITUDE_LIST
+
+    # Derived mass values (wing-loading-scaled placeholder — see main.py's
+    # AVIARY / MISSION CONFIG section for the physical justification).
+    # Dividing F-16C mass by a linear scale factor against an unrelated
+    # wing area previously gave a wing loading of ~1187 lbm/ft^2 (vs. the
+    # real F-16C's ~88 lbm/ft^2) - physically impossible, requiring CL~9.5
+    # for level flight, which is why the mission's climb aerodynamics
+    # Newton solve couldn't converge until this wing-loading match was used
+    # instead.
+    wing_loading_lbm_per_ft2 = f16c_gross_mass_lbm / f16c_wing_area_ft2
+    gross_mass_lbm = wing_loading_lbm_per_ft2 * wing_area_ft2
+    empty_mass_lbm = gross_mass_lbm * (f16c_empty_mass_lbm / f16c_gross_mass_lbm)
+    fuel_mass_lbm = gross_mass_lbm * (f16c_fuel_mass_lbm / f16c_gross_mass_lbm)
 
     os.makedirs(vsp_setup.AVIARY_FILES, exist_ok=True)
     os.makedirs(vsp_setup.AVIARY_PERF_DIR, exist_ok=True)
 
-    print(f"   [mass] wing-loading-scaled GROSS={GROSS_MASS_LBM:.2f} lbm, "
-          f"EMPTY={EMPTY_MASS_LBM:.2f} lbm, FUEL={FUEL_MASS_LBM:.2f} lbm")
+    print(f"   [mass] wing-loading-scaled GROSS={gross_mass_lbm:.2f} lbm, "
+          f"EMPTY={empty_mass_lbm:.2f} lbm, FUEL={fuel_mass_lbm:.2f} lbm")
 
     engine_deck_path = build_deck(
         out_dir=os.path.join(vsp_setup.AVIARY_FILES, "engines"),
         deck_name="f100_pw229_simplified.deck",
-        t_sl_dry=ENGINE_T_SL_DRY_LBF, t_sl_ab=ENGINE_T_SL_AB_LBF,
-        tsfc_dry=ENGINE_TSFC_DRY, tsfc_ab=ENGINE_TSFC_AB,
+        t_sl_dry=engine_t_sl_dry_lbf, t_sl_ab=engine_t_sl_ab_lbf,
+        tsfc_dry=engine_tsfc_dry, tsfc_ab=engine_tsfc_ab,
     )
 
     from aviary.utils.named_values import NamedValues
@@ -158,8 +167,8 @@ def run_aviary_mission(geom_stem=None):
 
     external_aero = ExternalAeroBuilder(
         geom_stem=geom_stem,
-        expected_machs=EXPECTED_MACHS,
-        expected_altitudes=EXPECTED_ALTITUDES_FT,
+        expected_machs=set(mach_list),
+        expected_altitudes=set(altitude_list),
     )
 
     aero_data = NamedValues()
@@ -178,7 +187,14 @@ def run_aviary_mission(geom_stem=None):
     os.chdir(vsp_setup.AVIARY_FILES)
     try:
         prob = av.AviaryProblem()
-        prob.load_inputs(_build_aircraft_inputs(), phase_info)
+        prob.load_inputs(
+            _build_aircraft_inputs(
+                wing_area_ft2, wing_span_ft, wing_aspect_ratio,
+                wing_has_strut, wing_has_fold,
+                design_range_nmi, cruise_mach, cruise_altitude_ft,
+            ),
+            phase_info,
+        )
         prob.load_external_subsystems([external_aero])
 
         # Fixed mass overrides — settings:mass_method stays FLOPS, but
@@ -189,9 +205,9 @@ def run_aviary_mission(geom_stem=None):
         # aviary/subsystems/premission.py:override_aviary_vars). GROSS_MASS
         # is already a plain input in FLOPS's mass buildup (never computed),
         # so setting it here is a normal input assignment, not an override.
-        prob.aviary_inputs.set_val(Aircraft.Design.EMPTY_MASS, EMPTY_MASS_LBM, units="lbm")
-        prob.aviary_inputs.set_val(Aircraft.Design.GROSS_MASS, GROSS_MASS_LBM, units="lbm")
-        prob.aviary_inputs.set_val(Aircraft.Fuel.TOTAL_CAPACITY, FUEL_MASS_LBM, units="lbm")
+        prob.aviary_inputs.set_val(Aircraft.Design.EMPTY_MASS, empty_mass_lbm, units="lbm")
+        prob.aviary_inputs.set_val(Aircraft.Design.GROSS_MASS, gross_mass_lbm, units="lbm")
+        prob.aviary_inputs.set_val(Aircraft.Fuel.TOTAL_CAPACITY, fuel_mass_lbm, units="lbm")
 
         # Mission.Constraints.MAX_MACH defaults to 0.0 (Aviary's own metadata
         # has a "TODO: derived default value" comment acknowledging this) and
@@ -199,7 +215,7 @@ def run_aviary_mission(geom_stem=None):
         # (design_range / max_mach) ** 0.225 - with max_mach=0.0 that's a
         # division by zero that cascades into NaN mass results. Set to the
         # real cruise Mach.
-        prob.aviary_inputs.set_val(Mission.Constraints.MAX_MACH, CRUISE_MACH, units="unitless")
+        prob.aviary_inputs.set_val(Mission.Constraints.MAX_MACH, cruise_mach, units="unitless")
 
         engine_options = av.AviaryValues()
         engine_options.set_val(Aircraft.Engine.DATA_FILE, engine_deck_path)
@@ -219,7 +235,7 @@ def run_aviary_mission(geom_stem=None):
         # commonly cited F100-PW-229 dry weight - approximate, same
         # placeholder tier as the rest of this deck.
         engine_options.set_val(Aircraft.Engine.REFERENCE_MASS, 3740.0, units="lbm")
-        engine_options.set_val(Aircraft.Engine.REFERENCE_SLS_THRUST, ENGINE_T_SL_DRY_LBF, units="lbf")
+        engine_options.set_val(Aircraft.Engine.REFERENCE_SLS_THRUST, engine_t_sl_dry_lbf, units="lbf")
         engine_deck = av.EngineDeck(name="f100", options=engine_options)
         av.preprocess_propulsion(aviary_options=prob.aviary_inputs, engine_models=[engine_deck])
 
@@ -261,7 +277,7 @@ def run_aviary_mission(geom_stem=None):
         os.chdir(original_cwd)
 
     print("\n--- RESULTS ---")
-    print(f"   Range flown        : {total_range[0]:.1f} nmi  (target {DESIGN_RANGE_NMI:.0f} nmi)")
+    print(f"   Range flown        : {total_range[0]:.1f} nmi  (target {design_range_nmi:.0f} nmi)")
     print(f"   Fuel burned        : {fuel_burned[0]:.2f} lbm")
     print(f"   Fuel mass residual : {fuel_residual[0]:.2f} lbm  "
           f"(positive = margin, negative = infeasible)")

@@ -27,7 +27,9 @@ To change design parameters, edit the geometry section below.
 To change RCS settings (frequency, angles, polarisation), edit the
 RCS SETTINGS section at the bottom or pass them into run_openrcs_rcs().
 To change Aviary/mission settings (mass basis, engine specs, cruise
-profile), edit the USER CONFIG block in scripts/aviary/run_aviary.py.
+profile), edit the AVIARY / MISSION CONFIG section below — everything
+Aviary-related is configured from this one file, nothing to edit in
+scripts/aviary/run_aviary.py for a normal run.
 """
 
 import vsp_setup  
@@ -230,8 +232,50 @@ WAKE_ITERS   = 3
 # STABILITY SETTINGS
 # =========================
 X_CG = 0.4385
-Y_CG = 0.0   
-Z_CG = 0.0   
+Y_CG = 0.0
+Z_CG = 0.0
+
+# =========================
+# AVIARY / MISSION CONFIG — edit this to change any Aviary-related input
+# =========================
+# Same Mach/altitude grid drives both VSPAero (above) and Aviary — MACH_LIST
+# / ALTITUDE_LIST from AERO SETTINGS are reused directly below, so there's
+# no separate list here that could silently fall out of sync.
+
+# This test geometry's actual wing planform — NOT a scaled-down F-16C value
+# (see mass basis note below for why that distinction matters). Project
+# notes flag that this "nozzle_mod" geometry may not be identical to
+# whatever geometry these numbers were originally measured from — re-derive
+# from the real .vsp3 (scripts/aviary/print_wing_ref_params.py) before
+# trusting these for anything beyond plumbing validation.
+TEST_WING_AREA_FT2     = 1.174343
+TEST_WING_SPAN_FT      = 1.755249
+TEST_WING_ASPECT_RATIO = 3.46
+TEST_WING_HAS_STRUT    = False
+TEST_WING_HAS_FOLD     = False
+
+# ── Mass basis ───────────────────────────────────────────────────────────
+# Real F-16C published reference specs, used ONLY as a wing-loading basis to
+# derive a physically self-consistent placeholder mass for this small test
+# geometry — NOT a claim that this geometry IS an F-16C or a uniform scale
+# of one. Still a placeholder pending the real full-scale run (real x19
+# geometry + true F-16C mass values, unscaled).
+F16C_EMPTY_MASS_LBM = 18238.0   # published F-16C empty mass
+F16C_GROSS_MASS_LBM = 26463.0   # published F-16C max gross takeoff mass
+F16C_FUEL_MASS_LBM  = 6972.0    # published F-16C internal fuel capacity
+F16C_WING_AREA_FT2  = 300.0     # published F-16C reference wing area
+
+# ── Engine specs (simplified F100-PW-229-class deck — NOT real engine test
+# data, see scripts/aviary/build_engine_deck.py) ───────────────────────────
+ENGINE_T_SL_DRY_LBF = 17800.0   # published F100-PW-229 dry static thrust
+ENGINE_T_SL_AB_LBF  = 29100.0   # published F100-PW-229 afterburner static thrust
+ENGINE_TSFC_DRY     = 0.8       # lb/(lb*hr), typical for this engine class
+ENGINE_TSFC_AB      = 2.0       # lb/(lb*hr), typical for this engine class
+
+# ── Mission profile ────────────────────────────────────────────────────────
+CRUISE_MACH        = 0.6
+CRUISE_ALTITUDE_FT = 35000.0
+DESIGN_RANGE_NMI   = 400.0
 
 # =========================
 # TRIGGER AERO PIPELINE
@@ -388,14 +432,32 @@ for M, ALT, polar_dst, CD0, K, r2 in mach_results:
 # AVIARY MISSION ANALYSIS
 # =========================
 # Runs last — needs the full 9-file Mach x Altitude aero-CSV grid this
-# script just produced (above) for this same geom_stem. To change any
-# Aviary-specific input (mass basis, engine specs, cruise profile), edit
-# the USER CONFIG block in scripts/aviary/run_aviary.py — geom_stem is the
-# only thing threaded through from here, so nothing else needs to stay in
-# sync by hand.
+# script just produced (above) for this same geom_stem. Every Aviary input
+# comes from the AVIARY / MISSION CONFIG section above and is passed in
+# explicitly below — run_aviary.py has nothing left to edit for a normal run.
 
 if RUN_AVIARY:
     import sys
     sys.path.insert(0, os.path.join(ROOT_DIR, "scripts", "aviary"))
     from run_aviary import run_aviary_mission
-    run_aviary_mission(geom_stem=geom_stem)
+    run_aviary_mission(
+        geom_stem=geom_stem,
+        wing_area_ft2=TEST_WING_AREA_FT2,
+        wing_span_ft=TEST_WING_SPAN_FT,
+        wing_aspect_ratio=TEST_WING_ASPECT_RATIO,
+        wing_has_strut=TEST_WING_HAS_STRUT,
+        wing_has_fold=TEST_WING_HAS_FOLD,
+        f16c_empty_mass_lbm=F16C_EMPTY_MASS_LBM,
+        f16c_gross_mass_lbm=F16C_GROSS_MASS_LBM,
+        f16c_fuel_mass_lbm=F16C_FUEL_MASS_LBM,
+        f16c_wing_area_ft2=F16C_WING_AREA_FT2,
+        engine_t_sl_dry_lbf=ENGINE_T_SL_DRY_LBF,
+        engine_t_sl_ab_lbf=ENGINE_T_SL_AB_LBF,
+        engine_tsfc_dry=ENGINE_TSFC_DRY,
+        engine_tsfc_ab=ENGINE_TSFC_AB,
+        cruise_mach=CRUISE_MACH,
+        cruise_altitude_ft=CRUISE_ALTITUDE_FT,
+        design_range_nmi=DESIGN_RANGE_NMI,
+        mach_list=MACH_LIST,
+        altitude_list=ALTITUDE_LIST,
+    )
