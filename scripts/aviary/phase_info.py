@@ -10,6 +10,17 @@ from aviary.variable_info.enums import Transcription
 phase_info = {
     'pre_mission': {'include_takeoff': False, 'optimize_mass': True},
     'climb': {
+        # Dynamic.Mission.DISTANCE is declared input_initial=True (an
+        # externally-supplied input, no built-in default) - unlike mass/
+        # altitude/mach/time, set_initial_guesses() has no fallback default
+        # for it (aviary/mission/energy_state_problem_configurator.py's
+        # set_phase_initial_guesses only auto-defaults those four). Left
+        # unset it landed on OpenMDAO's generic 1.0 placeholder instead of
+        # a real integrated distance. [0, 100] nmi is a rough placeholder
+        # split of the 400 nmi target_range across climb/cruise/descent.
+        'initial_guesses': {
+            'distance': ([0.0, 100.0], 'nmi'),
+        },
         'subsystem_options': {
     'aerodynamics': {
         'method': 'tabular_cruise',
@@ -34,6 +45,9 @@ phase_info = {
         },
     },
     'cruise': {
+        'initial_guesses': {
+            'distance': ([100.0, 300.0], 'nmi'),
+        },
         'subsystem_options': {
     'aerodynamics': {
         'method': 'tabular_cruise',
@@ -58,6 +72,9 @@ phase_info = {
         },
     },
     'descent': {
+        'initial_guesses': {
+            'distance': ([300.0, 400.0], 'nmi'),
+        },
         'subsystem_options': {
     'aerodynamics': {
         'method': 'tabular_cruise',
