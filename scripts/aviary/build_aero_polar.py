@@ -147,7 +147,9 @@ def reshape_to_grid(arrays):
 
 
 if __name__ == "__main__":
-    TEST_GEOM_STEM = "SSAM_final_geom_to_be_used_NOT_scaled_by_19_nozzle_mod"
+    # Standalone smoke test only — matches the current full-scale geometry
+    # (see run_aviary.py's DEFAULT_GEOM_STEM) so it actually finds aero CSVs.
+    TEST_GEOM_STEM = "SSAM_final_geom_to_be_used_scaled_by_19_simplified"
     arrays = build_polar_arrays(TEST_GEOM_STEM)
     for k, v in arrays.items():
         print(f"   {k}: {len(v)} points, range [{v.min():.4f}, {v.max():.4f}]")

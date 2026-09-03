@@ -49,12 +49,16 @@ AERODYNAMICS_METHOD = LegacyCode.GASP
 # =============================================================================
 # STANDALONE-ONLY DEFAULTS — only used when this file is run directly
 # (not via main.py). main.py's AVIARY / MISSION CONFIG section passes every
-# one of these in explicitly, so nothing here needs to stay in sync by hand.
-# =============================================================================
-DEFAULT_GEOM_STEM = "SSAM_final_geom_to_be_used_NOT_scaled_by_19_nozzle_mod"
-DEFAULT_WING_AREA_FT2 = 1.174343
-DEFAULT_WING_SPAN_FT = 1.755249
-DEFAULT_WING_ASPECT_RATIO = 3.46
+# one of these in explicitly, so nothing here needs to stay in sync by hand
+# for a normal pipeline run — but a standalone run needs geom_stem and the
+# wing values to describe the SAME geometry, or build_aero_polar.py fails
+# to find any matching aero CSVs. Kept pointed at the current full-scale
+# geometry (matches main.py's IMPORT_FILE/TEST_WING_* as of the ×19
+# full-scale switch) rather than the earlier wind-tunnel-scale placeholder.
+DEFAULT_GEOM_STEM = "SSAM_final_geom_to_be_used_scaled_by_19_simplified"
+DEFAULT_WING_AREA_FT2 = 843.018026816014
+DEFAULT_WING_SPAN_FT = 44.47670603674372
+DEFAULT_WING_ASPECT_RATIO = 2.346542205448008
 DEFAULT_WING_HAS_STRUT = False
 DEFAULT_WING_HAS_FOLD = False
 DEFAULT_F22_EMPTY_MASS_LBM = 43340.0
