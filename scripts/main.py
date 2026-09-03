@@ -244,12 +244,18 @@ WAKE_ITERS   = 3
 # X_CG traces to Giannelis, Bykerk & Vio, Aerospace 2023, 10, 746 (the
 # SSAM-Gen5 source paper), Table 1: "XCoG = -0.4385 m" for their 0.75 m
 # wind-tunnel-scale model (sign convention differs from this .vsp3's axis
-# direction, magnitude matches exactly). Scaled up here by the real
-# full-scale-to-wind-tunnel-scale ratio (TotalSpan/paper's Span =
-# 13.5565/0.535 = 25.339) to match the full-scale (19 m) geometry now in
-# use — using the wind-tunnel-scale 0.4385 m value directly against this
-# geometry would place the CG reference almost at the nose.
-X_CG = 11.111262149532706   # m — 0.4385 * 25.339 (see note above)
+# direction, magnitude matches exactly). This project's own two .vsp3
+# geometries are NOT a 1:25.339 copy of the paper's exact model (this
+# project's "NOT_scaled_by_19" file measures 0.2169 m^2 / 0.7135 m,
+# bigger than the paper's Table 1 0.1091 m^2 / 0.535 m — expected, since
+# it's a locally modified "nozzle_mod" variant, not a byte-identical
+# reproduction). "scaled_by_19" (this file) IS confirmed, via its own
+# .vsp3 dump, to be a clean, exact 19x scale-up of THAT file specifically
+# — span ratio 19.000000, area ratio 361=19^2, aspect ratio identical to
+# 12 decimal places between the two dumps. So 0.4385 m scales by 19 (the
+# real ratio between this project's own two files), not by 25.339 (the
+# paper's wind-tunnel-to-full-scale ratio, which doesn't apply here).
+X_CG = 8.3315   # m — 0.4385 * 19 (see note above)
 Y_CG = 0.0      # m
 Z_CG = 0.0      # m
 
@@ -260,11 +266,17 @@ Z_CG = 0.0      # m
 # / ALTITUDE_LIST from AERO SETTINGS are reused directly below, so there's
 # no separate list here that could silently fall out of sync.
 
-# Full-scale SSAM-Gen5 wing planform (the real 19 m vehicle — see
-# pipeline_config.py's IMPORT_FILE note) — NOT a scaled-down F-16C value
-# (see mass basis note below for why that distinction matters). Read
-# directly off the actual .vsp3 (TotalArea/TotalSpan/TotalAR parms, via
-# scripts/aviary/print_wing_ref_params.py's method) and unit-converted:
+# "scaled_by_19" wing planform (confirmed via both .vsp3 dumps to be
+# this project's own "NOT_scaled_by_19" geometry scaled up by an exact
+# factor of 19 — span ratio 19.000000, area ratio 361=19^2, identical
+# aspect ratio between the two files to 12 decimal places; NOT directly
+# tied to the SSAM-Gen5 source paper's separately-stated "19 m full-scale
+# vehicle" length, which is a different, unverified-against-this-project
+# number — see pipeline_config.py's IMPORT_FILE note) — NOT a scaled-down
+# F-16C value (see mass basis note below for why that distinction
+# matters). Read directly off the actual .vsp3 (TotalArea/TotalSpan/
+# TotalAR parms, via scripts/aviary/print_wing_ref_params.py's method)
+# and unit-converted:
 # TotalArea=78.319 m^2 -> 843.018 ft^2, TotalSpan=13.5565 m -> 44.477 ft,
 # TotalAR=2.3465 (dimensionless, low-AR delta planform per Giannelis,
 # Bykerk & Vio, Aerospace 2023, 10, 746 — the SSAM-Gen5 source paper).
