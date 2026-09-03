@@ -280,14 +280,20 @@ ENGINE_T_SL_DRY_LBF = 17800.0   # published F100-PW-229 dry static thrust
 ENGINE_T_SL_AB_LBF  = 29100.0   # published F100-PW-229 afterburner static thrust
 ENGINE_TSFC_DRY     = 0.8       # lb/(lb*hr), typical for this engine class
 ENGINE_TSFC_AB      = 2.0       # lb/(lb*hr), typical for this engine class
-# Generic subsonic ram-drag thrust-lapse coefficient (thrust_factor =
-# 1 - ENGINE_MACH_LAPSE_COEFF*Mach, on top of the altitude-density lapse):
-# thrust really is Mach-dependent (increasing inlet/ram drag outpaces ram-
-# recovery at these subsonic speeds), but 0.3 is a generic textbook-class
-# approximation, NOT derived from real F100-PW-229 lapse data — same
-# placeholder tier as ENGINE_TSFC_DRY/AB above. Revise if you get a real
-# lapse curve for this engine.
-ENGINE_MACH_LAPSE_COEFF = 0.3
+# Thrust lapse (how thrust varies with Mach + altitude) now follows
+# Mattingly & Heiser, "Aircraft Engine Design", Ch.2 Sec.2.3.2, Eqs.
+# (2.52a/b),(2.54a/b) — "low bypass ratio, mixed flow turbofan", the
+# F100-PW-229/F110 engine class (see build_engine_deck.py for the actual
+# equations). ENGINE_THROTTLE_RATIO below is that formula's TR: the
+# theta0 breakpoint above which the engine is temperature-limited rather
+# than flat-rated (Mattingly & Heiser Appendix D). TR=1.0 is the
+# standard-day-rated baseline value used here — the book's own worked
+# example for this engine class sweeps TR=1.00-1.08, but the F100-PW-229's
+# actual TR isn't in the excerpt available for this project, so 1.0 is
+# not a verified engine-specific number. build_engine_deck.py prints a
+# sea-level-static cross-check against ENGINE_T_SL_DRY_LBF every run —
+# if TR is changed, watch that check for a large disagreement.
+ENGINE_THROTTLE_RATIO = 1.0
 
 # ── Mission profile ────────────────────────────────────────────────────────
 CRUISE_MACH        = 0.6
@@ -472,7 +478,7 @@ if RUN_AVIARY:
         engine_t_sl_ab_lbf=ENGINE_T_SL_AB_LBF,
         engine_tsfc_dry=ENGINE_TSFC_DRY,
         engine_tsfc_ab=ENGINE_TSFC_AB,
-        engine_mach_lapse_coeff=ENGINE_MACH_LAPSE_COEFF,
+        engine_throttle_ratio=ENGINE_THROTTLE_RATIO,
         cruise_mach=CRUISE_MACH,
         cruise_altitude_ft=CRUISE_ALTITUDE_FT,
         design_range_nmi=DESIGN_RANGE_NMI,
