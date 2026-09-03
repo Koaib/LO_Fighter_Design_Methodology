@@ -20,5 +20,10 @@ import os
 ROOT_DIR     = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 GEOMETRY_DIR = os.path.join(ROOT_DIR, "Geometry")
 
-IMPORT_FILE   = "SSAM_final_geom_to_be_used_NOT_scaled_by_19_nozzle_mod.vsp3"  # filename inside Geometry/
+# Switched to the real full-scale SSAM-Gen5 geometry (19 m vehicle length,
+# per Giannelis, Bykerk & Vio, Aerospace 2023, 10, 746) — "scaled_by_19"
+# means the real 19 m vehicle, not "scaled by a factor of 19". The
+# wind-tunnel-scale geometry (0.75 m, ~1:25 scale) is the
+# "NOT_scaled_by_19" file used for the earlier placeholder-scale runs.
+IMPORT_FILE   = "SSAM_final_geom_to_be_used_scaled_by_19_simplified.vsp3"  # filename inside Geometry/
 REF_WING_NAME = "Main_Wing"   # only matters where REF_MODE = "auto" (SSAM run)
