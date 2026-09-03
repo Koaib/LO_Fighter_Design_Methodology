@@ -440,8 +440,25 @@ print(f"   ✅ CD0/K summary: {summary_path}")
 # print(f"   ✅ Drag polar overlay saved for {geom_stem}")
 
 # ── STABILITY ────────────────────────────────────────────────────────
-
-CL_TARGET = 0.2   # placeholder — replace with real cruise CL once perf module is wired
+# CL_TARGET is computed PER (Mach, Altitude) point rather than one fixed
+# number for the whole sweep: static margin (SM = -dCm/dCL) is evaluated
+# AT a specific CL, and each Mach/Altitude combination in mach_results
+# implies a DIFFERENT level-flight CL for the same aircraft weight
+# (CL = W / (q*S), q = 0.5*rho(h)*V^2 falls as altitude rises or Mach
+# drops) — a single fixed CL_TARGET would report SM at a CL most of the
+# 9 sweep points don't actually fly at.
+#
+# Weight reuses the SAME wing-loading-scaled placeholder mass
+# run_aviary.py computes downstream (gross_mass_lbm = F-16C wing loading
+# x this geometry's TEST_WING_AREA_FT2, see AVIARY/MISSION CONFIG above)
+# — kept consistent here rather than introducing a second, independent
+# mass assumption just for this plot. Still inherits that mass basis's
+# placeholder status (real F-16C wing loading, not this airframe's own
+# mass) until the real full-scale mass buildup replaces it.
+_wing_loading_lbm_ft2 = F16C_GROSS_MASS_LBM / F16C_WING_AREA_FT2
+_gross_mass_lbm = _wing_loading_lbm_ft2 * TEST_WING_AREA_FT2
+_weight_N = _gross_mass_lbm * 0.45359237 * 9.80665   # lbm -> kg -> N (std gravity)
+_wing_area_m2 = TEST_WING_AREA_FT2 * 0.09290304
 
 for M, ALT, polar_dst, CD0, K, r2 in mach_results:
     aero_csv = polar_dst.replace(".polar", ".csv")
@@ -450,8 +467,27 @@ for M, ALT, polar_dst, CD0, K, r2 in mach_results:
     print(f"   M={M:.2f}, ALT={int(ALT)}: linear region ≈ {linear_range[0]:.1f}° to {linear_range[1]:.1f}°"
           if linear_range[0] is not None else f"   M={M:.2f}, ALT={int(ALT)}: no region met R² threshold")
 
+    # Level-flight CL at this Mach/Altitude: CL = W / (0.5 * rho * V^2 * S)
+    _, RHO, _, a_sound = vsp_setup.isa_atmosphere(ALT)
+    V = M * a_sound
+    q = 0.5 * RHO * V**2
+    CL_TARGET = _weight_N / (q * _wing_area_m2)
+
+    # compute_static_margin() doesn't extrapolate — it fits the slope over
+    # the window_pts CL points closest to CL_TARGET, so a CL_TARGET outside
+    # the alpha sweep's actual CL range silently reports SM at whatever CL
+    # the sweep DID reach (near-stall/sweep edge), not the printed target.
+    # That's a real limitation of the wing-loading-placeholder weight at
+    # low-Mach/high-altitude points (level flight there needs a CL beyond
+    # what a -10..22 deg alpha sweep produces for this planform) — flagged
+    # here rather than left silent.
+    if CL_TARGET < cl_c.min() or CL_TARGET > cl_c.max():
+        print(f"   ⚠️  CL_TARGET={CL_TARGET:.4f} outside this sweep's CL range "
+              f"[{cl_c.min():.4f}, {cl_c.max():.4f}] — SM below is evaluated at "
+              f"the nearest reachable CL, not the printed target")
+
     sm, sm_r2 = vsp_setup.compute_static_margin(aero_csv, CL_TARGET)
-    print(f"   M={M:.2f}, ALT={int(ALT)}: SM at CL={CL_TARGET} = {sm:.4f}  (R²={sm_r2:.4f})")
+    print(f"   M={M:.2f}, ALT={int(ALT)}: SM at CL={CL_TARGET:.4f} (level-flight) = {sm:.4f}  (R²={sm_r2:.4f})")
 
     # Cm vs Alpha
     df = pd.read_csv(aero_csv)
