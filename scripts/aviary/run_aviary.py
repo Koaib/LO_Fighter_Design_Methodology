@@ -57,10 +57,10 @@ DEFAULT_WING_SPAN_FT = 1.755249
 DEFAULT_WING_ASPECT_RATIO = 3.46
 DEFAULT_WING_HAS_STRUT = False
 DEFAULT_WING_HAS_FOLD = False
-DEFAULT_F16C_EMPTY_MASS_LBM = 18238.0
-DEFAULT_F16C_GROSS_MASS_LBM = 26463.0
-DEFAULT_F16C_FUEL_MASS_LBM = 6972.0
-DEFAULT_F16C_WING_AREA_FT2 = 300.0
+DEFAULT_F22_EMPTY_MASS_LBM = 43340.0
+DEFAULT_F22_GROSS_MASS_LBM = 83500.0
+DEFAULT_F22_FUEL_MASS_LBM = 18000.0
+DEFAULT_F22_WING_AREA_FT2 = 840.0
 DEFAULT_ENGINE_T_SL_DRY_LBF = 17800.0
 DEFAULT_ENGINE_T_SL_AB_LBF = 29100.0
 # TSFC now comes from build_engine_deck.py's Mattingly & Heiser formula
@@ -107,8 +107,8 @@ def run_aviary_mission(
     geom_stem=None,
     wing_area_ft2=None, wing_span_ft=None, wing_aspect_ratio=None,
     wing_has_strut=None, wing_has_fold=None,
-    f16c_empty_mass_lbm=None, f16c_gross_mass_lbm=None,
-    f16c_fuel_mass_lbm=None, f16c_wing_area_ft2=None,
+    f22_empty_mass_lbm=None, f22_gross_mass_lbm=None,
+    f22_fuel_mass_lbm=None, f22_wing_area_ft2=None,
     engine_t_sl_dry_lbf=None, engine_t_sl_ab_lbf=None,
     engine_throttle_ratio=None, engine_type=None,
     cruise_mach=None, cruise_altitude_ft=None, design_range_nmi=None,
@@ -125,10 +125,10 @@ def run_aviary_mission(
     wing_aspect_ratio = wing_aspect_ratio if wing_aspect_ratio is not None else DEFAULT_WING_ASPECT_RATIO
     wing_has_strut = wing_has_strut if wing_has_strut is not None else DEFAULT_WING_HAS_STRUT
     wing_has_fold = wing_has_fold if wing_has_fold is not None else DEFAULT_WING_HAS_FOLD
-    f16c_empty_mass_lbm = f16c_empty_mass_lbm if f16c_empty_mass_lbm is not None else DEFAULT_F16C_EMPTY_MASS_LBM
-    f16c_gross_mass_lbm = f16c_gross_mass_lbm if f16c_gross_mass_lbm is not None else DEFAULT_F16C_GROSS_MASS_LBM
-    f16c_fuel_mass_lbm = f16c_fuel_mass_lbm if f16c_fuel_mass_lbm is not None else DEFAULT_F16C_FUEL_MASS_LBM
-    f16c_wing_area_ft2 = f16c_wing_area_ft2 if f16c_wing_area_ft2 is not None else DEFAULT_F16C_WING_AREA_FT2
+    f22_empty_mass_lbm = f22_empty_mass_lbm if f22_empty_mass_lbm is not None else DEFAULT_F22_EMPTY_MASS_LBM
+    f22_gross_mass_lbm = f22_gross_mass_lbm if f22_gross_mass_lbm is not None else DEFAULT_F22_GROSS_MASS_LBM
+    f22_fuel_mass_lbm = f22_fuel_mass_lbm if f22_fuel_mass_lbm is not None else DEFAULT_F22_FUEL_MASS_LBM
+    f22_wing_area_ft2 = f22_wing_area_ft2 if f22_wing_area_ft2 is not None else DEFAULT_F22_WING_AREA_FT2
     engine_t_sl_dry_lbf = engine_t_sl_dry_lbf if engine_t_sl_dry_lbf is not None else DEFAULT_ENGINE_T_SL_DRY_LBF
     engine_t_sl_ab_lbf = engine_t_sl_ab_lbf if engine_t_sl_ab_lbf is not None else DEFAULT_ENGINE_T_SL_AB_LBF
     engine_throttle_ratio = engine_throttle_ratio if engine_throttle_ratio is not None else DEFAULT_ENGINE_THROTTLE_RATIO
@@ -146,11 +146,12 @@ def run_aviary_mission(
     # real F-16C's ~88 lbm/ft^2) - physically impossible, requiring CL~9.5
     # for level flight, which is why the mission's climb aerodynamics
     # Newton solve couldn't converge until this wing-loading match was used
-    # instead.
-    wing_loading_lbm_per_ft2 = f16c_gross_mass_lbm / f16c_wing_area_ft2
+    # instead. Mass basis itself later switched from F-16C to F-22A (see
+    # main.py) — same wing-loading method, different reference aircraft.
+    wing_loading_lbm_per_ft2 = f22_gross_mass_lbm / f22_wing_area_ft2
     gross_mass_lbm = wing_loading_lbm_per_ft2 * wing_area_ft2
-    empty_mass_lbm = gross_mass_lbm * (f16c_empty_mass_lbm / f16c_gross_mass_lbm)
-    fuel_mass_lbm = gross_mass_lbm * (f16c_fuel_mass_lbm / f16c_gross_mass_lbm)
+    empty_mass_lbm = gross_mass_lbm * (f22_empty_mass_lbm / f22_gross_mass_lbm)
+    fuel_mass_lbm = gross_mass_lbm * (f22_fuel_mass_lbm / f22_gross_mass_lbm)
 
     os.makedirs(vsp_setup.AVIARY_FILES, exist_ok=True)
     os.makedirs(vsp_setup.AVIARY_PERF_DIR, exist_ok=True)
@@ -186,7 +187,7 @@ def run_aviary_mission(
     # Dynamic Dymos initial guesses — computed from THIS run's actual
     # gross_mass_lbm/design_range_nmi instead of phase_info.py's frozen
     # numbers, so they can't silently go stale if TEST_WING_AREA_FT2 or the
-    # F16C mass-basis constants change in main.py. A bad/stale initial
+    # F22 mass-basis constants change in main.py. A bad/stale initial
     # guess is exactly what caused the Newton solve non-convergence fixed
     # earlier this project (see phase_info.py's history) - recomputing
     # these here every run closes that failure mode for good.

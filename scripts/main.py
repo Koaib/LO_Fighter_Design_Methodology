@@ -287,15 +287,31 @@ TEST_WING_HAS_STRUT    = False
 TEST_WING_HAS_FOLD     = False
 
 # ── Mass basis ───────────────────────────────────────────────────────────
-# Real F-16C published reference specs, used ONLY as a wing-loading basis to
-# derive a physically self-consistent placeholder mass for this small test
-# geometry — NOT a claim that this geometry IS an F-16C or a uniform scale
-# of one. Still a placeholder pending the real full-scale run (real x19
-# geometry + true F-16C mass values, unscaled).
-F16C_EMPTY_MASS_LBM = 18238.0   # published F-16C empty mass
-F16C_GROSS_MASS_LBM = 26463.0   # published F-16C max gross takeoff mass
-F16C_FUEL_MASS_LBM  = 6972.0    # published F-16C internal fuel capacity
-F16C_WING_AREA_FT2  = 300.0     # published F-16C reference wing area
+# Real F-22A Raptor published reference specs, used ONLY as a wing-loading
+# basis to derive a physically self-consistent placeholder mass for this
+# geometry — NOT a claim that this geometry IS an F-22 or a uniform scale
+# of one. Still a placeholder pending a real mass buildup for the actual
+# full-scale geometry.
+#
+# Switched from F-16C to F-22A (was F16C_* before). Two reasons: (1) this
+# geometry's own wing area (TEST_WING_AREA_FT2 = 843.02 ft^2) is almost
+# exactly the real F-22A's (840 ft^2, 78.04 m^2) — scaling the F-22's
+# wing loading onto this geometry is ~1.004x, vs. ~2.81x scaling up from
+# the F-16C's much smaller 300 ft^2 wing, so far less of the resulting
+# mass is an artifact of the scale-up itself; (2) this project's source
+# geometry (SSAM-Gen5, Giannelis, Bykerk & Vio, Aerospace 2023, 10, 746)
+# explicitly models a fifth-generation, twin-engine, high-performance
+# fighter class — the F-22 is a direct match for that class; the F-16C
+# is a much lighter fourth-generation single-engine aircraft.
+# Source: USAF F-22 Raptor fact sheet (af.mil), as mirrored/corroborated
+# across multiple independent aviation references — the primary af.mil
+# page itself was not directly fetchable from this environment (network
+# egress policy blocks .mil and most non-package-registry domains); the
+# figures below are consistent across every source checked.
+F22_EMPTY_MASS_LBM = 43340.0   # published F-22A empty weight
+F22_GROSS_MASS_LBM = 83500.0   # published F-22A max takeoff weight
+F22_FUEL_MASS_LBM  = 18000.0   # published F-22A internal fuel capacity
+F22_WING_AREA_FT2  = 840.0     # published F-22A wing area
 
 # ── Engine specs (simplified F100-PW-229-class deck — NOT real engine test
 # data, see scripts/aviary/build_engine_deck.py) ───────────────────────────
@@ -449,13 +465,13 @@ print(f"   ✅ CD0/K summary: {summary_path}")
 # 9 sweep points don't actually fly at.
 #
 # Weight reuses the SAME wing-loading-scaled placeholder mass
-# run_aviary.py computes downstream (gross_mass_lbm = F-16C wing loading
+# run_aviary.py computes downstream (gross_mass_lbm = F-22A wing loading
 # x this geometry's TEST_WING_AREA_FT2, see AVIARY/MISSION CONFIG above)
 # — kept consistent here rather than introducing a second, independent
 # mass assumption just for this plot. Still inherits that mass basis's
-# placeholder status (real F-16C wing loading, not this airframe's own
+# placeholder status (real F-22A wing loading, not this airframe's own
 # mass) until the real full-scale mass buildup replaces it.
-_wing_loading_lbm_ft2 = F16C_GROSS_MASS_LBM / F16C_WING_AREA_FT2
+_wing_loading_lbm_ft2 = F22_GROSS_MASS_LBM / F22_WING_AREA_FT2
 _gross_mass_lbm = _wing_loading_lbm_ft2 * TEST_WING_AREA_FT2
 _weight_N = _gross_mass_lbm * 0.45359237 * 9.80665   # lbm -> kg -> N (std gravity)
 _wing_area_m2 = TEST_WING_AREA_FT2 * 0.09290304
@@ -544,10 +560,10 @@ if RUN_AVIARY:
         wing_aspect_ratio=TEST_WING_ASPECT_RATIO,
         wing_has_strut=TEST_WING_HAS_STRUT,
         wing_has_fold=TEST_WING_HAS_FOLD,
-        f16c_empty_mass_lbm=F16C_EMPTY_MASS_LBM,
-        f16c_gross_mass_lbm=F16C_GROSS_MASS_LBM,
-        f16c_fuel_mass_lbm=F16C_FUEL_MASS_LBM,
-        f16c_wing_area_ft2=F16C_WING_AREA_FT2,
+        f22_empty_mass_lbm=F22_EMPTY_MASS_LBM,
+        f22_gross_mass_lbm=F22_GROSS_MASS_LBM,
+        f22_fuel_mass_lbm=F22_FUEL_MASS_LBM,
+        f22_wing_area_ft2=F22_WING_AREA_FT2,
         engine_t_sl_dry_lbf=ENGINE_T_SL_DRY_LBF,
         engine_t_sl_ab_lbf=ENGINE_T_SL_AB_LBF,
         engine_throttle_ratio=ENGINE_THROTTLE_RATIO,
