@@ -16,10 +16,20 @@ All engine-specific numbers are passed in by the caller (see main.py's
 AVIARY / MISSION CONFIG section) rather than hardcoded here, so there is
 one place to edit them.
 
-Thrust lapse: Mattingly, J. D. and Heiser, W. H., "Aircraft Engine
-Design", Ch. 2 "Constraint Analysis", Sec. 2.3.2 "Propulsion",
-Eqs. (2.52a), (2.52b), (2.54a), (2.54b) — "low bypass ratio, mixed flow
-turbofan" case, which is the F100-PW-229/F110 engine class (F-16/F-15).
+Thrust lapse is engine-CLASS-specific — Mattingly & Heiser's book gives a
+different equation per engine architecture (turbojet, high-bypass
+turbofan, low-bypass mixed-flow turbofan, each dry and with afterburner),
+not one universal formula. build_deck()'s engine_type parameter selects
+which class's equation is used; only one class is actually implemented
+right now (see IMPLEMENTED_ENGINE_TYPES below) because that's the only
+one verified against the book so far. Passing any other engine_type
+raises NotImplementedError rather than silently reusing the wrong
+class's numbers — add a class by pasting its equation from the same
+book section (Ch.2 Sec.2.3.2) when the project actually needs it.
+
+"low_bypass_mixed_flow_turbofan" (Eqs. 2.52a/b, 2.54a/b), the default
+and only implemented type — this is the F100-PW-229/F110 engine class
+(F-16/F-15), matching this deck's actual engine.
 
     theta  = T/T_std,  theta0 = theta*(1 + [(gamma-1)/2]*M0**2)
     delta  = P/P_std,  delta0 = delta*(1 + [(gamma-1)/2]*M0**2)**(gamma/(gamma-1))
@@ -61,6 +71,11 @@ GAMMA = 1.4
 T_STD_K = 288.15
 RHO_STD = 1.225
 
+# Engine classes with a verified Mattingly & Heiser equation actually
+# implemented below. Add to this set only alongside real equations from
+# the book — never as a stand-in reusing another class's numbers.
+IMPLEMENTED_ENGINE_TYPES = {"low_bypass_mixed_flow_turbofan"}
+
 
 def _theta_delta(alt_ft):
     """Static temperature/pressure ratios (theta, delta) at alt_ft, ISA."""
@@ -72,15 +87,31 @@ def _theta_delta(alt_ft):
     return theta, delta
 
 
-def _mattingly_thrust_lapse(theta, delta, mach, throttle_ratio, power_setting):
+def _mattingly_thrust_lapse(theta, delta, mach, throttle_ratio, power_setting,
+                             engine_type="low_bypass_mixed_flow_turbofan"):
     """
-    Installed thrust lapse ratio alpha for a low-bypass, mixed-flow
-    turbofan (Mattingly & Heiser Eqs. 2.54a/2.54b — see module docstring).
+    Installed thrust lapse ratio alpha, from the Mattingly & Heiser
+    equation for the given engine_type (see module docstring — different
+    engine architectures use different equations, this is NOT universal).
     power_setting: "military" (dry) or "max" (afterburner).
     """
+    if engine_type not in IMPLEMENTED_ENGINE_TYPES:
+        raise NotImplementedError(
+            f"No verified Mattingly & Heiser thrust-lapse equation for "
+            f"engine_type={engine_type!r} yet. Implemented: "
+            f"{sorted(IMPLEMENTED_ENGINE_TYPES)}. To add another class "
+            f"(e.g. 'turbojet', 'high_bypass_turbofan'), paste the "
+            f"corresponding equation and coefficients from Mattingly & "
+            f"Heiser, Aircraft Engine Design, Ch.2 Sec.2.3.2 for that "
+            f"engine class — don't reuse this one's numbers for a "
+            f"different architecture."
+        )
+
     theta0 = theta * (1.0 + (GAMMA - 1) / 2.0 * mach**2)
     delta0 = delta * (1.0 + (GAMMA - 1) / 2.0 * mach**2) ** (GAMMA / (GAMMA - 1))
 
+    # engine_type == "low_bypass_mixed_flow_turbofan": Eqs. 2.54a (max
+    # power/afterburner) and 2.54b (military power/dry).
     if power_setting == "max":
         if theta0 <= throttle_ratio:
             alpha = delta0
@@ -108,8 +139,22 @@ def build_deck(
     machs=(0.0, 0.2, 0.4, 0.6),   # 0.0 required — EngineDeck needs a sea-level static (M=0, alt=0) point
     throttles=(0.0, 0.5, 1.0),    # 0=idle, 0.5=military/dry, 1.0=full afterburner
     throttle_ratio=1.0,
+    engine_type="low_bypass_mixed_flow_turbofan",
+    # Selects which Mattingly & Heiser thrust-lapse equation is used (see
+    # module docstring / IMPLEMENTED_ENGINE_TYPES above) — engine
+    # architectures each have their own equation in the book, this is not
+    # a free-text label. Only "low_bypass_mixed_flow_turbofan" is
+    # implemented; anything else raises NotImplementedError rather than
+    # silently reusing these numbers for a different engine class.
 ):
     """Write a simplified engine deck to <out_dir>/<deck_name> and return its path."""
+    if engine_type not in IMPLEMENTED_ENGINE_TYPES:
+        raise NotImplementedError(
+            f"No verified Mattingly & Heiser thrust-lapse equation for "
+            f"engine_type={engine_type!r} yet. Implemented: "
+            f"{sorted(IMPLEMENTED_ENGINE_TYPES)}."
+        )
+
     out_path = os.path.join(out_dir, deck_name)
     os.makedirs(out_dir, exist_ok=True)
 
@@ -117,7 +162,7 @@ def build_deck(
     # t_sl_dry/t_sl_ab/throttle_ratio don't agree with each other instead
     # of silently using two disconnected numbers for the same quantity.
     theta_sl, delta_sl = _theta_delta(0.0)
-    alpha_mil_sl = _mattingly_thrust_lapse(theta_sl, delta_sl, 0.0, throttle_ratio, "military")
+    alpha_mil_sl = _mattingly_thrust_lapse(theta_sl, delta_sl, 0.0, throttle_ratio, "military", engine_type)
     predicted_dry_sl = alpha_mil_sl * t_sl_ab
     disagreement_pct = 100.0 * abs(predicted_dry_sl - t_sl_dry) / t_sl_dry
     print(f"   [engine deck] Mattingly SL-static military-thrust check: "
@@ -139,8 +184,8 @@ def build_deck(
     for alt in altitudes_ft:
         theta, delta = _theta_delta(alt)
         for mach in machs:
-            thrust_mil = _mattingly_thrust_lapse(theta, delta, mach, throttle_ratio, "military") * t_sl_ab
-            thrust_max = _mattingly_thrust_lapse(theta, delta, mach, throttle_ratio, "max") * t_sl_ab
+            thrust_mil = _mattingly_thrust_lapse(theta, delta, mach, throttle_ratio, "military", engine_type) * t_sl_ab
+            thrust_max = _mattingly_thrust_lapse(theta, delta, mach, throttle_ratio, "max", engine_type) * t_sl_ab
             for throttle in throttles:
                 if throttle <= 0.5:
                     # Mattingly's model only defines the two rated power
