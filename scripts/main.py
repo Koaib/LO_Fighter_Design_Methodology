@@ -280,6 +280,14 @@ ENGINE_T_SL_DRY_LBF = 17800.0   # published F100-PW-229 dry static thrust
 ENGINE_T_SL_AB_LBF  = 29100.0   # published F100-PW-229 afterburner static thrust
 ENGINE_TSFC_DRY     = 0.8       # lb/(lb*hr), typical for this engine class
 ENGINE_TSFC_AB      = 2.0       # lb/(lb*hr), typical for this engine class
+# Generic subsonic ram-drag thrust-lapse coefficient (thrust_factor =
+# 1 - ENGINE_MACH_LAPSE_COEFF*Mach, on top of the altitude-density lapse):
+# thrust really is Mach-dependent (increasing inlet/ram drag outpaces ram-
+# recovery at these subsonic speeds), but 0.3 is a generic textbook-class
+# approximation, NOT derived from real F100-PW-229 lapse data — same
+# placeholder tier as ENGINE_TSFC_DRY/AB above. Revise if you get a real
+# lapse curve for this engine.
+ENGINE_MACH_LAPSE_COEFF = 0.3
 
 # ── Mission profile ────────────────────────────────────────────────────────
 CRUISE_MACH        = 0.6
@@ -464,6 +472,7 @@ if RUN_AVIARY:
         engine_t_sl_ab_lbf=ENGINE_T_SL_AB_LBF,
         engine_tsfc_dry=ENGINE_TSFC_DRY,
         engine_tsfc_ab=ENGINE_TSFC_AB,
+        engine_mach_lapse_coeff=ENGINE_MACH_LAPSE_COEFF,
         cruise_mach=CRUISE_MACH,
         cruise_altitude_ft=CRUISE_ALTITUDE_FT,
         design_range_nmi=DESIGN_RANGE_NMI,
