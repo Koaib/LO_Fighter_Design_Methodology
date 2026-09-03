@@ -66,7 +66,7 @@ REF_MODE      = "auto"      # use "manual" for box_template — it has no wing
 # =========================
 # PIPELINE STAGE TOGGLES — edit this
 # =========================
-RUN_RCS    = False   # OpenRCS monostatic RCS pass (Results/RCS/)
+RUN_RCS    = True    # OpenRCS monostatic RCS pass (Results/RCS/)
 RUN_AVIARY = True   # Aviary mission analysis, runs AFTER the aero+stability
                      # loop below finishes — needs this run's full 9-file
                      # Mach x Altitude aero-CSV grid to build its polar table
@@ -80,7 +80,7 @@ RUN_AVIARY = True   # Aviary mission analysis, runs AFTER the aero+stability
 # lambda/6 is the time/accuracy compromise currently in use.
 # min and max no longer have to match — e.g. MAX=4, MIN=8 refines curved
 # regions to lambda/8 while flatter regions stay at lambda/4.
-USE_CFD_MESH     = False    # False -> old plain ExportFile(EXPORT_STL)
+USE_CFD_MESH     = True     # False -> old plain ExportFile(EXPORT_STL)
 FREQ_GHZ         = 12.0     # also drives the RCS run below
 AZ_RANGE         = "half"   # "full" or "half" — half valid for bilaterally symmetric aircraft
 DELP             = 1.0       # phi step, deg — 30° (7 pts across a half-circle) was
@@ -221,9 +221,9 @@ if RUN_RCS:
 # AERO SETTINGS
 # =========================
 
-ALPHA_START  = -8.0
-ALPHA_END    = 12.0
-ALPHA_NPTS   = 11
+ALPHA_START  = -10.0
+ALPHA_END    = 22.0
+ALPHA_NPTS   = 17
 MACH_LIST      = [0.2, 0.4, 0.6]
 ALTITUDE_LIST  = [0.0, 15000.0, 35000.0]
 RE_CREF      = 1e6   # fallback only — run_vspaero_aero() auto-computes the real
@@ -231,7 +231,7 @@ RE_CREF      = 1e6   # fallback only — run_vspaero_aero() auto-computes the re
                       # whenever it can read the wing geometry (always, in
                       # practice), silently overriding this value. Only takes
                       # effect if that auto-calc fails.
-WAKE_ITERS   = 3
+WAKE_ITERS   = 8
 
 # =========================
 # STABILITY SETTINGS
