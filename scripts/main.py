@@ -66,7 +66,7 @@ REF_MODE      = "auto"      # use "manual" for box_template — it has no wing
 # =========================
 # PIPELINE STAGE TOGGLES — edit this
 # =========================
-RUN_RCS    = False   # OpenRCS monostatic RCS pass (Results/RCS/)
+RUN_RCS    = True   # OpenRCS monostatic RCS pass (Results/RCS/)
 RUN_AVIARY = True   # Aviary mission analysis, runs AFTER the aero+stability
                      # loop below finishes — needs this run's full 9-file
                      # Mach x Altitude aero-CSV grid to build its polar table
@@ -80,7 +80,7 @@ RUN_AVIARY = True   # Aviary mission analysis, runs AFTER the aero+stability
 # lambda/6 is the time/accuracy compromise currently in use.
 # min and max no longer have to match — e.g. MAX=4, MIN=8 refines curved
 # regions to lambda/8 while flatter regions stay at lambda/4.
-USE_CFD_MESH     = False    # False -> old plain ExportFile(EXPORT_STL)
+USE_CFD_MESH     = True    # False -> old plain ExportFile(EXPORT_STL)
 FREQ_GHZ         = 12.0     # also drives the RCS run below
 AZ_RANGE         = "half"   # "full" or "half" — half valid for bilaterally symmetric aircraft
 DELP             = 1.0       # phi step, deg — 30° (7 pts across a half-circle) was
@@ -221,9 +221,9 @@ if RUN_RCS:
 # AERO SETTINGS
 # =========================
 
-ALPHA_START  = -8.0
-ALPHA_END    = 12.0
-ALPHA_NPTS   = 11
+ALPHA_START  = -10.0
+ALPHA_END    = 22.0
+ALPHA_NPTS   = 17
 MACH_LIST      = [0.2, 0.4, 0.6]
 ALTITUDE_LIST  = [0.0, 15000.0, 35000.0]
 RE_CREF      = 1e6   # fallback only — run_vspaero_aero() auto-computes the real
@@ -231,7 +231,7 @@ RE_CREF      = 1e6   # fallback only — run_vspaero_aero() auto-computes the re
                       # whenever it can read the wing geometry (always, in
                       # practice), silently overriding this value. Only takes
                       # effect if that auto-calc fails.
-WAKE_ITERS   = 3
+WAKE_ITERS   = 8
 
 # =========================
 # STABILITY SETTINGS
@@ -240,22 +240,7 @@ WAKE_ITERS   = 3
 # length unit (meters, for this geometry) — NOT a fraction of MAC. They're
 # passed straight into OpenVSP's VSPAEROSettings "Xcg"/"Ycg"/"Zcg" parms
 # (vsp_setup.run_vspaero_aero()), which read plain model-unit coordinates.
-#
-# X_CG traces to Giannelis, Bykerk & Vio, Aerospace 2023, 10, 746 (the
-# SSAM-Gen5 source paper), Table 1: "XCoG = -0.4385 m" for their 0.75 m
-# wind-tunnel-scale model (sign convention differs from this .vsp3's axis
-# direction, magnitude matches exactly). This project's own two .vsp3
-# geometries are NOT a 1:25.339 copy of the paper's exact model (this
-# project's "NOT_scaled_by_19" file measures 0.2169 m^2 / 0.7135 m,
-# bigger than the paper's Table 1 0.1091 m^2 / 0.535 m — expected, since
-# it's a locally modified "nozzle_mod" variant, not a byte-identical
-# reproduction). "scaled_by_19" (this file) IS confirmed, via its own
-# .vsp3 dump, to be a clean, exact 19x scale-up of THAT file specifically
-# — span ratio 19.000000, area ratio 361=19^2, aspect ratio identical to
-# 12 decimal places between the two dumps. So 0.4385 m scales by 19 (the
-# real ratio between this project's own two files), not by 25.339 (the
-# paper's wind-tunnel-to-full-scale ratio, which doesn't apply here).
-X_CG = 8.3315   # m — 0.4385 * 19 (see note above)
+X_CG = 0.4385   # m
 Y_CG = 0.0      # m
 Z_CG = 0.0      # m
 
@@ -266,23 +251,15 @@ Z_CG = 0.0      # m
 # / ALTITUDE_LIST from AERO SETTINGS are reused directly below, so there's
 # no separate list here that could silently fall out of sync.
 
-# "scaled_by_19" wing planform (confirmed via both .vsp3 dumps to be
-# this project's own "NOT_scaled_by_19" geometry scaled up by an exact
-# factor of 19 — span ratio 19.000000, area ratio 361=19^2, identical
-# aspect ratio between the two files to 12 decimal places; NOT directly
-# tied to the SSAM-Gen5 source paper's separately-stated "19 m full-scale
-# vehicle" length, which is a different, unverified-against-this-project
-# number — see pipeline_config.py's IMPORT_FILE note) — NOT a scaled-down
-# F-16C value (see mass basis note below for why that distinction
-# matters). Read directly off the actual .vsp3 (TotalArea/TotalSpan/
-# TotalAR parms, via scripts/aviary/print_wing_ref_params.py's method)
-# and unit-converted:
-# TotalArea=78.319 m^2 -> 843.018 ft^2, TotalSpan=13.5565 m -> 44.477 ft,
-# TotalAR=2.3465 (dimensionless, low-AR delta planform per Giannelis,
-# Bykerk & Vio, Aerospace 2023, 10, 746 — the SSAM-Gen5 source paper).
-TEST_WING_AREA_FT2     = 843.018026816014
-TEST_WING_SPAN_FT      = 44.47670603674372
-TEST_WING_ASPECT_RATIO = 2.346542205448008
+# This test geometry's actual wing planform — NOT a scaled-down F-16C value
+# (see mass basis note below for why that distinction matters). Project
+# notes flag that this "nozzle_mod" geometry may not be identical to
+# whatever geometry these numbers were originally measured from — re-derive
+# from the real .vsp3 (scripts/aviary/print_wing_ref_params.py) before
+# trusting these for anything beyond plumbing validation.
+TEST_WING_AREA_FT2     = 1.174343
+TEST_WING_SPAN_FT      = 1.755249
+TEST_WING_ASPECT_RATIO = 3.46
 TEST_WING_HAS_STRUT    = False
 TEST_WING_HAS_FOLD     = False
 
@@ -349,27 +326,27 @@ for f in glob.glob(os.path.join(vsp_setup.VSP_FILES, f"{geom_stem}_M*.*")):
     os.remove(f)
 
 mach_results = []  # (M, alt, polar_dst, CD0, K, r2)
-for ALT in ALTITUDE_LIST:
-    for M in MACH_LIST:
-        # supersonic panel/mixed-body limitation: thick surfaces only valid subsonic —
-        # for M>=1, exclude thick geometry entirely and run thin-surfaces-only VLM
-        thick_set_this_run = thick_set if M < 1.0 else vsp.SET_NONE
-        polar_dst, CD0, K, r2 = vsp_setup.run_vspaero_aero(
-            wing_id=wing_id,
-            altitude_ft=ALT,
-            alpha_start=ALPHA_START, alpha_end=ALPHA_END, alpha_npts=ALPHA_NPTS,
-            mach_start=M, mach_end=M, mach_npts=1,
-            re_cref_start=RE_CREF, wake_iters=WAKE_ITERS,
-            thin_geom_set=thin_set,
-            thick_geom_set=thick_set_this_run,
-            ref_mode=REF_MODE,
-            x_cg=X_CG, y_cg=Y_CG, z_cg=Z_CG,
-            run_name=f"{geom_stem}_M{M:.2f}_ALT{int(ALT)}",
-        )
-        if polar_dst is not None:
-            mach_results.append((M, ALT, polar_dst, CD0, K, r2))
-        time.sleep(5)
-
+# for ALT in ALTITUDE_LIST:
+#     for M in MACH_LIST:
+#         # supersonic panel/mixed-body limitation: thick surfaces only valid subsonic —
+#         # for M>=1, exclude thick geometry entirely and run thin-surfaces-only VLM
+#         thick_set_this_run = thick_set if M < 1.0 else vsp.SET_NONE
+#         polar_dst, CD0, K, r2 = vsp_setup.run_vspaero_aero(
+#             wing_id=wing_id,
+#             altitude_ft=ALT,
+#             alpha_start=ALPHA_START, alpha_end=ALPHA_END, alpha_npts=ALPHA_NPTS,
+#             mach_start=M, mach_end=M, mach_npts=1,
+#             re_cref_start=RE_CREF, wake_iters=WAKE_ITERS,
+#             thin_geom_set=thin_set,
+#             thick_geom_set=thick_set_this_run,
+#             ref_mode=REF_MODE,
+#             x_cg=X_CG, y_cg=Y_CG, z_cg=Z_CG,
+#             run_name=f"{geom_stem}_M{M:.2f}_ALT{int(ALT)}",
+#         )
+#         if polar_dst is not None:
+#             mach_results.append((M, ALT, polar_dst, CD0, K, r2))
+#         time.sleep(5)
+        
 # ── everything below runs ONCE, after the loop finishes ──────────────
 import csv
 summary_path = os.path.join(vsp_setup.AERO_RESULTS_DIR, f"drag_polar_fits_{geom_stem}.csv")
