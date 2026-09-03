@@ -57,12 +57,31 @@ rcs_monostatic.py  →  rcs_monostatic(param_list, coord_list)
       globalAngles()              direction cosines u,v,w; unit vectors uu,vv,ww
       incidentFieldCartesian()    cartesian E-field components e0
       -- inner loop over ntria facets --
-        ndot = N[m] dot R  (illumination: skip facet if ndot < 1e-5)
+        ndot = N[m] dot R  (illumination test: process facet m only if
+          ilum[m]==1 and ndot>=1e-5, or if ilum[m]==0. ilum comes from
+          stl_module.stl_converter()'s facets.txt column, which — verified
+          against the actual source — is ALWAYS 1 for every facet: the
+          upstream open-rcs "is_closed_structure" check it was meant to
+          come from is unconditionally True by construction (it tests
+          each face's vertices against a coordinate list built FROM those
+          same faces), so the ilum==0 branch is dead code for any
+          geometry this pipeline processes. In practice this just means
+          every facet always gets the standard backface-culling test
+          (ndot>=1e-5) — which is the physically correct behavior for our
+          closed aircraft/sphere geometries and the front-face-filtered
+          flat plate anyway, so this dead branch is currently harmless,
+          not a live bug.)
         diretionCosines()         rotation matrices T1, T2  global to local
         sphericalAngles()         local spherical angles th2, phi2
         phaseVerticeTriangle()    Dp=2bk*v1*k, Dq=2bk*v2*k, Do=2bk*v3*k
         incidentFieldSphericalCoordinates()  local Et2, Ep2
-        reflectionCoefficients()  Fresnel perp/para (= 1 and -1 for PEC)
+        reflectionCoefficients()  Fresnel perp/para for PEC (rs=0): BOTH
+          equal exactly -1 for any incidence angle (verified numerically
+          against the actual source — perp=-1/(2*rs*cos(th2)+1) and
+          para=-cos(th2)/(2*rs+cos(th2)) both reduce to -1 at rs=0). This
+          corrects an earlier, pre-source-verification note in this same
+          docstring that guessed "1 and -1" from general PEC Fresnel
+          theory instead of reading the actual code.
         surface currents Jx2, Jy2
         areaIntegral()            DD, expDo, expDp, expDq (exponential terms)
         calculate_Ic()            Taylor-series area integral Ic, 4 special
