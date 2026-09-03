@@ -447,37 +447,29 @@ def run_vspaero_aero(
 ):
     
     import openvsp as vsp
-    
-    # DEBUGGING
-    print("   [DEBUG] function entered")          # ← add this
-    print("   [DEBUG] wing_id =", wing_id)        # ← add this
 
     print("\n🔄 Running VSPAero VLM analysis...")
+    print(f"   wing_id: {wing_id}")
     print(f"   Alpha : {alpha_start}° → {alpha_end}°  ({alpha_npts} points)")
     print(f"   Mach  : {mach_start}   Re: {re_cref_start:.2e}\n")
 
     # ── 1. SET REFERENCE WING ────────────────────────────────────────────────
-    
-    # DEBUGGING
-    print("   [DEBUG] calling SetVSPAERORefWingID...")
     if ref_mode == "auto":
         vsp.SetVSPAERORefWingID(wing_id)
-        print("   [DEBUG] Ref values from wing planform (auto)")
+        print("   Ref values from wing planform (auto)")
     elif ref_mode == "manual":
         if None in (sref, bref, cref):
             raise ValueError("ref_mode='manual' requires sref, bref, cref.")
-        print(f"   [DEBUG] Ref values manual: Sref={sref}, bref={bref}, cref={cref}")
+        print(f"   Ref values manual: Sref={sref}, bref={bref}, cref={cref}")
     else:
         raise ValueError("ref_mode must be 'auto' or 'manual'.")
-        vsp.PrintAnalysisInputs("VSPAERODegenGeom")
-        vsp.PrintAnalysisInputs("DegenGeom")
 
     for axis_name, axis_val, parm_name in [("X", x_cg, "Xcg"), ("Y", y_cg, "Ycg"), ("Z", z_cg, "Zcg")]:
         if axis_val is not None:
             pid = vsp.FindParm(vsp.FindContainer("VSPAEROSettings", 0), parm_name, "VSPAERO")
             if pid:
                 vsp.SetParmVal(pid, axis_val)
-                print(f"   [DEBUG] {parm_name} set to {axis_val}")
+                print(f"   {parm_name} set to {axis_val}")
             else:
                 print(f"   ⚠️  Could not find {parm_name} parm — falling back to .vsp3's saved value")
 
@@ -525,7 +517,7 @@ def run_vspaero_aero(
         
         # ── Auto Re from actual wing planform cref (replaces fixed re_cref) ──
         T, RHO, MU, a_sound = isa_atmosphere(altitude_ft)
-        print(f"   [DEBUG] ISA @ {altitude_ft:.0f}ft: T={T:.2f}K, rho={RHO:.4f}, mu={MU:.3e}")
+        print(f"   ISA @ {altitude_ft:.0f}ft: T={T:.2f}K, rho={RHO:.4f}, mu={MU:.3e}")
 
         try:
             cref_actual = vsp.GetParmVal(wing_id, "TotalChord", "WingGeom")
@@ -536,7 +528,7 @@ def run_vspaero_aero(
         if cref_actual:
             V = mach_start * a_sound
             re_cref_start = re_cref_end = (RHO * V * cref_actual) / MU
-            print(f"   [DEBUG] auto Re: cref={cref_actual:.4f}m, V={V:.1f}m/s, "
+            print(f"   auto Re: cref={cref_actual:.4f}m, V={V:.1f}m/s, "
                   f"rho={RHO:.4f}, mu={MU:.3e} -> Re={re_cref_start:.3e}")
         else:
             print("   ⚠️  Falling back to passed-in re_cref_start")
@@ -621,7 +613,7 @@ def run_vspaero_aero(
     header_line = None
     data_start  = 0
     for i, line in enumerate(raw_lines):
-        if "AoA" in line or "Beta" in line and "Mach" in line:
+        if ("AoA" in line or "Beta" in line) and "Mach" in line:
             header_line = line.strip()
             data_start  = i + 1
             break

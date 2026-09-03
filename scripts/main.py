@@ -32,12 +32,17 @@ Aviary-related is configured from this one file, nothing to edit in
 scripts/aviary/run_aviary.py for a normal run.
 """
 
-import vsp_setup  
+import vsp_setup
 import openvsp as vsp
 import os
 import matplotlib.pyplot as plt
 import pandas as pd
 import time
+
+# IMPORT_FILE/GEOMETRY_DIR/REF_WING_NAME live in pipeline_config.py — the
+# single place that names the geometry file, shared with extract_params.py
+# and print_wing_ref_params.py so they can never silently disagree.
+from pipeline_config import ROOT_DIR, GEOMETRY_DIR, IMPORT_FILE, REF_WING_NAME
 
 """
 Single entry point for the LO Fighter Design Methodology pipeline.
@@ -51,11 +56,12 @@ INPUT_MODE options:
 # =========================
 # INPUT MODE — edit this
 # =========================
+# IMPORT_FILE/REF_WING_NAME come from pipeline_config.py (see import above)
+# — edit them there, not here, so extract_params.py and
+# print_wing_ref_params.py automatically stay pointed at the same geometry.
 
 INPUT_MODE    = "import_vsp3"       # "generate" | "import_stl" | "import_vsp3"
-IMPORT_FILE   = "SSAM_final_geom_to_be_used_NOT_scaled_by_19_nozzle_mod.vsp3"  # filename inside Geometry/ folder (for import modes)
 REF_MODE      = "auto"      # use "manual" for box_template — it has no wing
-REF_WING_NAME = "Main_Wing"   # only matters once REF_MODE = "auto" (SSAM run)
 
 # =========================
 # PIPELINE STAGE TOGGLES — edit this
@@ -90,9 +96,8 @@ NUM_CIRCLE_SEGS  = 12.0     # OpenVSP default -- curvature detection ON (was ~0 
 # =========================
 # GEOMETRY FOLDER PATH
 # =========================
+# ROOT_DIR/GEOMETRY_DIR come from pipeline_config.py (see import above).
 
-ROOT_DIR     = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-GEOMETRY_DIR = os.path.join(ROOT_DIR, "Geometry")
 os.makedirs(GEOMETRY_DIR, exist_ok=True)
 
 SETS_FILE = os.path.join(GEOMETRY_DIR, os.path.splitext(IMPORT_FILE)[0] + "_sets.json")
@@ -231,9 +236,13 @@ WAKE_ITERS   = 3
 # =========================
 # STABILITY SETTINGS
 # =========================
-X_CG = 0.4385
-Y_CG = 0.0
-Z_CG = 0.0
+# X_CG/Y_CG/Z_CG are absolute coordinates in the .vsp3 model's own native
+# length unit (meters, for this geometry) — NOT a fraction of MAC. They're
+# passed straight into OpenVSP's VSPAEROSettings "Xcg"/"Ycg"/"Zcg" parms
+# (vsp_setup.run_vspaero_aero()), which read plain model-unit coordinates.
+X_CG = 0.4385   # m
+Y_CG = 0.0      # m
+Z_CG = 0.0      # m
 
 # =========================
 # AVIARY / MISSION CONFIG — edit this to change any Aviary-related input

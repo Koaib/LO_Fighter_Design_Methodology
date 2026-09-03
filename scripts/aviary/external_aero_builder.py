@@ -10,30 +10,9 @@ External aero subsystem: feeds VSPAero-derived lift/drag polars into Aviary,
 completely replacing Aviary's internal FLOPS/GASP aero calculation.
 """
 
-import numpy as np
-import openmdao.api as om
 import aviary.api as av
-from aviary.api import Aircraft
 
 from build_aero_polar import build_polar_arrays
-
-
-class ExternalAero(om.ExplicitComponent):
-    def initialize(self):
-        self.options.declare("altitude")
-        self.options.declare("mach")
-        self.options.declare("alpha")
-        self.options.declare("cl")
-        self.options.declare("cd")
-
-    def setup(self):
-        n = len(self.options["cl"])
-        self.add_output("lift_table", val=self.options["cl"], shape=(n,))
-        self.add_output("drag_table", val=self.options["cd"], shape=(n,))
-
-    def compute(self, inputs, outputs):
-        outputs["lift_table"] = self.options["cl"]
-        outputs["drag_table"] = self.options["cd"]
 
 
 class ExternalAeroBuilder(av.AerodynamicsBuilder):

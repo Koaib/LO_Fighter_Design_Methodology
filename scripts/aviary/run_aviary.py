@@ -65,6 +65,7 @@ DEFAULT_ENGINE_T_SL_DRY_LBF = 17800.0
 DEFAULT_ENGINE_T_SL_AB_LBF = 29100.0
 DEFAULT_ENGINE_TSFC_DRY = 0.8
 DEFAULT_ENGINE_TSFC_AB = 2.0
+DEFAULT_ENGINE_MACH_LAPSE_COEFF = 0.3
 DEFAULT_CRUISE_MACH = 0.6
 DEFAULT_CRUISE_ALTITUDE_FT = 35000.0
 DEFAULT_DESIGN_RANGE_NMI = 400.0
@@ -107,7 +108,7 @@ def run_aviary_mission(
     f16c_empty_mass_lbm=None, f16c_gross_mass_lbm=None,
     f16c_fuel_mass_lbm=None, f16c_wing_area_ft2=None,
     engine_t_sl_dry_lbf=None, engine_t_sl_ab_lbf=None,
-    engine_tsfc_dry=None, engine_tsfc_ab=None,
+    engine_tsfc_dry=None, engine_tsfc_ab=None, engine_mach_lapse_coeff=None,
     cruise_mach=None, cruise_altitude_ft=None, design_range_nmi=None,
     mach_list=None, altitude_list=None,
 ):
@@ -130,6 +131,7 @@ def run_aviary_mission(
     engine_t_sl_ab_lbf = engine_t_sl_ab_lbf if engine_t_sl_ab_lbf is not None else DEFAULT_ENGINE_T_SL_AB_LBF
     engine_tsfc_dry = engine_tsfc_dry if engine_tsfc_dry is not None else DEFAULT_ENGINE_TSFC_DRY
     engine_tsfc_ab = engine_tsfc_ab if engine_tsfc_ab is not None else DEFAULT_ENGINE_TSFC_AB
+    engine_mach_lapse_coeff = engine_mach_lapse_coeff if engine_mach_lapse_coeff is not None else DEFAULT_ENGINE_MACH_LAPSE_COEFF
     cruise_mach = cruise_mach if cruise_mach is not None else DEFAULT_CRUISE_MACH
     cruise_altitude_ft = cruise_altitude_ft if cruise_altitude_ft is not None else DEFAULT_CRUISE_ALTITUDE_FT
     design_range_nmi = design_range_nmi if design_range_nmi is not None else DEFAULT_DESIGN_RANGE_NMI
@@ -160,6 +162,7 @@ def run_aviary_mission(
         deck_name="f100_pw229_simplified.deck",
         t_sl_dry=engine_t_sl_dry_lbf, t_sl_ab=engine_t_sl_ab_lbf,
         tsfc_dry=engine_tsfc_dry, tsfc_ab=engine_tsfc_ab,
+        mach_lapse_coeff=engine_mach_lapse_coeff,
     )
 
     from aviary.utils.named_values import NamedValues
@@ -178,6 +181,39 @@ def run_aviary_mission(
 
     for phase_name in ("climb", "cruise", "descent"):
         phase_info[phase_name]["subsystem_options"]["aerodynamics"]["aero_data"] = aero_data
+
+    # Dynamic Dymos initial guesses — computed from THIS run's actual
+    # gross_mass_lbm/design_range_nmi instead of phase_info.py's frozen
+    # numbers, so they can't silently go stale if TEST_WING_AREA_FT2 or the
+    # F16C mass-basis constants change in main.py. A bad/stale initial
+    # guess is exactly what caused the Newton solve non-convergence fixed
+    # earlier this project (see phase_info.py's history) - recomputing
+    # these here every run closes that failure mode for good.
+    #
+    # Split ratios (25%/50%/25% of range; ~3:3:1 of guessed fuel burn
+    # across climb/cruise/descent) reproduce phase_info.py's original
+    # hand-picked seed values at the 103.59 lbm gross-mass test point that
+    # was validated to converge - still just seed values for the
+    # collocation solve, not meant to be physically exact.
+    guessed_total_burn_lbm = gross_mass_lbm * 0.068   # ~7/103.59 lbm, from
+                                                        # the validated test run
+    climb_burn = guessed_total_burn_lbm * (3 / 7)
+    cruise_burn = guessed_total_burn_lbm * (3 / 7)
+    descent_burn = guessed_total_burn_lbm * (1 / 7)
+
+    mass_after_climb = gross_mass_lbm - climb_burn
+    mass_after_cruise = mass_after_climb - cruise_burn
+    mass_after_descent = mass_after_cruise - descent_burn
+
+    dist_climb_end = 0.25 * design_range_nmi
+    dist_cruise_end = 0.75 * design_range_nmi
+
+    phase_info["climb"]["initial_guesses"]["distance"] = ([0.0, dist_climb_end], "nmi")
+    phase_info["climb"]["initial_guesses"]["mass"] = ([gross_mass_lbm, mass_after_climb], "lbm")
+    phase_info["cruise"]["initial_guesses"]["distance"] = ([dist_climb_end, dist_cruise_end], "nmi")
+    phase_info["cruise"]["initial_guesses"]["mass"] = ([mass_after_climb, mass_after_cruise], "lbm")
+    phase_info["descent"]["initial_guesses"]["distance"] = ([dist_cruise_end, design_range_nmi], "nmi")
+    phase_info["descent"]["initial_guesses"]["mass"] = ([mass_after_cruise, mass_after_descent], "lbm")
 
     # Run with AVIARY_FILES as the working directory so Aviary/OpenMDAO's own
     # native "<script>_out/" report folder lands there instead of cluttering

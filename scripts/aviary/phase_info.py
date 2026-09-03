@@ -16,8 +16,7 @@ phase_info = {
         # for it (aviary/mission/energy_state_problem_configurator.py's
         # set_phase_initial_guesses only auto-defaults those four). Left
         # unset it landed on OpenMDAO's generic 1.0 placeholder instead of
-        # a real integrated distance. [0, 100] nmi is a rough placeholder
-        # split of the 400 nmi target_range across climb/cruise/descent.
+        # a real integrated distance.
         # 'mass' has the same problem distance had: set_phase_initial_guesses()
         # only auto-fills a FLAT scalar (Aircraft.Design.GROSS_MASS, same
         # value at every node, same across all three phases) when 'mass' is
@@ -25,10 +24,15 @@ phase_info = {
         # single Newton pass (no driver/optimizer), that bad flat guess is
         # exactly what produced Mission.FUEL_MASS = 0.0 (fuel_burned =
         # GROSS_MASS - final descent mass, and the solver settled near the
-        # flat guess instead of a real fuel-depleting trajectory). Rough,
-        # clearly-approximate decreasing guesses (matching the wing-loading-
-        # scaled GROSS_MASS_LBM ~103.59 lbm printed by run_aviary.py) — not
-        # meant to be exact, just a better starting point than flat.
+        # flat guess instead of a real fuel-depleting trajectory).
+        #
+        # The placeholder values below are OVERWRITTEN at runtime by
+        # run_aviary_mission() (scripts/aviary/run_aviary.py), which
+        # recomputes distance/mass guesses from main.py's actual
+        # DESIGN_RANGE_NMI and wing-loading-scaled gross mass on every run
+        # — they're just here so this file stays self-consistent if
+        # imported/read standalone. Don't rely on editing these directly;
+        # edit main.py's AVIARY / MISSION CONFIG section instead.
         'initial_guesses': {
             'distance': ([0.0, 100.0], 'nmi'),
             'mass': ([103.59, 100.59], 'lbm'),
@@ -57,6 +61,7 @@ phase_info = {
         },
     },
     'cruise': {
+        # See 'climb' phase above — overwritten at runtime by run_aviary_mission().
         'initial_guesses': {
             'distance': ([100.0, 300.0], 'nmi'),
             'mass': ([100.59, 97.59], 'lbm'),
@@ -85,6 +90,7 @@ phase_info = {
         },
     },
     'descent': {
+        # See 'climb' phase above — overwritten at runtime by run_aviary_mission().
         'initial_guesses': {
             'distance': ([300.0, 400.0], 'nmi'),
             'mass': ([97.59, 96.59], 'lbm'),
