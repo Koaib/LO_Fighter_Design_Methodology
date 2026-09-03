@@ -278,32 +278,37 @@ F16C_WING_AREA_FT2  = 300.0     # published F-16C reference wing area
 # data, see scripts/aviary/build_engine_deck.py) ───────────────────────────
 ENGINE_T_SL_DRY_LBF = 17800.0   # published F100-PW-229 dry static thrust
 ENGINE_T_SL_AB_LBF  = 29100.0   # published F100-PW-229 afterburner static thrust
-ENGINE_TSFC_DRY     = 0.8       # lb/(lb*hr), typical for this engine class
-ENGINE_TSFC_AB      = 2.0       # lb/(lb*hr), typical for this engine class
+# TSFC is no longer a constant here — build_engine_deck.py computes it
+# from Mattingly & Heiser's TSFC correlation (Ch.3 Sec.3.3.2, Eqs.
+# 3.55a/b for this engine class), same citation-over-guess upgrade as
+# the thrust lapse below.
 
-# Thrust lapse (how thrust varies with Mach + altitude) is engine-CLASS-
-# specific — Mattingly & Heiser's book gives a different equation per
-# engine architecture (turbojet, high-bypass turbofan, low-bypass
-# mixed-flow turbofan, ...), not one universal formula. ENGINE_TYPE
-# selects which class's equation build_engine_deck.py uses.
-# "low_bypass_mixed_flow_turbofan" (Ch.2 Sec.2.3.2, Eqs. 2.52a/b,2.54a/b)
-# is the ONLY one currently implemented — it's also the correct one, since
-# it's the F100-PW-229/F110 engine class (F-16/F-15) this deck models.
-# Any other value raises NotImplementedError rather than silently reusing
-# these numbers for a different engine architecture — add a class only by
-# pasting its real equation from the same book section.
+# Thrust lapse AND TSFC are both engine-CLASS-specific — Mattingly &
+# Heiser give a different equation per engine architecture (turbojet,
+# high-bypass turbofan, low-bypass mixed-flow turbofan, ...), not one
+# universal formula. ENGINE_TYPE selects which class's equations
+# build_engine_deck.py uses.
+# "low_bypass_mixed_flow_turbofan" (thrust: Eqs. 2.54a/b; TSFC: Eqs.
+# 3.55a/b) is the correct choice — it's the F100-PW-229/F110 engine
+# class (F-16/F-15) this deck models. "turbojet" is also implemented
+# (thrust: Eqs. 2.55a/b; TSFC: Eqs. 3.56a/b) if this project ever needs
+# it. Any other value raises NotImplementedError rather than silently
+# reusing these numbers for a different engine architecture — add a
+# class only by pasting its real equations from the same book sections.
 ENGINE_TYPE = "low_bypass_mixed_flow_turbofan"
 
-# ENGINE_THROTTLE_RATIO is that formula's TR: the theta0 breakpoint above
-# which the engine is temperature-limited rather than flat-rated
-# (Mattingly & Heiser Appendix D). TR=1.0 is the standard-day-rated
-# baseline value used here — the book's own worked example for this
-# engine class sweeps TR=1.00-1.08, but the F100-PW-229's actual TR isn't
-# in the excerpt available for this project, so 1.0 is not a verified
-# engine-specific number. build_engine_deck.py prints a sea-level-static
-# cross-check against ENGINE_T_SL_DRY_LBF every run — if TR is changed,
-# watch that check for a large disagreement.
-ENGINE_THROTTLE_RATIO = 1.0
+# ENGINE_THROTTLE_RATIO is Mattingly & Heiser's TR: the theta0 breakpoint
+# above which the engine control system is temperature-limited rather
+# than flat-rated (Appendix D, Eq. D.6) — a control-system design choice,
+# not a tabulated per-engine-class value (the book has no TR lookup
+# table). 1.07 is the closest available anchor: the book's own AAF
+# (supercruise fighter, F100-class engine) worked example sweeps
+# TR=1.00-1.08 and settles on TR=1.07 (Ch.2 example, Fig.2.E1b/
+# Table 2.E2) — still not the real F100-PW-229 manufacturer TR (not in
+# any excerpt available for this project). build_engine_deck.py prints a
+# sea-level-static cross-check against ENGINE_T_SL_DRY_LBF every run —
+# if TR is changed, watch that check for a large disagreement.
+ENGINE_THROTTLE_RATIO = 1.07
 
 # ── Mission profile ────────────────────────────────────────────────────────
 CRUISE_MACH        = 0.6
@@ -486,8 +491,6 @@ if RUN_AVIARY:
         f16c_wing_area_ft2=F16C_WING_AREA_FT2,
         engine_t_sl_dry_lbf=ENGINE_T_SL_DRY_LBF,
         engine_t_sl_ab_lbf=ENGINE_T_SL_AB_LBF,
-        engine_tsfc_dry=ENGINE_TSFC_DRY,
-        engine_tsfc_ab=ENGINE_TSFC_AB,
         engine_throttle_ratio=ENGINE_THROTTLE_RATIO,
         engine_type=ENGINE_TYPE,
         cruise_mach=CRUISE_MACH,

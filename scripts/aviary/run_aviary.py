@@ -63,9 +63,10 @@ DEFAULT_F16C_FUEL_MASS_LBM = 6972.0
 DEFAULT_F16C_WING_AREA_FT2 = 300.0
 DEFAULT_ENGINE_T_SL_DRY_LBF = 17800.0
 DEFAULT_ENGINE_T_SL_AB_LBF = 29100.0
-DEFAULT_ENGINE_TSFC_DRY = 0.8
-DEFAULT_ENGINE_TSFC_AB = 2.0
-DEFAULT_ENGINE_THROTTLE_RATIO = 1.0
+# TSFC now comes from build_engine_deck.py's Mattingly & Heiser formula
+# (Eqs. 3.55a/b for this engine class) instead of a guessed constant —
+# nothing to set here any more.
+DEFAULT_ENGINE_THROTTLE_RATIO = 1.07   # Mattingly & Heiser's AAF (F100-class) worked example
 DEFAULT_ENGINE_TYPE = "low_bypass_mixed_flow_turbofan"
 DEFAULT_CRUISE_MACH = 0.6
 DEFAULT_CRUISE_ALTITUDE_FT = 35000.0
@@ -109,8 +110,7 @@ def run_aviary_mission(
     f16c_empty_mass_lbm=None, f16c_gross_mass_lbm=None,
     f16c_fuel_mass_lbm=None, f16c_wing_area_ft2=None,
     engine_t_sl_dry_lbf=None, engine_t_sl_ab_lbf=None,
-    engine_tsfc_dry=None, engine_tsfc_ab=None, engine_throttle_ratio=None,
-    engine_type=None,
+    engine_throttle_ratio=None, engine_type=None,
     cruise_mach=None, cruise_altitude_ft=None, design_range_nmi=None,
     mach_list=None, altitude_list=None,
 ):
@@ -131,8 +131,6 @@ def run_aviary_mission(
     f16c_wing_area_ft2 = f16c_wing_area_ft2 if f16c_wing_area_ft2 is not None else DEFAULT_F16C_WING_AREA_FT2
     engine_t_sl_dry_lbf = engine_t_sl_dry_lbf if engine_t_sl_dry_lbf is not None else DEFAULT_ENGINE_T_SL_DRY_LBF
     engine_t_sl_ab_lbf = engine_t_sl_ab_lbf if engine_t_sl_ab_lbf is not None else DEFAULT_ENGINE_T_SL_AB_LBF
-    engine_tsfc_dry = engine_tsfc_dry if engine_tsfc_dry is not None else DEFAULT_ENGINE_TSFC_DRY
-    engine_tsfc_ab = engine_tsfc_ab if engine_tsfc_ab is not None else DEFAULT_ENGINE_TSFC_AB
     engine_throttle_ratio = engine_throttle_ratio if engine_throttle_ratio is not None else DEFAULT_ENGINE_THROTTLE_RATIO
     engine_type = engine_type if engine_type is not None else DEFAULT_ENGINE_TYPE
     cruise_mach = cruise_mach if cruise_mach is not None else DEFAULT_CRUISE_MACH
@@ -164,7 +162,6 @@ def run_aviary_mission(
         out_dir=os.path.join(vsp_setup.AVIARY_FILES, "engines"),
         deck_name="f100_pw229_simplified.deck",
         t_sl_dry=engine_t_sl_dry_lbf, t_sl_ab=engine_t_sl_ab_lbf,
-        tsfc_dry=engine_tsfc_dry, tsfc_ab=engine_tsfc_ab,
         throttle_ratio=engine_throttle_ratio,
         engine_type=engine_type,
     )
