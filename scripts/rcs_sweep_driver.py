@@ -132,7 +132,19 @@ def _override(param_key, delta):
     return [spec["geom"], spec["surf"], spec["section"], spec["parm"], spec["baseline"] + delta]
 
 
-def build_param_configs(param_key, deltas, results_root, extra_param_keys=None):
+def build_param_configs(param_key, deltas, results_root, extra_param_keys=None, study_name=None):
+    """
+    param_key   : SWEEP_PARAMS lookup key for the PRIMARY override (and,
+                  when study_name is omitted, also the tag/results-folder
+                  name).
+    study_name  : tag/results-folder name, if it needs to differ from
+                  param_key — e.g. two studies that both sweep the same
+                  WingSweep_sec1 parm but with different extra_param_keys
+                  (aligned vs. misaligned HT) MUST pass distinct
+                  study_name values, or their tags/manifests collide and
+                  silently overwrite each other.
+    """
+    study_name = study_name or param_key
     configs = []
     for d in deltas:
         if d == 0.0:
@@ -140,9 +152,9 @@ def build_param_configs(param_key, deltas, results_root, extra_param_keys=None):
         overrides = [_override(param_key, d)]
         for extra_key in (extra_param_keys or []):
             overrides.append(_override(extra_key, d))
-        tag = f"{param_key}_{d:+.2f}"
+        tag = f"{study_name}_{d:+.2f}"
         configs.append({
-            **BASE, "tag": tag, "param": param_key, "delta": d,
+            **BASE, "tag": tag, "param": study_name, "delta": d,
             "parm_overrides": overrides,
             "results_root": str(results_root),
             "manifest_dir": str(results_root / "manifest"),
@@ -187,11 +199,11 @@ def run_one(cfg, retry=True):
 
 # ── per-parameter outputs (plots + summary CSV) ────────────────────────────
 
-def _load_done_manifests(param_key, deltas, results_root):
+def _load_done_manifests(study_name, deltas, results_root):
     """Returns [(delta, manifest_dict), ...] sorted by delta, done runs only.
     Δ=0.0 is spliced in from the shared baseline manifest (see
-    run_baseline()) rather than a per-parameter "<param>_+0.00" file,
-    since build_param_configs() never runs that case per-parameter."""
+    run_baseline()) rather than a per-study "<study>_+0.00" file, since
+    build_param_configs() never runs that case per-study."""
     manifest_dir = results_root / "manifest"
     rows = []
     for d in deltas:
@@ -199,9 +211,9 @@ def _load_done_manifests(param_key, deltas, results_root):
             try:
                 rows.append((0.0, _load_baseline_manifest()))
             except FileNotFoundError:
-                print(f"  [outputs] no shared baseline manifest — skipping Δ=0 for {param_key}")
+                print(f"  [outputs] no shared baseline manifest — skipping Δ=0 for {study_name}")
             continue
-        tag = f"{param_key}_{d:+.2f}"
+        tag = f"{study_name}_{d:+.2f}"
         mpath = manifest_dir / f"{tag}.json"
         if not mpath.exists():
             print(f"  [outputs] no manifest for {tag} — skipping"); continue
@@ -213,11 +225,11 @@ def _load_done_manifests(param_key, deltas, results_root):
     return sorted(rows, key=lambda r: r[0])
 
 
-def _plot_mean_vs_delta(rows, tag_key, param_key, ylabel, out_path):
+def _plot_mean_vs_delta(rows, tag_key, study_name, ylabel, out_path):
     deltas = [d for d, e in rows if tag_key in e.get("means", {})]
     means  = [e["means"][tag_key] for d, e in rows if tag_key in e.get("means", {})]
     if not deltas:
-        print(f"  [outputs] no {tag_key} means to plot for {param_key}"); return None
+        print(f"  [outputs] no {tag_key} means to plot for {study_name}"); return None
 
     fig, ax = plt.subplots(figsize=(7, 4.5), facecolor="white")
     ax.set_facecolor("white")
@@ -231,10 +243,10 @@ def _plot_mean_vs_delta(rows, tag_key, param_key, ylabel, out_path):
                 zorder=4, label="baseline (Δ=0)")
         ax.legend(fontsize=9)
     ax.axhline(baseline_val, color="grey", lw=0.6, linestyle=":", zorder=1)
-    ax.set_xlabel(f"{param_key}  Δ", fontsize=11)
+    ax.set_xlabel(f"{study_name}  Δ", fontsize=11)
     ax.set_ylabel(ylabel, fontsize=11)
     ax.grid(True, linestyle="--", alpha=0.5)
-    ax.set_title(f"{param_key} — {ylabel} vs. Δ", fontsize=11)
+    ax.set_title(f"{study_name} — {ylabel} vs. Δ", fontsize=11)
     fig.tight_layout()
     fig.savefig(out_path, dpi=150, bbox_inches="tight")
     plt.close(fig)
@@ -242,7 +254,7 @@ def _plot_mean_vs_delta(rows, tag_key, param_key, ylabel, out_path):
     return out_path
 
 
-def _plot_azimuth_polar_overlay(rows, param_key, out_path):
+def _plot_azimuth_polar_overlay(rows, study_name, out_path):
     """
     All deltas' azimuth cuts (TE-z co-pol = Sph) overlaid on one polar plot.
     Reuses run_openrcs's own half->full-circle mirror and dat parser so this
@@ -259,7 +271,7 @@ def _plot_azimuth_polar_overlay(rows, param_key, out_path):
         phi_full, sph_full = run_openrcs._azimuth_to_full_circle(parsed["phi_vals"], parsed["sph"])
         curves.append((d, phi_full, sph_full))
     if not curves:
-        print(f"  [outputs] no azimuth .dat files to overlay for {param_key}"); return None
+        print(f"  [outputs] no azimuth .dat files to overlay for {study_name}"); return None
 
     all_sph = np.concatenate([c[2] for c in curves])
     rcs_max = np.ceil(np.nanmax(all_sph) / 10) * 10
@@ -306,7 +318,7 @@ def _plot_azimuth_polar_overlay(rows, param_key, out_path):
     ax.grid(False)
     ax.spines["polar"].set_visible(False)
     ax.set_ylim(0, 1)
-    fig.suptitle(f"{param_key} — Azimuth RCS overlay, all Δ  (TE-z co-pol Sφ, θ=90°)\n"
+    fig.suptitle(f"{study_name} — Azimuth RCS overlay, all Δ  (TE-z co-pol Sφ, θ=90°)\n"
                  f"scale: {rcs_min:.0f} dBsm (centre) → {rcs_max:.0f} dBsm (rim)",
                  fontsize=10, y=1.0)
     fig.tight_layout()
@@ -316,7 +328,7 @@ def _plot_azimuth_polar_overlay(rows, param_key, out_path):
     return out_path
 
 
-def _write_summary_csv(rows, param_key, out_path):
+def _write_summary_csv(rows, study_name, out_path):
     with open(out_path, "w", newline="") as f:
         w = csv.writer(f)
         w.writerow(["delta", "tag", "az_mean_TE_dBsm", "frontal_mean_TE_dBsm",
@@ -333,54 +345,100 @@ def _write_summary_csv(rows, param_key, out_path):
     print(f"  saved -> {out_path.name}")
 
 
-def build_param_outputs(param_key, deltas, results_root):
-    rows = _load_done_manifests(param_key, deltas, results_root)
+def build_param_outputs(study_name, deltas, results_root):
+    rows = _load_done_manifests(study_name, deltas, results_root)
     if not rows:
-        print(f"[outputs] {param_key}: no completed deltas — nothing to plot"); return
+        print(f"[outputs] {study_name}: no completed deltas — nothing to plot"); return
 
     plots_dir = results_root / "plots"
     plots_dir.mkdir(parents=True, exist_ok=True)
-    print(f"[outputs] {param_key}: building comparison plots from {len(rows)} completed deltas")
+    print(f"[outputs] {study_name}: building comparison plots from {len(rows)} completed deltas")
 
-    _plot_mean_vs_delta(rows, "AZ_TE", param_key, "Mean Azimuth RCS (dBsm)",
-                         plots_dir / f"{param_key}_AzimuthMean_vs_delta.png")
-    _plot_mean_vs_delta(rows, "FR_TE", param_key, "Mean Frontal-Sector RCS (dBsm)",
-                         plots_dir / f"{param_key}_FrontalMean_vs_delta.png")
-    _plot_azimuth_polar_overlay(rows, param_key, plots_dir / f"{param_key}_AzimuthPolar_overlay.png")
-    _write_summary_csv(rows, param_key, results_root / f"summary_{param_key}.csv")
+    _plot_mean_vs_delta(rows, "AZ_TE", study_name, "Mean Azimuth RCS (dBsm)",
+                         plots_dir / f"{study_name}_AzimuthMean_vs_delta.png")
+    _plot_mean_vs_delta(rows, "FR_TE", study_name, "Mean Frontal-Sector RCS (dBsm)",
+                         plots_dir / f"{study_name}_FrontalMean_vs_delta.png")
+    _plot_azimuth_polar_overlay(rows, study_name, plots_dir / f"{study_name}_AzimuthPolar_overlay.png")
+    _write_summary_csv(rows, study_name, results_root / f"summary_{study_name}.csv")
 
 
 # ── orchestration ───────────────────────────────────────────────────────────
 
-def run_parameter(param_key, deltas, extra_param_keys=None):
-    results_root = RESULTS_ROOT / param_key
+def run_parameter(param_key, deltas, extra_param_keys=None, study_name=None):
+    """
+    param_key   : SWEEP_PARAMS lookup key for the primary override.
+    study_name  : results-folder/tag name, if it must differ from
+                  param_key (see build_param_configs' docstring) —
+                  defaults to param_key.
+    """
+    study_name = study_name or param_key
+    results_root = RESULTS_ROOT / study_name
     (results_root / "rcs").mkdir(parents=True, exist_ok=True)
     (results_root / "stl").mkdir(parents=True, exist_ok=True)
 
-    configs = build_param_configs(param_key, deltas, results_root, extra_param_keys)
+    configs = build_param_configs(param_key, deltas, results_root, extra_param_keys, study_name)
     results = {cfg["tag"]: run_one(cfg) for cfg in configs}
     print(json.dumps(results, indent=2))
 
-    build_param_outputs(param_key, deltas, results_root)
+    build_param_outputs(study_name, deltas, results_root)
     return results
 
 
 if __name__ == "__main__":
-    # Sample fill — reuses the exact param_key names and delta lists
-    # sweep_driver.py's own Stage-2 (RUN_RCS=True) block already settled
-    # on for an RCS-inclusive run, since those deltas were chosen with
-    # solver cost already in mind. Each param_key must exist in
-    # SWEEP_PARAMS_FILE (same geom/surf/section/parm/baseline schema the
-    # aero sweep already uses) — swap these for your real N parameters
-    # once you have them; the 0.0 in every list is the shared baseline
-    # (see run_baseline()), not a per-parameter run.
-    DELTAS_VT_CANT     = [0.0, -15, -8, 8, 15]
-    DELTAS_WING_TWIST  = [0.0, -2, -1, 1, 2]
-    DELTAS_WING_SWEEP  = [0.0, -12, -8, -4, 4, 8, 12]
+    # Each param_key below must exist in SWEEP_PARAMS_FILE (same
+    # geom/surf/section/parm/baseline schema the aero sweep already
+    # uses) — that file lives on your machine, not in this repo, so
+    # verify the keys/entries match before running. The 0.0 in every
+    # list is the shared baseline (see run_baseline()), not a
+    # per-parameter run.
+
+    # -- VT cant: reuses the existing aero sweep_driver.py's own
+    #    DELTAS_VT_CANT precedent (deg).
+    DELTAS_VT_CANT = [0.0, -15, -8, 8, 15]
+
+    # -- VT sweep (leading edge, deg) -- PLACEHOLDER range, no existing
+    #    precedent in this codebase to reuse (unlike wing/VT-cant). Confirm
+    #    before running.
+    DELTAS_VT_SWEEP = [0.0, -10, -5, 5, 10]
+
+    # -- Wing sweep (leading edge, deg): SAME delta list and SAME
+    #    param_key (WingSweep_sec1) for both the aligned and misaligned
+    #    studies below -- only extra_param_keys differs, so study_name
+    #    keeps their results/tags from colliding (see
+    #    build_param_configs' docstring).
+    DELTAS_WING_SWEEP = [0.0, -12, -8, -4, 4, 8, 12]
 
     run_baseline()   # once, shared — every run_parameter() call below reuses it for Δ=0
 
-    run_parameter("VTCant",         DELTAS_VT_CANT)
-    run_parameter("WingTwist_sec1", DELTAS_WING_TWIST)
+    run_parameter("VTCant", DELTAS_VT_CANT)
+    run_parameter("VTSweep_sec1", DELTAS_VT_SWEEP)
+
+    # Wing sweep ALIGNED with HT — HT sweep moves together with the wing,
+    # same as the existing aero sweep's "WingSweep_aligned" family.
     run_parameter("WingSweep_sec1", DELTAS_WING_SWEEP,
-                  extra_param_keys=["WingSweep_sec2", "HTSweep_sec1", "HTSweep_sec2"])
+                  extra_param_keys=["WingSweep_sec2", "HTSweep_sec1", "HTSweep_sec2"],
+                  study_name="WingSweepAligned")
+
+    # Wing sweep ONLY — HT stays put, matches the existing aero sweep's
+    # own commented "WingSweep_misaligned" line (wing moves, HT doesn't).
+    run_parameter("WingSweep_sec1", DELTAS_WING_SWEEP,
+                  extra_param_keys=["WingSweep_sec2"],
+                  study_name="WingSweepMisaligned")
+
+    # -- Thickness-to-chord (t/c): NOT wired in yet. Baseline is stated as
+    #    0.04, deltas [-0.02, -0.01, 0.0, +0.01, +0.02] -> absolute t/c
+    #    [0.02, 0.03, 0.04, 0.05, 0.06] -- that math is unambiguous and
+    #    ready to go. What's NOT verified: t/c isn't a plain XSec parm
+    #    like Sweep/Twist/Cant for every airfoil type OpenVSP supports
+    #    (e.g. a NACA 4-series XSec has a literal "ThickChord" parm, but
+    #    a FILE_AIRFOIL/CST_AIRFOIL XSec doesn't expose thickness as one
+    #    scalar the same way) -- so the existing
+    #    [geom,surf,section,parm,baseline] override mechanism may not
+    #    even apply as-is. Find the real parm name for your wing's actual
+    #    airfoil XSec type (run extract_params.py / vsp_setup.dump_geom_params()
+    #    and search the dump for "Thick"/"TC"/"T/C" on the wing geom) and
+    #    confirm it before this gets added — a wrong-but-existing parm
+    #    name would silently change the wrong thing rather than error out.
+    #
+    # DELTAS_TC = [0.0, -0.02, -0.01, 0.01, 0.02]
+    # run_parameter("WingThickChord_sec1", DELTAS_TC)
