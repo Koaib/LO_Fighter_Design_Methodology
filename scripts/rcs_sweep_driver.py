@@ -388,68 +388,54 @@ if __name__ == "__main__":
     # Each param_key below must exist in SWEEP_PARAMS_FILE (same
     # geom/surf/section/parm/baseline schema the aero sweep already
     # uses) — that file lives on your machine, not in this repo, so
-    # verify the keys/entries match before running. The 0.0 in every
-    # list is the shared baseline (see run_baseline()), not a
-    # per-parameter run.
+    # verify the keys/entries match before running.
+    #
+    # Every delta list is sorted ascending with 0.0 in its natural
+    # position. 0.0 is deliberate in every one of them: it's the
+    # shared baseline (run_baseline(), see module docstring) used as
+    # every study's Δ=0 anchor point on the plots, NOT a per-parameter
+    # run — build_param_configs() skips it, so listing it costs nothing
+    # extra no matter how many studies reuse it.
 
-    # -- VT cant: reuses the existing aero sweep_driver.py's own
-    #    DELTAS_VT_CANT precedent (deg).
-    DELTAS_VT_CANT = [0.0, -15, -8, 8, 15]
-
-    # -- VT sweep (leading edge, deg) -- PLACEHOLDER range, no existing
-    #    precedent in this codebase to reuse (unlike wing/VT-cant). Confirm
-    #    before running. Key verified directly against the real
-    #    sweep_params.json: VT only has section0 (root stub, Sweep=0,
-    #    not a real design knob) and section1 (the actual LE sweep,
-    #    baseline 22.5 deg) -- VT sweep was never given a friendly alias
-    #    the way VTCant/WingSweep_secN were, so it's the raw
-    #    auto-generated key, not "VTSweep_sec1".
-    DELTAS_VT_SWEEP = [0.0, -10, -5, 5, 10]
-
-    # -- Wing sweep (leading edge, deg): SAME delta list and SAME
-    #    param_key (WingSweep_sec1) for both the aligned and misaligned
-    #    studies below -- only extra_param_keys differs, so study_name
-    #    keeps their results/tags from colliding (see
-    #    build_param_configs' docstring).
-    DELTAS_WING_SWEEP = [0.0, -12, -8, -4, 4, 8, 12]
+    DELTAS_VT_CANT    = [-15, -8, 0.0, 8, 15]           # deg — reuses the aero sweep's own precedent
+    DELTAS_VT_SWEEP   = [-10, -5, 0.0, 5, 10]           # deg — PLACEHOLDER, no precedent to reuse; confirm before running
+    DELTAS_WING_SWEEP = [-12, -8, -4, 0.0, 4, 8, 12]    # deg — reuses the aero sweep's own precedent
+    DELTAS_TC         = [-0.02, -0.01, 0.0, 0.01, 0.02] # absolute t/c 0.02-0.06 around baseline 0.04
 
     run_baseline()   # once, shared — every run_parameter() call below reuses it for Δ=0
 
     run_parameter("VTCant", DELTAS_VT_CANT)
+
+    # VT sweep (leading edge): key verified directly against the real
+    # sweep_params.json — VT_Sweep_surf0sec1 (section1, baseline 22.5
+    # deg) is the real LE sweep; section0 is a root stub at 0 deg, not
+    # a design knob. Never given a friendly alias the way VTCant/
+    # WingSweep_secN were, so this is the raw auto-generated key —
+    # ready to run as-is, no sweep_params.json edit needed.
     run_parameter("VT_Sweep_surf0sec1", DELTAS_VT_SWEEP)
 
-    # Wing sweep ALIGNED with HT — HT sweep moves together with the wing,
-    # same as the existing aero sweep's "WingSweep_aligned" family.
+    # Wing sweep ALIGNED with HT — HT sweep moves together with the wing.
     run_parameter("WingSweep_sec1", DELTAS_WING_SWEEP,
                   extra_param_keys=["WingSweep_sec2", "HTSweep_sec1", "HTSweep_sec2"],
                   study_name="WingSweepAligned")
 
-    # Wing sweep ONLY — HT stays put, matches the existing aero sweep's
-    # own commented "WingSweep_misaligned" line (wing moves, HT doesn't).
+    # Wing sweep ONLY — HT stays put. Same param_key/deltas as above;
+    # only extra_param_keys differs, so study_name keeps the two
+    # studies' results/tags from colliding (see build_param_configs'
+    # docstring).
     run_parameter("WingSweep_sec1", DELTAS_WING_SWEEP,
                   extra_param_keys=["WingSweep_sec2"],
                   study_name="WingSweepMisaligned")
 
-    # -- Thickness-to-chord (t/c): verified directly against the real
-    #    params dump (params_dump.json -> Main_Wing -> sections
-    #    surf0_sec0/1/2 -> "ThickChord"): the parm is literally
-    #    ThickChord, and its value is uniform across ALL THREE wing
-    #    sections (0.04, 0.04000000000000001, 0.039999999999999994 --
-    #    all effectively 0.04, confirming the stated baseline). Since
-    #    it's the same value everywhere, changing t/c consistently means
-    #    moving all three sections together -- same multi-section
-    #    pattern as WingSweep's extra_param_keys, just three keys
-    #    instead of two.
-    #
-    #    sweep_params.json does NOT have a ThickChord entry yet -- add
-    #    these three before running (same schema/convention as the
-    #    existing WingSweep_secN keys):
-    #      "WingThickChord_sec0": {"geom":"Main_Wing","surf":0,"section":0,"parm":"ThickChord","baseline":0.04}
-    #      "WingThickChord_sec1": {"geom":"Main_Wing","surf":0,"section":1,"parm":"ThickChord","baseline":0.04}
-    #      "WingThickChord_sec2": {"geom":"Main_Wing","surf":0,"section":2,"parm":"ThickChord","baseline":0.04}
-    #
-    #    Deltas: [-0.02, -0.01, 0.0, +0.01, +0.02] -> absolute t/c
-    #    [0.02, 0.03, 0.04, 0.05, 0.06], as specified.
-    DELTAS_TC = [0.0, -0.02, -0.01, 0.01, 0.02]
+    # Thickness-to-chord: parm verified directly against params_dump.json
+    # (Main_Wing -> sections surf0_sec0/1/2 -> "ThickChord"), uniform at
+    # ~0.04 across all three wing sections — moving t/c consistently
+    # means moving all three together, same multi-section pattern as
+    # wing sweep. sweep_params.json does NOT have a ThickChord entry
+    # yet — add these three (same schema as the existing WingSweep_secN
+    # keys) before running:
+    #   "WingThickChord_sec0": {"geom":"Main_Wing","surf":0,"section":0,"parm":"ThickChord","baseline":0.04}
+    #   "WingThickChord_sec1": {"geom":"Main_Wing","surf":0,"section":1,"parm":"ThickChord","baseline":0.04}
+    #   "WingThickChord_sec2": {"geom":"Main_Wing","surf":0,"section":2,"parm":"ThickChord","baseline":0.04}
     run_parameter("WingThickChord_sec0", DELTAS_TC,
                   extra_param_keys=["WingThickChord_sec1", "WingThickChord_sec2"])
