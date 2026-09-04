@@ -282,6 +282,22 @@ def run_aviary_mission(
         (min(lo0, climb_mach_initial - 0.02), hi0), mach_unit
     )
 
+    # mass_initial: a real physical boundary condition (the mission starts
+    # at this run's actual gross weight), not a guess — but per Aviary's
+    # own AviaryOptionsDict docstring ("mass_initial ... When unspecified,
+    # the optimizer controls the value"), leaving this unset means climb's
+    # starting mass is meant to be picked by an optimizer we don't have.
+    # With mass_solve_segments=True (see phase_info.py) actually trying to
+    # Newton-solve the segment, an unset mass_initial left NOTHING pinning
+    # the phase's starting mass, producing a singular Jacobian for
+    # 'states:mass' the moment that solve was for real (confirmed: this
+    # crashed identically on both the F100 and a completely different
+    # civil engine deck, ruling out an engine-specific cause). Only climb
+    # needs this fixed explicitly — cruise/descent inherit their starting
+    # mass from the previous phase via Aviary's own phase linking, not
+    # from this option.
+    phase_info["climb"]["user_options"]["mass_initial"] = (gross_mass_lbm, "lbm")
+
     # Dynamic Dymos initial guesses — computed from THIS run's actual
     # gross_mass_lbm/design_range_nmi instead of phase_info.py's frozen
     # numbers, so they can't silently go stale if TEST_WING_AREA_FT2 or the
