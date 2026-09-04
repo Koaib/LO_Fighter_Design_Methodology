@@ -25,8 +25,6 @@ import sys, os
 sys.path.insert(0, os.path.dirname(__file__))
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))  # for vsp_setup
 
-import numpy as np
-
 import vsp_setup
 import aviary.api as av
 from aviary.api import Aircraft, Mission, Settings
@@ -380,19 +378,7 @@ def run_aviary_mission(
         # 'distance' (and 'mass', for the same reason) initial_guesses entry
         # per phase.
         prob.set_initial_guesses()
-
-        # Silence the Newton-iteration play-by-play ("NL: Newton 0 ; ...")
-        # every Dymos phase solver prints by default (set_solver_print is a
-        # standard OpenMDAO Problem method, level=0 = silent) and the benign
-        # "divide by zero"/"invalid value" RuntimeWarnings numpy throws for
-        # intermediate, not-yet-converged Newton guesses during the CL/CD
-        # table interpolation (harmless mid-iteration values, not the final
-        # answer — the solve still converges correctly either way). None of
-        # this ever indicated a real problem, it just buried the actual
-        # results below hundreds of lines of solver internals.
-        prob.set_solver_print(level=0)
-        with np.errstate(divide="ignore", invalid="ignore"):
-            prob.run_model()
+        prob.run_model()
 
         # Aviary's own mission_report()/timeseries_csv() are normally only
         # triggered by run_driver() (see aviary/interface/reports.py) - they
