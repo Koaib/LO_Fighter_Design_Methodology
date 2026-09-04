@@ -373,6 +373,19 @@ def run_aviary_mission(
         engine_options.set_val(Aircraft.Engine.REFERENCE_MASS, 3740.0, units="lbm")
         engine_options.set_val(Aircraft.Engine.REFERENCE_SLS_THRUST, engine_t_sl_dry_lbf, units="lbf")
         engine_deck = av.EngineDeck(name="f100", options=engine_options)
+
+        # Direct proof of what actually got loaded from engine_deck_path,
+        # independent of whether the mission's converged results end up
+        # looking sensitive to it or not — read straight from the object
+        # Aviary itself will use, not from re-parsing the file ourselves.
+        from aviary.subsystems.propulsion.utils import EngineModelVariables as _EMV
+        _thrust_raw = engine_deck.data[_EMV.THRUST]
+        _fuel_raw = engine_deck.data[_EMV.FUEL_FLOW]
+        print(f"   [engine deck] loaded {len(_thrust_raw)} data points from "
+              f"{engine_deck_path} — Thrust range [{_thrust_raw.min():.1f}, "
+              f"{_thrust_raw.max():.1f}] lbf, Fuel Flow range "
+              f"[{_fuel_raw.min():.1f}, {_fuel_raw.max():.1f}] lbm/h")
+
         av.preprocess_propulsion(aviary_options=prob.aviary_inputs, engine_models=[engine_deck])
 
         prob.check_and_preprocess_inputs()
