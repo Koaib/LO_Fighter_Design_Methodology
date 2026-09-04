@@ -53,12 +53,11 @@ OPENRCS_DIR  = os.path.join(ROOT_DIR, "OpenRCS",  "open-rcs")
 AERO_RESULTS_DIR = os.path.join(ROOT_DIR, "Results", "Aero")
 STABILITY_DIR     = os.path.join(ROOT_DIR, "Results", "Stability")
 AVIARY_FILES      = os.path.join(ROOT_DIR, "Aviary_Files")       # raw/working Aviary+OpenMDAO output (engine deck, native _out/reports/)
-AVIARY_PERF_DIR   = os.path.join(ROOT_DIR, "Results", "aviary_perf")  # curated copies of Aviary's OWN native reports (mission_summary.md etc.)
-AVIARY_SUMMARY_DIR = os.path.join(ROOT_DIR, "Results", "aviary_summary")  # our OWN plain-language summary — deliberately
-                                                                            # kept OUTSIDE aviary_perf/ so it's never mistaken
-                                                                            # for one of Aviary's native (and, for fuel-margin
-                                                                            # figures specifically, misleading-if-read-naively)
-                                                                            # report files
+AVIARY_PERF_DIR   = os.path.join(ROOT_DIR, "Results", "aviary_perf")  # our OWN plain-language mission summary lives directly here
+AVIARY_PERF_NATIVE_DIR = os.path.join(AVIARY_PERF_DIR, "native_aviary_files")  # curated copies of Aviary's OWN native reports
+                                                                                 # (mission_summary.md etc.) — kept in their own
+                                                                                 # subfolder so they're not mistaken for our
+                                                                                 # plain-language summary sitting one level up
 VSPAERO_EXE = os.path.join(VSP_INSTALL, "vspaero.exe")
 
 # Path to our bridge script (scripts/ folder, same folder as this file)
@@ -98,8 +97,8 @@ os.makedirs(RESULTS_DIR, exist_ok=True)
 os.makedirs(AERO_RESULTS_DIR, exist_ok=True)
 os.makedirs(STABILITY_DIR, exist_ok=True)
 os.makedirs(AVIARY_FILES, exist_ok=True)
-os.makedirs(AVIARY_SUMMARY_DIR, exist_ok=True)
 os.makedirs(AVIARY_PERF_DIR, exist_ok=True)
+os.makedirs(AVIARY_PERF_NATIVE_DIR, exist_ok=True)
 
 # =========================
 # OPENVSP INITIALIZATION

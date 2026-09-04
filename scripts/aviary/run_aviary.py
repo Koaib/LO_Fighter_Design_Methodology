@@ -165,8 +165,8 @@ def run_aviary_mission(
     # GROSS_MASS by the same ~26.5% every run, regardless of wing area -
     # which is exactly the mass-model gap that made Aviary's own
     # GROSS_MASS - ZERO_FUEL_MASS bookkeeping diverge from our specified
-    # Aircraft.Fuel.TOTAL_CAPACITY (see Results/aviary_summary/'s
-    # explanation of the "Excess Fuel Capacity" / "Fuel mass residual"
+    # Aircraft.Fuel.TOTAL_CAPACITY (see Results/aviary_perf/'s plain-language
+    # summary for an explanation of the "Excess Fuel Capacity" / "Fuel mass residual"
     # discrepancy this caused). Scaling by the empty:fuel RATIO instead
     # closes GROSS_MASS = EMPTY_MASS + FUEL_MASS + payload(0) exactly,
     # while still preserving the real aircraft's relative structure-vs-
@@ -179,7 +179,7 @@ def run_aviary_mission(
 
     os.makedirs(vsp_setup.AVIARY_FILES, exist_ok=True)
     os.makedirs(vsp_setup.AVIARY_PERF_DIR, exist_ok=True)
-    os.makedirs(vsp_setup.AVIARY_SUMMARY_DIR, exist_ok=True)
+    os.makedirs(vsp_setup.AVIARY_PERF_NATIVE_DIR, exist_ok=True)
 
     print(f"   [mass] wing-loading-scaled GROSS={gross_mass_lbm:.2f} lbm, "
           f"EMPTY={empty_mass_lbm:.2f} lbm, FUEL={fuel_mass_lbm:.2f} lbm")
@@ -394,11 +394,12 @@ def _save_plain_summary(geom_stem, design_range_nmi, total_range, fuel_burned,
                          fuel_residual, gross_mass_lbm, empty_mass_lbm, fuel_mass_lbm):
     """
     Our OWN plain-language mission summary — deliberately separate from
-    Aviary's native mission_summary.md (Results/aviary_perf/), because that
-    file's "Excess Fuel Capacity" line is confusing (often negative) for a
-    reason that has nothing to do with mission feasibility: see below.
-    Saved to Results/aviary_summary/ so it's never mistaken for one of
-    Aviary's own native report files.
+    Aviary's native mission_summary.md (Results/aviary_perf/native_aviary_files/),
+    because that file's "Excess Fuel Capacity" line is confusing (often
+    negative) for a reason that has nothing to do with mission feasibility:
+    see below. Saved directly in Results/aviary_perf/ (one level up from
+    Aviary's own native reports) so it's the first thing anyone opening that
+    folder sees.
     """
     import time as _time
 
@@ -442,8 +443,8 @@ def _save_plain_summary(geom_stem, design_range_nmi, total_range, fuel_burned,
         f"= {approx_total_fuel_mass:.0f} (approx.) - {fuel_burned:.0f} - 0",
         "```",
         "",
-        "**Results/aviary_perf/mission_summary.md** `Excess Fuel Capacity` "
-        "(often negative) =",
+        "**Results/aviary_perf/native_aviary_files/mission_summary.md** "
+        "`Excess Fuel Capacity` (often negative) =",
         "```",
         "Aircraft.Fuel.TOTAL_CAPACITY - unusable_fuel - Mission.TOTAL_FUEL_MASS",
         f"= {fuel_mass_lbm:.0f} - (small) - {approx_total_fuel_mass:.0f} (approx.)",
@@ -479,7 +480,7 @@ def _save_plain_summary(geom_stem, design_range_nmi, total_range, fuel_burned,
     ]
 
     ts = _time.strftime("%Y%m%d_%H%M%S")
-    path = os.path.join(vsp_setup.AVIARY_SUMMARY_DIR, f"mission_summary_plain_{geom_stem}_{ts}.md")
+    path = os.path.join(vsp_setup.AVIARY_PERF_DIR, f"mission_summary_plain_{geom_stem}_{ts}.md")
     with open(path, "w", encoding="utf-8") as f:
         f.write("\n".join(lines))
     print(f"   ✅ saved: {path}")
@@ -489,9 +490,11 @@ def _save_curated_reports(geom_stem):
     """
     Copies the report files that actually matter (mission summary + full
     timeseries + the two auto-generated input/override checks) from
-    Aviary's native reports folder into Results/aviary_perf/, tagged with
-    geometry + timestamp - matching the same "raw tool output -> curated
-    Results/ copy" pattern main.py already uses for VSPAero's .polar files.
+    Aviary's native reports folder into Results/aviary_perf/native_aviary_files/,
+    tagged with geometry + timestamp - matching the same "raw tool output ->
+    curated Results/ copy" pattern main.py already uses for VSPAero's .polar
+    files. Kept in their own subfolder, separate from our own plain-language
+    summary which is saved directly in Results/aviary_perf/.
     """
     import glob
     import shutil
@@ -500,7 +503,7 @@ def _save_curated_reports(geom_stem):
     candidates = glob.glob(os.path.join(vsp_setup.AVIARY_FILES, "*_out", "reports"))
     if not candidates:
         print("   ⚠️  Could not find Aviary's native reports/ folder — "
-              "nothing copied to Results/aviary_perf/.")
+              "nothing copied to Results/aviary_perf/native_aviary_files/.")
         return
     reports_dir = max(candidates, key=os.path.getmtime)
 
@@ -517,7 +520,7 @@ def _save_curated_reports(geom_stem):
             print(f"   ⚠️  {fname} not found in {reports_dir} — skipped")
             continue
         stem, ext = os.path.splitext(fname)
-        dst = os.path.join(vsp_setup.AVIARY_PERF_DIR, f"{stem}_{geom_stem}_{ts}{ext}")
+        dst = os.path.join(vsp_setup.AVIARY_PERF_NATIVE_DIR, f"{stem}_{geom_stem}_{ts}{ext}")
         shutil.copy2(src, dst)
         print(f"   ✅ saved: {dst}")
 
