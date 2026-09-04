@@ -68,6 +68,32 @@ phase_info = {
 },
         'user_options': {
             'num_segments': 5, 'order': 3,
+            # ROOT CAUSE of SLSQP stalling at "Iteration limit reached" with
+            # a persistently large, non-shrinking gradient norm (iprint=2
+            # showed GNORM frozen at ~8.38 for the last 12+ iterations,
+            # never decreasing) - verified directly in Aviary's own
+            # add_state() (aviary/mission/phase_builder.py): it always
+            # passes ref=ref to Dymos's phase.add_state(), pulled from
+            # this user_options dict's '<state>_ref'/'_ref0'/'_defect_ref'
+            # keys - which this file never set. With solve_segments
+            # removed, SLSQP directly controls every collocation node's
+            # mass (kg) and distance (m) value as its own design
+            # variable/constraint, completely UNSCALED (Dymos's default
+            # ref=1.0) - mass ~38,000 kg and distance up to ~740,000 m
+            # sitting at ref=1 is exactly the severe scaling mismatch
+            # OpenMDAO/Dymos's own documentation warns produces a stalled,
+            # ill-conditioned KKT system. Aviary's own explicit design
+            # variable (Mission.GROSS_MASS) already gets real scaling
+            # (ref=MTOW, aviary/core/aviary_group.py's
+            # add_design_variables()) - the states just never did.
+            # Values are order-of-magnitude only (unlike initial_guesses,
+            # ref doesn't need to be physically precise) - mass_ref matches
+            # this run's placeholder gross mass in kg (83800 lbm *
+            # 0.453592), distance_ref matches the 400 nmi target range in
+            # meters (400 * 1852). defect_ref conventionally set equal to
+            # ref (same units, same node-to-node magnitude).
+            'mass_ref': (38000.0, 'kg'), 'mass_defect_ref': (38000.0, 'kg'),
+            'distance_ref': (740000.0, 'm'), 'distance_defect_ref': (740000.0, 'm'),
             'mach_optimize': False,
             # mach_initial/mach_bounds below are OVERWRITTEN at runtime by
             # run_aviary_mission() (scripts/aviary/run_aviary.py), which
@@ -116,6 +142,10 @@ phase_info = {
 },
         'user_options': {
             'num_segments': 5, 'order': 3,
+            # State scaling (mass_ref/distance_ref/defect_ref) - see
+            # 'climb' phase above for the full root-cause explanation.
+            'mass_ref': (38000.0, 'kg'), 'mass_defect_ref': (38000.0, 'kg'),
+            'distance_ref': (740000.0, 'm'), 'distance_defect_ref': (740000.0, 'm'),
             'mach_optimize': False,
             'mach_initial': (0.6, 'unitless'), 'mach_final': (0.6, 'unitless'),
             'mach_bounds': ((0.58, 0.62), 'unitless'),
@@ -145,6 +175,10 @@ phase_info = {
 },
         'user_options': {
             'num_segments': 5, 'order': 3,
+            # State scaling (mass_ref/distance_ref/defect_ref) - see
+            # 'climb' phase above for the full root-cause explanation.
+            'mass_ref': (38000.0, 'kg'), 'mass_defect_ref': (38000.0, 'kg'),
+            'distance_ref': (740000.0, 'm'), 'distance_defect_ref': (740000.0, 'm'),
             'mach_optimize': False,
             'mach_initial': (0.6, 'unitless'), 'mach_final': (0.3, 'unitless'),
             'mach_bounds': ((0.28, 0.62), 'unitless'),
