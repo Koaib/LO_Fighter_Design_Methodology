@@ -359,6 +359,19 @@ ENGINE_TYPE = "low_bypass_mixed_flow_turbofan"
 # if TR is changed, watch that check for a large disagreement.
 ENGINE_THROTTLE_RATIO = 1.07
 
+# CUSTOM_ENGINE_DECK_PATH — set this to a CSV file path to use REAL engine
+# performance data instead of the Mattingly & Heiser textbook-correlation
+# deck above (ENGINE_T_SL_DRY_LBF/ENGINE_T_SL_AB_LBF/ENGINE_TYPE/
+# ENGINE_THROTTLE_RATIO are all ignored when this is set). See
+# scripts/aviary/engine_deck_template.csv for the required column format
+# and a starting skeleton to fill in — Aviary itself has never shipped a
+# fighter-class (afterburning) engine deck (checked: none of its bundled
+# example decks in aviary/models/engines/ are anything but civil transport
+# turbofans/turboshafts), and no public F100-PW-229 performance deck
+# exists to substitute in, so this stays None (auto-generated deck) until
+# real engine data becomes available for this project.
+CUSTOM_ENGINE_DECK_PATH = None
+
 # ── Mission profile ────────────────────────────────────────────────────────
 CRUISE_MACH        = 0.6
 CRUISE_ALTITUDE_FT = 35000.0
@@ -583,4 +596,5 @@ if RUN_AVIARY:
         design_range_nmi=DESIGN_RANGE_NMI,
         mach_list=MACH_LIST,
         altitude_list=ALTITUDE_LIST,
+        custom_engine_deck_path=CUSTOM_ENGINE_DECK_PATH,
     )

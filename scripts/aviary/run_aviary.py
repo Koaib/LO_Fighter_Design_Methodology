@@ -134,12 +134,19 @@ def run_aviary_mission(
     engine_throttle_ratio=None, engine_type=None,
     cruise_mach=None, cruise_altitude_ft=None, design_range_nmi=None,
     mach_list=None, altitude_list=None,
+    custom_engine_deck_path=None,
 ):
     """Run the Aviary mission analysis for geom_stem's already-produced aero
     CSVs (see module docstring). Every argument defaults to this module's
     own placeholder values (DEFAULT_* above) when left as None, for
     standalone use; main.py's AVIARY / MISSION CONFIG section passes its
-    own values for all of them on a real pipeline run."""
+    own values for all of them on a real pipeline run.
+
+    custom_engine_deck_path: if given, this CSV file is used directly as
+    the engine deck instead of the auto-generated Mattingly & Heiser deck
+    (see scripts/aviary/engine_deck_template.csv for the expected format).
+    Use this once real engine performance data becomes available, rather
+    than the textbook-correlation placeholder."""
     geom_stem = geom_stem if geom_stem is not None else DEFAULT_GEOM_STEM
     wing_area_ft2 = wing_area_ft2 if wing_area_ft2 is not None else DEFAULT_WING_AREA_FT2
     wing_span_ft = wing_span_ft if wing_span_ft is not None else DEFAULT_WING_SPAN_FT
@@ -201,13 +208,24 @@ def run_aviary_mission(
     print(f"   [mass] wing-loading-scaled GROSS={gross_mass_lbm:.2f} lbm, "
           f"EMPTY={empty_mass_lbm:.2f} lbm, FUEL={fuel_mass_lbm:.2f} lbm")
 
-    engine_deck_path = build_deck(
-        out_dir=os.path.join(vsp_setup.AVIARY_FILES, "engines"),
-        deck_name="f100_pw229_simplified.deck",
-        t_sl_dry=engine_t_sl_dry_lbf, t_sl_ab=engine_t_sl_ab_lbf,
-        throttle_ratio=engine_throttle_ratio,
-        engine_type=engine_type,
-    )
+    if custom_engine_deck_path:
+        if not os.path.isfile(custom_engine_deck_path):
+            raise FileNotFoundError(
+                f"custom_engine_deck_path={custom_engine_deck_path!r} does not "
+                f"exist. See scripts/aviary/engine_deck_template.csv for the "
+                f"expected format, or set CUSTOM_ENGINE_DECK_PATH = None in "
+                f"main.py to fall back to the auto-generated deck."
+            )
+        engine_deck_path = custom_engine_deck_path
+        print(f"   [engine deck] using user-supplied deck: {engine_deck_path}")
+    else:
+        engine_deck_path = build_deck(
+            out_dir=os.path.join(vsp_setup.AVIARY_FILES, "engines"),
+            deck_name="f100_pw229_simplified.deck",
+            t_sl_dry=engine_t_sl_dry_lbf, t_sl_ab=engine_t_sl_ab_lbf,
+            throttle_ratio=engine_throttle_ratio,
+            engine_type=engine_type,
+        )
 
     from aviary.utils.named_values import NamedValues
     from build_aero_polar import reshape_to_grid
