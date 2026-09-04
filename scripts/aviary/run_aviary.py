@@ -448,14 +448,32 @@ def run_aviary_mission(
         # for the full history of why. SLSQP (ships with scipy, no external
         # solver install needed) rather than add_driver()'s IPOPT default,
         # which this machine may not have installed.
-        # max_iter=200 and max_iter=1000 both hit "Iteration limit reached
-        # (Exit mode 9)" at the IDENTICAL objective value (2.39276676923517)
-        # -- proof this stalls early and more iterations don't help, so
-        # there's no point spending the extra runtime on a higher ceiling
-        # while debugging why it's stuck (see the new diagnostic dump in
-        # the failure branch below). Back to a low value just to fail fast;
-        # raise it again once the actual stall cause is fixed.
         prob.add_driver("SLSQP", max_iter=100)
+        # ROOT CAUSE of "Iteration limit reached (Exit mode 9)" at the
+        # SAME objective value regardless of max_iter (200, 1000, and 100
+        # all landed on ~2.392766769 to 10 sig figs) - verified directly
+        # in aviary/core/aviary_problem.py's add_driver(): for
+        # optimizer='SLSQP' it hard-assigns driver.options['tol'] = 1e-9
+        # (not setdefault, so it must be overridden AFTER add_driver()
+        # returns, not passed into it) - far tighter than
+        # ScipyOptimizeDriver's own default of 1e-6
+        # (openmdao/drivers/scipy_optimizer.py). This mission NLP has a
+        # lot of nonlinear equality constraints (Dymos collocation defects
+        # across 3 phases x 5 segments, since we're not using
+        # solve_segments - the optimizer handles continuity directly) and
+        # the gradient/Jacobian noise floor sits above 1e-9, so SciPy's
+        # SLSQP internal accuracy test never registers "success" even once
+        # it's already sitting on a stationary, feasible point - confirmed
+        # by the diagnostic dump: Mission.Constraints.RANGE_RESIDUAL was
+        # already ~1.7e-13 (1e-9's the requested tol, not the achieved
+        # one) while SLSQP kept reporting failure. Aviary's own real
+        # default optimizer is IPOPT (tol=1e-6, an interior-point method
+        # built for exactly this kind of large sparse equality-constrained
+        # problem) - SLSQP is only a fallback here because IPOPT/
+        # pyOptSparse isn't installed on this machine. Loosen SLSQP's tol
+        # to match ScipyOptimizeDriver's own default instead of Aviary's
+        # SLSQP-specific 1e-9.
+        prob.driver.options['tol'] = 1e-6
         prob.add_design_variables()
         prob.add_objective()
 
@@ -482,14 +500,11 @@ def run_aviary_mission(
         # off_design_missions.ipynb example's `.result.success`/
         # `.exit_status`, which would raise AttributeError on a bool).
         if prob.result:
-            # Real diagnostics instead of a blind failure -- SLSQP hit its
-            # iteration limit at the IDENTICAL objective value with
-            # max_iter=200 and max_iter=1000 (2.39276676923517 both times),
-            # proof it stalled early and made zero further progress, not
-            # that it needed more iterations. Print what it was actually
-            # stuck on so the next investigation starts from real numbers,
-            # not another guess. Each print is independently guarded so one
-            # inaccessible variable doesn't hide the rest.
+            # Real diagnostics instead of a blind failure. Print what the
+            # solve actually landed on so any further investigation starts
+            # from real numbers, not another guess. Each print is
+            # independently guarded so one inaccessible variable doesn't
+            # hide the rest.
             print("\n--- SOLVE DID NOT CONVERGE — diagnostic dump ---")
             for label, var in [
                 ("Mission.GROSS_MASS (design var, bounded by our fixed MTOW)", Mission.GROSS_MASS),
