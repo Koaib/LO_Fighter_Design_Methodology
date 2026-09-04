@@ -47,8 +47,22 @@ phase_info = {
         'user_options': {
             'num_segments': 5, 'order': 3,
             'mach_optimize': False,
-            'mach_initial': (0.2, 'unitless'), 'mach_final': (0.6, 'unitless'),
-            'mach_bounds': ((0.18, 0.62), 'unitless'),
+            # mach_initial was 0.2 — at sea level that's V~132 kt, and with
+            # this run's wing-loading-scaled gross mass (~83,800 lbm on this
+            # 843 ft^2 wing) that requires CL~1.68 for level flight, well
+            # beyond this geometry's tested CL range (~1.0 max, from the
+            # alpha=-10..22 deg VSPAero sweep). That's not a mass-basis
+            # error — even a real aircraft can't sustain level flight at
+            # 132 kt at max gross weight; it's an unrealistic START-of-climb
+            # condition (this is closer to rotation speed than an
+            # established climb schedule). This caused solve_alpha's Newton
+            # iteration to diverge (table-edge extrapolation -> singular
+            # gradient) and Aviary's climb-phase RHS solve to fail outright.
+            # 0.3 keeps CL~0.75 at sea level (verified against this run's
+            # actual gross mass) — comfortably inside the tested range, and
+            # physically a reasonable established-climb starting speed.
+            'mach_initial': (0.3, 'unitless'), 'mach_final': (0.6, 'unitless'),
+            'mach_bounds': ((0.28, 0.62), 'unitless'),
             'mach_polynomial_order': 3,
             'altitude_optimize': False,
             'altitude_initial': (0.0, 'ft'), 'altitude_final': (35000.0, 'ft'),
