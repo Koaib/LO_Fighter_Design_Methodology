@@ -599,6 +599,7 @@ def run_openrcs_pipeline(
         "mean_table":  None,
         "fig_3d":      None,
         "results_dir": results_dir,
+        "means":       {},
     }
     
     try:
@@ -947,6 +948,7 @@ def run_openrcs_pipeline(
         # Frontal sector rows (FR_TE, FR_TM) use the 2-D grid
         # az ±30° / el ±15° — the most important stealth metric.
         mean_rows = []
+        means_by_tag = {}
         for tag, label in [
             ("AZ_TE", "Azimuth Cut  θ=90°           TE-z"),
             ("AZ_TM", "Azimuth Cut  θ=90°           TM-z"),
@@ -957,9 +959,18 @@ def run_openrcs_pipeline(
         ]:
             if tag in parsed and len(parsed[tag]["sth"]):
                 d = parsed[tag]
-                mean_rows.append((label, _mean_total(d["sth"], d["sph"])))
+                mean_val = _mean_total(d["sth"], d["sph"])
+                mean_rows.append((label, mean_val))
+                means_by_tag[tag] = mean_val
             else:
                 mean_rows.append((label, float("nan")))
+
+        # Numeric means, keyed by run tag (AZ_TE, FR_TM, ...) — callers that
+        # need the actual dBsm values (e.g. a sensitivity sweep plotting mean
+        # RCS vs. a shaping-parameter delta) would otherwise have to re-parse
+        # the .dat files themselves, duplicating _parse_dat/_mean_total.
+        # Only holds tags that actually ran (see means_by_tag above).
+        out["means"] = means_by_tag
 
         if any(np.isfinite(v) for _, v in mean_rows):
             fname = f"MeanRCS_Table_{stem}_{ts}.png"
