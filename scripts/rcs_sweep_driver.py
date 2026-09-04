@@ -85,7 +85,7 @@ BASE = dict(
 )
 
 # Delta=0.0 is the SAME physical geometry no matter which parameter's
-# sweep it nominally belongs to — applying "+0" to VTCant vs. WingTwist
+# sweep it nominally belongs to — applying "+0" to VT_Cant vs. WingSweep
 # vs. anything else all produce the untouched baseline aircraft. Running
 # it once here and reusing the result as every parameter's Δ=0 anchor
 # point avoids paying for the (expensive) RCS solve on the identical
@@ -406,12 +406,12 @@ if __name__ == "__main__":
 
     run_baseline()   # once, shared — every run_parameter() call below reuses it for Δ=0
 
-    run_parameter("VTCant", DELTAS_VT_CANT)
+    run_parameter("VT_Cant", DELTAS_VT_CANT)
 
     # VT sweep (leading edge): key verified directly against the real
     # sweep_params.json — VT_Sweep_surf0sec1 (section1, baseline 22.5
     # deg) is the real LE sweep; section0 is a root stub at 0 deg, not
-    # a design knob. Never given a friendly alias the way VTCant/
+    # a design knob. Never given a friendly alias the way VT_Cant/
     # WingSweep_secN were, so this is the raw auto-generated key —
     # ready to run as-is, no sweep_params.json edit needed.
     run_parameter("VT_Sweep_surf0sec1", DELTAS_VT_SWEEP)
