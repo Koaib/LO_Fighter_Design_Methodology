@@ -77,6 +77,22 @@ phase_info = {
             'time_initial': (0.0, 'min'),
             'time_duration_bounds': ((10.0, 40.0), 'min'),
             'transcription': Transcription.COLLOCATION,
+            # Without a driver/optimizer (this pipeline only calls
+            # prob.run_model() — see run_aviary.py's "NO driver / design
+            # variables / objective" comment), Dymos's collocation defects
+            # for the mass state are never enforced by anything: they
+            # default to being an optimizer's job (aviary_options_dict.py's
+            # own docstring for mass_solve_segments confirms the default is
+            # False). Proven via the actual converged mass trajectory
+            # matching this file's mass initial_guesses to 8+ significant
+            # figures at every phase boundary, regardless of which engine
+            # deck was loaded — i.e. "fuel burned" was never actually being
+            # computed from propulsion physics, just echoing the seed
+            # guess. mass_solve_segments=True makes Dymos Newton-solve the
+            # mass defects internally (a solver, not an optimizer — no
+            # design variables or objective added), which is what a
+            # fixed-input analysis run like this one needs.
+            'mass_solve_segments': True,
         },
     },
     'cruise': {
@@ -106,6 +122,8 @@ phase_info = {
             'time_initial_bounds': ((10.0, 40.0), 'min'),
             'time_duration_bounds': ((20.0, 90.0), 'min'),
             'transcription': Transcription.COLLOCATION,
+            # See 'climb' phase's user_options above for why this is here.
+            'mass_solve_segments': True,
         },
     },
     'descent': {
@@ -135,6 +153,8 @@ phase_info = {
             'time_initial_bounds': ((30.0, 130.0), 'min'),
             'time_duration_bounds': ((10.0, 40.0), 'min'),
             'transcription': Transcription.COLLOCATION,
+            # See 'climb' phase's user_options above for why this is here.
+            'mass_solve_segments': True,
         },
     },
     'post_mission': {
