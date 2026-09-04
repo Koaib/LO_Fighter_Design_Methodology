@@ -154,8 +154,28 @@ def run_aviary_mission(
     # main.py) — same wing-loading method, different reference aircraft.
     wing_loading_lbm_per_ft2 = f22_gross_mass_lbm / f22_wing_area_ft2
     gross_mass_lbm = wing_loading_lbm_per_ft2 * wing_area_ft2
-    empty_mass_lbm = gross_mass_lbm * (f22_empty_mass_lbm / f22_gross_mass_lbm)
-    fuel_mass_lbm = gross_mass_lbm * (f22_fuel_mass_lbm / f22_gross_mass_lbm)
+
+    # Empty/fuel split preserves the REAL F-22's own empty:fuel PROPORTION,
+    # not each one's own independent fraction of GROSS_MASS. The latter
+    # (empty_mass = gross*(f22_empty/f22_gross), same for fuel) is what
+    # this project used before — since the real F-22's own empty+fuel
+    # fractions of its own gross only sum to 0.7346 (43,340+18,000=61,340
+    # vs. 83,500 lbm MTOW; the real aircraft's MTOW includes weapons/
+    # stores provision), that structurally left empty+fuel short of
+    # GROSS_MASS by the same ~26.5% every run, regardless of wing area -
+    # which is exactly the mass-model gap that made Aviary's own
+    # GROSS_MASS - ZERO_FUEL_MASS bookkeeping diverge from our specified
+    # Aircraft.Fuel.TOTAL_CAPACITY (see Results/aviary_summary/'s
+    # explanation of the "Excess Fuel Capacity" / "Fuel mass residual"
+    # discrepancy this caused). Scaling by the empty:fuel RATIO instead
+    # closes GROSS_MASS = EMPTY_MASS + FUEL_MASS + payload(0) exactly,
+    # while still preserving the real aircraft's relative structure-vs-
+    # fuel split — payload stays 0 (no passengers/weapons/stores modeled
+    # in this run), consistent with Aviary's own "you have not specified
+    # at least one passenger" warning.
+    _empty_fuel_sum_lbm = f22_empty_mass_lbm + f22_fuel_mass_lbm
+    empty_mass_lbm = gross_mass_lbm * (f22_empty_mass_lbm / _empty_fuel_sum_lbm)
+    fuel_mass_lbm = gross_mass_lbm * (f22_fuel_mass_lbm / _empty_fuel_sum_lbm)
 
     os.makedirs(vsp_setup.AVIARY_FILES, exist_ok=True)
     os.makedirs(vsp_setup.AVIARY_PERF_DIR, exist_ok=True)
