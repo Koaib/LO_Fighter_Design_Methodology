@@ -449,31 +449,43 @@ def run_aviary_mission(
         # solver install needed) rather than add_driver()'s IPOPT default,
         # which this machine may not have installed.
         prob.add_driver("SLSQP", max_iter=100)
-        # ROOT CAUSE of "Iteration limit reached (Exit mode 9)" at the
-        # SAME objective value regardless of max_iter (200, 1000, and 100
-        # all landed on ~2.392766769 to 10 sig figs) - verified directly
-        # in aviary/core/aviary_problem.py's add_driver(): for
-        # optimizer='SLSQP' it hard-assigns driver.options['tol'] = 1e-9
-        # (not setdefault, so it must be overridden AFTER add_driver()
-        # returns, not passed into it) - far tighter than
-        # ScipyOptimizeDriver's own default of 1e-6
-        # (openmdao/drivers/scipy_optimizer.py). This mission NLP has a
-        # lot of nonlinear equality constraints (Dymos collocation defects
-        # across 3 phases x 5 segments, since we're not using
-        # solve_segments - the optimizer handles continuity directly) and
-        # the gradient/Jacobian noise floor sits above 1e-9, so SciPy's
-        # SLSQP internal accuracy test never registers "success" even once
-        # it's already sitting on a stationary, feasible point - confirmed
-        # by the diagnostic dump: Mission.Constraints.RANGE_RESIDUAL was
-        # already ~1.7e-13 (1e-9's the requested tol, not the achieved
-        # one) while SLSQP kept reporting failure. Aviary's own real
-        # default optimizer is IPOPT (tol=1e-6, an interior-point method
-        # built for exactly this kind of large sparse equality-constrained
-        # problem) - SLSQP is only a fallback here because IPOPT/
-        # pyOptSparse isn't installed on this machine. Loosen SLSQP's tol
-        # to match ScipyOptimizeDriver's own default instead of Aviary's
-        # SLSQP-specific 1e-9.
+        # Loosening tol from Aviary's hard-coded SLSQP default (1e-9, set
+        # in aviary/core/aviary_problem.py's add_driver() - not setdefault,
+        # so it has to be overridden here, after add_driver() returns) to
+        # ScipyOptimizeDriver's own default (1e-6) was TESTED and made
+        # ZERO difference - objective landed at 2.3927667692332304, bit
+        # -identical (to 10+ sig figs) to every earlier run at 1e-9 with
+        # max_iter=100/200/1000. So tol/acc was never the actual blocker;
+        # kept at 1e-6 since it's still the more sensible default, but the
+        # real cause is elsewhere.
+        #
+        # Read scipy's actual compiled SLSQP source directly (__slsqp.c
+        # from the scipy==1.17.1 sdist, not the Python wrapper, which just
+        # calls into this compiled core) to find the REAL convergence
+        # test. It only ever sets mode=0 (success) in two places, and BOTH
+        # require `!badlin` — `badlin` gets set to 1 for the rest of that
+        # iteration whenever the QP subproblem's equality-constraint
+        # matrix comes back rank-deficient (lsq() returns mode=6 with
+        # n==meq, remapped to mode=4) and SLSQP has to re-solve an
+        # augmented/regularized version instead. On a `badlin` iteration,
+        # convergence can NEVER be reported, no matter how tight/loose
+        # `acc` (tol) is or how many iterations are allowed — which
+        # exactly matches what we're seeing: identical stall point
+        # regardless of tol or max_iter. This mission's Dymos collocation
+        # defects (3 phases x 5 segments, all handled by the optimizer
+        # since we removed solve_segments) are a strong candidate for
+        # producing a rank-deficient linearized equality-constraint
+        # Jacobian near a converged trajectory.
+        # This is a real, source-grounded hypothesis, not yet confirmed -
+        # bump SLSQP's own iprint (via opt_settings, not the 'disp' bool,
+        # which only ever yields iprint=1/summary-only per
+        # scipy/optimize/_slsqp_py.py) to 2 so the console prints a
+        # per-iteration NIT/FC/OBJFUN/GNORM table. If GNORM (the Lagrangian
+        # gradient norm) is already small and flat for most iterations,
+        # that's direct evidence of the badlin-blocks-reporting theory
+        # rather than genuine non-convergence.
         prob.driver.options['tol'] = 1e-6
+        prob.driver.opt_settings['iprint'] = 2
         prob.add_design_variables()
         prob.add_objective()
 
