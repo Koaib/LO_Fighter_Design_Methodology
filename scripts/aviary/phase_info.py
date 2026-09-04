@@ -45,7 +45,20 @@ phase_info = {
     }
 },
         'user_options': {
-            'num_segments': 5, 'order': 3,
+            # num_segments=1 (was 5) — see mass_solve_segments comment below
+            # for why: with solve_segments='forward' and >1 segments, each
+            # segment gets its OWN independent starting state value, and
+            # nothing links segment N's end to segment N+1's start without
+            # an optimizer enforcing that continuity (confirmed directly in
+            # dymos/transcriptions/pseudospectral/pseudospectral_base.py's
+            # _configure_solve_segments — the forward-propagation branch
+            # never references fix_initial at all, only the optimizer-
+            # design-variable code path does). 1 segment removes the need
+            # for that continuity link entirely — the whole phase becomes
+            # one continuously forward-solved block. Trade-off: a single
+            # order=3 polynomial approximates the whole phase's trajectory
+            # instead of 5 separate order=3 pieces — coarser, not free.
+            'num_segments': 1, 'order': 3,
             'mach_optimize': False,
             # mach_initial/mach_bounds below are OVERWRITTEN at runtime by
             # run_aviary_mission() (scripts/aviary/run_aviary.py), which
@@ -91,7 +104,12 @@ phase_info = {
             # guess. mass_solve_segments=True makes Dymos Newton-solve the
             # mass defects internally (a solver, not an optimizer — no
             # design variables or objective added), which is what a
-            # fixed-input analysis run like this one needs.
+            # fixed-input analysis run like this one needs. Needs
+            # num_segments=1 to actually work without an optimizer — see
+            # that comment above; solve_segments alone was NOT sufficient
+            # (confirmed by a real crash: "Singular entry ... state
+            # 'states:mass'" with num_segments=5, reproduced identically
+            # regardless of engine deck or an explicit mass_initial).
             'mass_solve_segments': True,
         },
     },
@@ -109,7 +127,7 @@ phase_info = {
     }
 },
         'user_options': {
-            'num_segments': 5, 'order': 3,
+            'num_segments': 1, 'order': 3,
             'mach_optimize': False,
             'mach_initial': (0.6, 'unitless'), 'mach_final': (0.6, 'unitless'),
             'mach_bounds': ((0.58, 0.62), 'unitless'),
@@ -140,7 +158,7 @@ phase_info = {
     }
 },
         'user_options': {
-            'num_segments': 5, 'order': 3,
+            'num_segments': 1, 'order': 3,
             'mach_optimize': False,
             'mach_initial': (0.6, 'unitless'), 'mach_final': (0.3, 'unitless'),
             'mach_bounds': ((0.28, 0.62), 'unitless'),
