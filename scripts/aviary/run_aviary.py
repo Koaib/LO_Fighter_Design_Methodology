@@ -527,6 +527,36 @@ def run_aviary_mission(
         prob.driver.options['tol'] = 1e-6
         prob.driver.opt_settings['iprint'] = 2
         prob.add_design_variables()
+
+        # The Mission.GROSS_MASS seed fix above (0.9x MTOW) got the design
+        # variable off its bound and RANGE_RESIDUAL to ~1e-14 (feasible) -
+        # real progress. But the very next failure mode it hit
+        # (Exit mode 8, "Positive directional derivative for linesearch")
+        # exposed a second, separate gap: add_design_variables() (called
+        # just above) sets Mission.GROSS_MASS's lower bound to a bare
+        # 10.0 lbm (aviary_group.py ~line 1424) - no floor tied to this
+        # aircraft's actual empty mass. Since add_objective() (below) makes
+        # the objective directly proportional to Mission.TOTAL_FUEL_MASS,
+        # and nothing here constrains gross mass to stay above empty mass,
+        # the optimizer was free to push Mission.GROSS_MASS down past
+        # Aircraft.Design.EMPTY_MASS - which is exactly what the failed
+        # run's diagnostic dump showed: Mission.GROSS_MASS=75420 lbm with
+        # Mission.FUEL_MASS=-2681.6 lbm (negative fuel is unphysical - you
+        # cannot carry less fuel than zero). Re-declaring the same design
+        # variable with a real lower bound overrides the metadata
+        # add_design_variables() just set - this is the identical pattern
+        # Aviary's own run_off_design_mission() uses for its fill_fuel
+        # option (aviary_problem.py ~line 1694: a follow-up
+        # model.add_design_var(Mission.GROSS_MASS, ...) call after
+        # add_design_variables()), not a workaround improvised here.
+        prob.model.add_design_var(
+            Mission.GROSS_MASS,
+            lower=empty_mass_lbm,
+            upper=gross_mass_lbm,
+            units="lbm",
+            ref=gross_mass_lbm,
+        )
+
         prob.add_objective()
 
         prob.setup()
