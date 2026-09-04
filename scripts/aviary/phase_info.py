@@ -20,11 +20,33 @@ phase_info = {
         # 'mass' has the same problem distance had: set_phase_initial_guesses()
         # only auto-fills a FLAT scalar (Aircraft.Design.GROSS_MASS, same
         # value at every node, same across all three phases) when 'mass' is
-        # missing here — never decreasing to reflect fuel burn. With only a
-        # single Newton pass (no driver/optimizer), that bad flat guess is
-        # exactly what produced Mission.FUEL_MASS = 0.0 (fuel_burned =
-        # GROSS_MASS - final descent mass, and the solver settled near the
-        # flat guess instead of a real fuel-depleting trajectory).
+        # missing here — never decreasing to reflect fuel burn.
+        #
+        # HISTORY: this project's mission solve used to call prob.run_model()
+        # with no driver at all ("pure fixed-input analysis"). That silently
+        # never actually solved the trajectory — Dymos's collocation defects
+        # (including the mass/fuel-burn state) are an OPTIMIZER's job by
+        # design, confirmed both by tracing Dymos's own source
+        # (dymos/transcriptions/pseudospectral/pseudospectral_base.py) and by
+        # Aviary's own documented examples (docs/examples/simple_mission.ipynb,
+        # off_design_missions.ipynb) — even Aviary's "simplest"/"off-design"
+        # (i.e. analysis, non-sizing) examples run through a real driver.
+        # Proven concretely: the converged mass trajectory used to match this
+        # file's own mass initial_guesses to 8+ significant figures at every
+        # phase boundary regardless of which engine deck was loaded — "fuel
+        # burned" was never actually computed from propulsion physics, just
+        # the seed guess echoed back. Attempted workarounds
+        # (mass_initial, mass_solve_segments + num_segments=1) both failed
+        # or were unnecessary once the real fix was found: run_aviary.py now
+        # sets Settings.PROBLEM_TYPE=OFF_DESIGN_MIN_FUEL and calls
+        # add_driver()/add_design_variables()/add_objective()/
+        # run_aviary_problem(run_driver=True) — Aviary's own documented
+        # sequence — instead of a bare run_model(). num_segments is back to
+        # 5 (was dropped to 1 as part of the failed solve_segments
+        # workaround) since a real driver needs no help with segment
+        # continuity, matching Aviary's own default mission
+        # (aviary/models/missions/energy_state_default.py uses num_segments=5
+        # too, with no solve_segments option at all).
         #
         # The placeholder values below are OVERWRITTEN at runtime by
         # run_aviary_mission() (scripts/aviary/run_aviary.py), which
@@ -45,20 +67,7 @@ phase_info = {
     }
 },
         'user_options': {
-            # num_segments=1 (was 5) — see mass_solve_segments comment below
-            # for why: with solve_segments='forward' and >1 segments, each
-            # segment gets its OWN independent starting state value, and
-            # nothing links segment N's end to segment N+1's start without
-            # an optimizer enforcing that continuity (confirmed directly in
-            # dymos/transcriptions/pseudospectral/pseudospectral_base.py's
-            # _configure_solve_segments — the forward-propagation branch
-            # never references fix_initial at all, only the optimizer-
-            # design-variable code path does). 1 segment removes the need
-            # for that continuity link entirely — the whole phase becomes
-            # one continuously forward-solved block. Trade-off: a single
-            # order=3 polynomial approximates the whole phase's trajectory
-            # instead of 5 separate order=3 pieces — coarser, not free.
-            'num_segments': 1, 'order': 3,
+            'num_segments': 5, 'order': 3,
             'mach_optimize': False,
             # mach_initial/mach_bounds below are OVERWRITTEN at runtime by
             # run_aviary_mission() (scripts/aviary/run_aviary.py), which
@@ -90,27 +99,6 @@ phase_info = {
             'time_initial': (0.0, 'min'),
             'time_duration_bounds': ((10.0, 40.0), 'min'),
             'transcription': Transcription.COLLOCATION,
-            # Without a driver/optimizer (this pipeline only calls
-            # prob.run_model() — see run_aviary.py's "NO driver / design
-            # variables / objective" comment), Dymos's collocation defects
-            # for the mass state are never enforced by anything: they
-            # default to being an optimizer's job (aviary_options_dict.py's
-            # own docstring for mass_solve_segments confirms the default is
-            # False). Proven via the actual converged mass trajectory
-            # matching this file's mass initial_guesses to 8+ significant
-            # figures at every phase boundary, regardless of which engine
-            # deck was loaded — i.e. "fuel burned" was never actually being
-            # computed from propulsion physics, just echoing the seed
-            # guess. mass_solve_segments=True makes Dymos Newton-solve the
-            # mass defects internally (a solver, not an optimizer — no
-            # design variables or objective added), which is what a
-            # fixed-input analysis run like this one needs. Needs
-            # num_segments=1 to actually work without an optimizer — see
-            # that comment above; solve_segments alone was NOT sufficient
-            # (confirmed by a real crash: "Singular entry ... state
-            # 'states:mass'" with num_segments=5, reproduced identically
-            # regardless of engine deck or an explicit mass_initial).
-            'mass_solve_segments': True,
         },
     },
     'cruise': {
@@ -127,7 +115,7 @@ phase_info = {
     }
 },
         'user_options': {
-            'num_segments': 1, 'order': 3,
+            'num_segments': 5, 'order': 3,
             'mach_optimize': False,
             'mach_initial': (0.6, 'unitless'), 'mach_final': (0.6, 'unitless'),
             'mach_bounds': ((0.58, 0.62), 'unitless'),
@@ -140,8 +128,6 @@ phase_info = {
             'time_initial_bounds': ((10.0, 40.0), 'min'),
             'time_duration_bounds': ((20.0, 90.0), 'min'),
             'transcription': Transcription.COLLOCATION,
-            # See 'climb' phase's user_options above for why this is here.
-            'mass_solve_segments': True,
         },
     },
     'descent': {
@@ -158,7 +144,7 @@ phase_info = {
     }
 },
         'user_options': {
-            'num_segments': 1, 'order': 3,
+            'num_segments': 5, 'order': 3,
             'mach_optimize': False,
             'mach_initial': (0.6, 'unitless'), 'mach_final': (0.3, 'unitless'),
             'mach_bounds': ((0.28, 0.62), 'unitless'),
@@ -171,8 +157,6 @@ phase_info = {
             'time_initial_bounds': ((30.0, 130.0), 'min'),
             'time_duration_bounds': ((10.0, 40.0), 'min'),
             'transcription': Transcription.COLLOCATION,
-            # See 'climb' phase's user_options above for why this is here.
-            'mass_solve_segments': True,
         },
     },
     'post_mission': {

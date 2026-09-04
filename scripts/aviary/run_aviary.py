@@ -28,7 +28,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))  # for vsp_set
 import vsp_setup
 import aviary.api as av
 from aviary.api import Aircraft, Mission, Settings
-from aviary.variable_info.enums import EquationsOfMotion, LegacyCode
+from aviary.variable_info.enums import EquationsOfMotion, LegacyCode, ProblemType
 from aviary.interface.reports import mission_report, timeseries_csv
 
 from phase_info import phase_info
@@ -96,6 +96,20 @@ def _build_aircraft_inputs(wing_area_ft2, wing_span_ft, wing_aspect_ratio,
     aviary_inputs.set_val(Settings.EQUATIONS_OF_MOTION, EQUATIONS_OF_MOTION)
     aviary_inputs.set_val(Settings.MASS_METHOD, MASS_METHOD)
     aviary_inputs.set_val(Settings.AERODYNAMICS_METHOD, AERODYNAMICS_METHOD)
+    # OFF_DESIGN_MIN_FUEL: fixed range (phase_info's target_range), solve
+    # for the minimum fuel/mission gross mass needed to fly it — see
+    # aviary/core/aviary_group.py's add_design_variables(): for this
+    # problem_type, only Mission.GROSS_MASS becomes a design variable
+    # (bounded above by our own Aircraft.Design.GROSS_MASS, i.e. it can
+    # never exceed the MTOW we already fixed via wing-loading scaling), a
+    # RANGE_RESIDUAL constraint makes the flown range hit target_range
+    # exactly (not by us hand-tuning phase durations), and every problem
+    # type gets a final-cruise-mass design variable + residual mass
+    # constraint that actually closes the mass/fuel-burn trajectory — the
+    # exact thing missing from a plain run_model() call all along. This
+    # is a real (if narrow) optimizer, not the full aircraft-sizing kind:
+    # Aircraft.Design.GROSS_MASS itself is never touched.
+    aviary_inputs.set_val(Settings.PROBLEM_TYPE, ProblemType.OFF_DESIGN_MIN_FUEL)
     aviary_inputs.set_val(Aircraft.Wing.AREA, wing_area_ft2, units="ft**2")
     aviary_inputs.set_val(Aircraft.Wing.SPAN, wing_span_ft, units="ft")
     aviary_inputs.set_val(Aircraft.Wing.ASPECT_RATIO, wing_aspect_ratio, units="unitless")
@@ -413,10 +427,19 @@ def run_aviary_mission(
         prob.check_and_preprocess_inputs()
         prob.build_model()
 
-        # NO driver / design variables / objective - pure fixed-input analysis
+        # Real driver, matching Aviary's own documented sequence
+        # (aviary/interface/run_aviary.py's run_aviary() function) instead
+        # of a bare run_model() — see phase_info.py's climb-phase comment
+        # for the full history of why. SLSQP (ships with scipy, no external
+        # solver install needed) rather than add_driver()'s IPOPT default,
+        # which this machine may not have installed.
+        prob.add_driver("SLSQP", max_iter=200)
+        prob.add_design_variables()
+        prob.add_objective()
+
         prob.setup()
         # Dymos collocation needs a real starting guess for trajectory
-        # states/controls/phase durations even outside optimization -
+        # states/controls/phase durations even with a driver present -
         # without this, phase duration and the distance/mass states stay
         # near their degenerate defaults and the mission never actually
         # flies anywhere. set_phase_initial_guesses() (called via
@@ -425,7 +448,23 @@ def run_aviary_mission(
         # 'distance' (and 'mass', for the same reason) initial_guesses entry
         # per phase.
         prob.set_initial_guesses()
-        prob.run_model()
+        # suppress_solver_print=False: this project's user explicitly wants
+        # the Newton-iteration console output left as-is, not silenced.
+        prob.run_aviary_problem(run_driver=True, suppress_solver_print=False, make_plots=False)
+        # prob.result is dm.run_problem()'s return value, which (with the
+        # default refine_iteration_limit=0, unchanged here) is just
+        # OpenMDAO's own Problem.run_driver() return value passed straight
+        # through -- a plain bool, per its own docstring: "Failure flag;
+        # True if failed to converge, False if successful." (verified
+        # against the actual installed openmdao/dymos source, not the
+        # off_design_missions.ipynb example's `.result.success`/
+        # `.exit_status`, which would raise AttributeError on a bool).
+        if prob.result:
+            raise RuntimeError(
+                "Aviary mission solve did not converge (prob.result=True means "
+                "failed, per Problem.run_driver()'s own docstring). See the "
+                "console output above for details."
+            )
 
         # Aviary's own mission_report()/timeseries_csv() are normally only
         # triggered by run_driver() (see aviary/interface/reports.py) - they
