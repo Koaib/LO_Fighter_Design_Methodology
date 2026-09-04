@@ -104,6 +104,23 @@ def _build_aircraft_inputs(wing_area_ft2, wing_span_ft, wing_aspect_ratio,
     aviary_inputs.set_val(Aircraft.Design.RANGE, design_range_nmi, units="NM")
     aviary_inputs.set_val(Aircraft.Design.CRUISE_MACH, cruise_mach, units="unitless")
     aviary_inputs.set_val(Aircraft.Design.CRUISE_ALTITUDE, cruise_altitude_ft, units="ft")
+
+    # Aviary's own preprocessor (aviary/utils/preprocessors.py) silently
+    # defaults NUM_FLIGHT_CREW to 2 whenever it's not explicitly set — an
+    # airliner-cockpit assumption ("flight_crew_count = 2 if design_pax<151
+    # else 3"), applied even though this run's design_pax is 0. That 2-crew
+    # default was adding a spurious ~450 lbm (2 x 225 lbm/crew, see
+    # aviary/subsystems/mass/flops_based/crew.py) into Aviary's internal
+    # Mission.ZERO_FUEL_MASS on top of our EMPTY_MASS override. This is a
+    # single-seat fighter, so set the real number (1 pilot) explicitly
+    # instead of letting that hidden default apply. NUM_FLIGHT_ATTENDANTS/
+    # NUM_GALLEY_CREW already come out to 0 from the same preprocessor since
+    # design_pax=0, but are set explicitly here too so nothing about the
+    # crew complement is left to an implicit default.
+    aviary_inputs.set_val(Aircraft.CrewPayload.NUM_FLIGHT_CREW, 1, units="unitless")
+    aviary_inputs.set_val(Aircraft.CrewPayload.NUM_FLIGHT_ATTENDANTS, 0, units="unitless")
+    aviary_inputs.set_val(Aircraft.CrewPayload.NUM_GALLEY_CREW, 0, units="unitless")
+
     return aviary_inputs
 
 
