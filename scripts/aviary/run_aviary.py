@@ -433,7 +433,7 @@ def _print_results_table(design_range_nmi, total_range, fuel_burned, fuel_mass_l
         ("Fuel burned", f"{fuel_burned:.2f}", "lbm"),
         ("FUEL MARGIN (trust this one)", f"{real_margin:.2f}", "lbm"),
         (None, None, None),  # separator
-        ("Fuel mass residual (Aviary pass/fail check, not a margin)", f"{fuel_residual:+.2f}", "lbm"),
+        ("Fuel mass residual (margin vs. Aviary's smaller internal fuel figure)", f"{fuel_residual:+.2f}", "lbm"),
         ("Unusable fuel (physically stuck in tank)", f"{unusable_fuel_lbm:.2f}", "lbm"),
         ("Pilot + engine oil weight", f"{crew_and_oil_lbm:.2f}", "lbm"),
     ]
@@ -500,9 +500,18 @@ def _save_plain_summary(geom_stem, design_range_nmi, total_range, fuel_burned,
         "",
         "## What each row above means",
         "",
-        "- **Fuel Mass Residual** — Aviary's own internal check that the "
-        "plane never ran dry mid-mission. Positive = passed. It is a "
-        "pass/fail check, not a report of fuel remaining.",
+        "- **Fuel Mass Residual** — this IS a real fuel-remaining number, "
+        "computed the same way as Fuel Margin above (fuel available minus "
+        "fuel burned minus reserves). The only difference is which "
+        "'fuel available' it starts from: Fuel Margin uses the full tank "
+        "capacity we specified, Fuel Mass Residual uses Aviary's smaller "
+        "internal usable-fuel figure (tank capacity minus the Pilot + "
+        "Engine Oil Weight overhead below). That's the entire reason the "
+        "two numbers differ, by exactly the Pilot + Engine Oil Weight "
+        "amount. Aviary also uses this same number as a pass/fail "
+        "feasibility check during optimization (must stay positive) — but "
+        "the number itself is a genuine fuel-remaining figure, not just a "
+        "flag.",
         "- **Unusable Fuel** — fuel physically trapped in the tank (corners, "
         "lines) that the engine can never draw on, computed from this "
         "aircraft's own wing area/thrust/tank size.",
