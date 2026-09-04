@@ -476,14 +476,26 @@ def run_aviary_mission(
         # since we removed solve_segments) are a strong candidate for
         # producing a rank-deficient linearized equality-constraint
         # Jacobian near a converged trajectory.
-        # This is a real, source-grounded hypothesis, not yet confirmed -
+        # CORRECTION after reading __slsqp.c line-by-line (not just
+        # skimming): badlin does NOT require GNORM to be small. It only
+        # ever gates the two `mode=0` (success) return points - it does
+        # not change what search direction gets computed or force x to
+        # stop moving. A badlin iteration still solves an augmented/
+        # rho-regularized QP and takes a real line-search step; it just
+        # permanently forbids reporting success afterward, for ANY
+        # gradient magnitude. So "GNORM stays large and flat" is NOT
+        # evidence against badlin the way an earlier version of this
+        # comment claimed - that claim was wrong. badlin remains a live,
+        # unconfirmed hypothesis; ruling it in or out needs the actual
+        # `mode` value badlin sets internally (not exposed by scipy's
+        # Python wrapper) or a from-scratch reimplementation of the QP
+        # rank check, not GNORM's printed magnitude.
+        #
         # bump SLSQP's own iprint (via opt_settings, not the 'disp' bool,
         # which only ever yields iprint=1/summary-only per
         # scipy/optimize/_slsqp_py.py) to 2 so the console prints a
-        # per-iteration NIT/FC/OBJFUN/GNORM table. If GNORM (the Lagrangian
-        # gradient norm) is already small and flat for most iterations,
-        # that's direct evidence of the badlin-blocks-reporting theory
-        # rather than genuine non-convergence.
+        # per-iteration NIT/FC/OBJFUN/GNORM table for whatever further
+        # diagnosis is needed.
         prob.driver.options['tol'] = 1e-6
         prob.driver.opt_settings['iprint'] = 2
         prob.add_design_variables()
@@ -500,6 +512,32 @@ def run_aviary_mission(
         # 'distance' (and 'mass', for the same reason) initial_guesses entry
         # per phase.
         prob.set_initial_guesses()
+
+        # Ground-truth check for the mass_ref/distance_ref fix in
+        # phase_info.py: after adding those keys, a rerun showed GNORM
+        # bit-identical (to 7 printed sig figs) to the pre-fix run, which
+        # is only possible if either (a) those particular design
+        # variables' gradient contribution is small relative to whatever
+        # is dominating ||g||, or (b) the new ref values never actually
+        # reached the running model. Source-tracing (Dymos's
+        # pseudospectral_base.py configure_desvars(), Aviary's
+        # phase_builder.py add_state(), aviary_options_dict.py's
+        # AviaryOptionsDictionary.__init__/declare()) shows the mechanism
+        # IS wired correctly end-to-end, but a source trace is not proof
+        # of what's happening at runtime on THIS machine - only the model
+        # itself can confirm that. list_driver_vars(driver_scaling=True)
+        # prints every design variable's actual ref/ref0/val as OpenMDAO
+        # sees them right now, straight from prob.driver._designvars -
+        # this is how to see literally what's in the states:mass /
+        # states:distance ref fields for each phase and whether the
+        # (already-scaled) initial values are wildly out of proportion to
+        # each other, which would point at what's actually dominating the
+        # printed GNORM.
+        prob.final_setup()
+        print("\n--- design-variable scaling check (mass_ref/distance_ref fix) ---")
+        prob.list_driver_vars(driver_scaling=True)
+        print("--- end design-variable scaling check ---\n")
+
         # suppress_solver_print=False: this project's user explicitly wants
         # the Newton-iteration console output left as-is, not silenced.
         prob.run_aviary_problem(run_driver=True, suppress_solver_print=False, make_plots=False)
