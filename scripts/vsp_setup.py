@@ -268,7 +268,12 @@ def dump_geom_params(vsp3_path: str, out_json_path: str) -> dict:
         entry["parms"] = {vsp.GetParmName(pid): vsp.GetParmVal(pid)
                            for pid in vsp.GetGeomParmIDs(gid)}
 
-        WING_SHAPE_PARMS = {"Sweep", "Sweep_Location", "Dihedral", "Twist", "Root_Chord", "Tip_Chord"}
+        # ThickChord added after the RCS sensitivity study needed t/c as a
+        # sweep parameter — it's a real per-XSec parm (confirmed present on
+        # every wing section, e.g. 0.04 uniformly across Main_Wing's three
+        # sections) that this whitelist had simply never included before.
+        WING_SHAPE_PARMS = {"Sweep", "Sweep_Location", "Dihedral", "Twist",
+                             "Root_Chord", "Tip_Chord", "ThickChord"}
         FUSELAGE_SHAPE_PARMS = {
             "Width", "Height", "MaxWidthLoc", "CornerRad",
             "TopLAngle", "TopLStrength", "TopRAngle", "TopRStrength",

@@ -397,10 +397,12 @@ if __name__ == "__main__":
     # run — build_param_configs() skips it, so listing it costs nothing
     # extra no matter how many studies reuse it.
 
-    DELTAS_VT_CANT    = [-15, -8, 0.0, 8, 15]           # deg — reuses the aero sweep's own precedent
-    DELTAS_VT_SWEEP   = [-10, -5, 0.0, 5, 10]           # deg — PLACEHOLDER, no precedent to reuse; confirm before running
-    DELTAS_WING_SWEEP = [-12, -8, -4, 0.0, 4, 8, 12]    # deg — reuses the aero sweep's own precedent
-    DELTAS_TC         = [-0.02, -0.01, 0.0, 0.01, 0.02] # absolute t/c 0.02-0.06 around baseline 0.04
+    # All three angular sweeps (VT cant, VT sweep, wing sweep) standardized
+    # to one common range: +-15 deg in 3 deg steps.
+    DELTAS_VT_CANT    = [-15, -12, -9, -6, -3, 0.0, 3, 6, 9, 12, 15]  # deg
+    DELTAS_VT_SWEEP   = [-15, -12, -9, -6, -3, 0.0, 3, 6, 9, 12, 15]  # deg
+    DELTAS_WING_SWEEP = [-15, -12, -9, -6, -3, 0.0, 3, 6, 9, 12, 15]  # deg
+    DELTAS_TC         = [-0.02, -0.01, 0.0, 0.01, 0.02]  # absolute t/c 0.02-0.06 around baseline 0.04
 
     run_baseline()   # once, shared — every run_parameter() call below reuses it for Δ=0
 
@@ -431,9 +433,16 @@ if __name__ == "__main__":
     # (Main_Wing -> sections surf0_sec0/1/2 -> "ThickChord"), uniform at
     # ~0.04 across all three wing sections — moving t/c consistently
     # means moving all three together, same multi-section pattern as
-    # wing sweep. sweep_params.json does NOT have a ThickChord entry
-    # yet — add these three (same schema as the existing WingSweep_secN
-    # keys) before running:
+    # wing sweep.
+    #
+    # ThickChord was also added to vsp_setup.py's dump_geom_params()
+    # WING_SHAPE_PARMS whitelist, so any FUTURE fresh sweep_params.json
+    # (a new geometry, or this one regenerated from scratch) will pick
+    # it up as a sweep candidate automatically. That does NOT retroactively
+    # touch an existing sweep_params.json — dump_geom_params() skips
+    # writing the template if the file already exists (to avoid clobbering
+    # your hand-curated aliases), so the three entries below still need
+    # to be added by hand if not already done:
     #   "WingThickChord_sec0": {"geom":"Main_Wing","surf":0,"section":0,"parm":"ThickChord","baseline":0.04}
     #   "WingThickChord_sec1": {"geom":"Main_Wing","surf":0,"section":1,"parm":"ThickChord","baseline":0.04}
     #   "WingThickChord_sec2": {"geom":"Main_Wing","surf":0,"section":2,"parm":"ThickChord","baseline":0.04}
