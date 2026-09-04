@@ -25,6 +25,21 @@ import sys, os
 sys.path.insert(0, os.path.dirname(__file__))
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))  # for vsp_setup
 
+# Workaround for a real Aviary bug hit on the first driver-based run: its own
+# automatic post-run reporting hook (aviary/interface/reports.py:
+# subsystem_report -> mass_builder.py -> find_variable_in_problem ->
+# round_it()) crashes with "OverflowError: cannot convert float infinity to
+# integer" whenever any reported mass value is non-finite (e.g. an optimizer
+# that stalled at an infeasible point) - BEFORE our own code gets control
+# back to check convergence or print diagnostics. OPENMDAO_REPORTS=0
+# (checked in openmdao/utils/reports_system.py's reports_active()/
+# get_reports_to_activate(), read at problem setup time, so this must be set
+# before AviaryProblem() is constructed) disables that whole auto-report
+# system. We still call Aviary's own mission_report()/timeseries_csv()
+# directly ourselves below - those are plain function calls, not part of
+# this hook-triggered system, so they're unaffected.
+os.environ["OPENMDAO_REPORTS"] = "0"
+
 import vsp_setup
 import aviary.api as av
 from aviary.api import Aircraft, Mission, Settings
@@ -467,10 +482,34 @@ def run_aviary_mission(
         # off_design_missions.ipynb example's `.result.success`/
         # `.exit_status`, which would raise AttributeError on a bool).
         if prob.result:
+            # Real diagnostics instead of a blind failure -- SLSQP hit its
+            # iteration limit at the IDENTICAL objective value with
+            # max_iter=200 and max_iter=1000 (2.39276676923517 both times),
+            # proof it stalled early and made zero further progress, not
+            # that it needed more iterations. Print what it was actually
+            # stuck on so the next investigation starts from real numbers,
+            # not another guess. Each print is independently guarded so one
+            # inaccessible variable doesn't hide the rest.
+            print("\n--- SOLVE DID NOT CONVERGE — diagnostic dump ---")
+            for label, var in [
+                ("Mission.GROSS_MASS (design var, bounded by our fixed MTOW)", Mission.GROSS_MASS),
+                ("Aircraft.Design.GROSS_MASS (our fixed MTOW, should be unchanged)", Aircraft.Design.GROSS_MASS),
+                ("Mission.RANGE (actual flown range)", Mission.RANGE),
+                ("Mission.Constraints.RANGE_RESIDUAL (should be ~0 if feasible)", Mission.Constraints.RANGE_RESIDUAL),
+                ("Mission.FUEL_MASS (fuel burned)", Mission.FUEL_MASS),
+                ("Mission.Objectives.FUEL (actual SLSQP objective)", Mission.Objectives.FUEL),
+                ("Mission.Takeoff.ASCENT_DURATION (feeds the objective; may be a dangling default since include_takeoff=False)", Mission.Takeoff.ASCENT_DURATION),
+            ]:
+                try:
+                    val = prob.get_val(var)
+                    print(f"   {label}: {val}")
+                except Exception as diag_err:
+                    print(f"   {label}: <could not read: {diag_err}>")
+            print("--- end diagnostic dump ---\n")
             raise RuntimeError(
                 "Aviary mission solve did not converge (prob.result=True means "
                 "failed, per Problem.run_driver()'s own docstring). See the "
-                "console output above for details."
+                "diagnostic dump above and the console output for details."
             )
 
         # Aviary's own mission_report()/timeseries_csv() are normally only
