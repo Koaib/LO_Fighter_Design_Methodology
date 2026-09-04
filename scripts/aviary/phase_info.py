@@ -47,20 +47,25 @@ phase_info = {
         'user_options': {
             'num_segments': 5, 'order': 3,
             'mach_optimize': False,
-            # mach_initial was 0.2 — at sea level that's V~132 kt, and with
-            # this run's wing-loading-scaled gross mass (~83,800 lbm on this
-            # 843 ft^2 wing) that requires CL~1.68 for level flight, well
-            # beyond this geometry's tested CL range (~1.0 max, from the
-            # alpha=-10..22 deg VSPAero sweep). That's not a mass-basis
-            # error — even a real aircraft can't sustain level flight at
-            # 132 kt at max gross weight; it's an unrealistic START-of-climb
-            # condition (this is closer to rotation speed than an
-            # established climb schedule). This caused solve_alpha's Newton
-            # iteration to diverge (table-edge extrapolation -> singular
-            # gradient) and Aviary's climb-phase RHS solve to fail outright.
-            # 0.3 keeps CL~0.75 at sea level (verified against this run's
-            # actual gross mass) — comfortably inside the tested range, and
-            # physically a reasonable established-climb starting speed.
+            # mach_initial/mach_bounds below are OVERWRITTEN at runtime by
+            # run_aviary_mission() (scripts/aviary/run_aviary.py), which
+            # computes the minimum sea-level Mach that keeps CL within this
+            # run's own measured max tested CL, from THIS run's actual gross
+            # mass and wing area — same "don't rely on editing these
+            # directly" pattern as the initial_guesses block above.
+            #
+            # Why this exists: mach_initial=0.2 (V~132 kt at sea level) once
+            # demanded CL~1.68 for level flight against this geometry's
+            # ~1.0 max tested CL (alpha=-10..22 deg VSPAero sweep) — not a
+            # mass-basis error (even a real aircraft can't sustain level
+            # flight at 132 kt at max gross weight), just an unrealistic
+            # START-of-climb condition (closer to rotation speed than an
+            # established climb schedule). That made solve_alpha's Newton
+            # iteration walk off the LIFT_POLAR table's edge (extrapolation
+            # -> singular gradient) and the climb-phase RHS solve failed
+            # outright with an AnalysisError. 0.3 below is just a sensible
+            # static fallback if this file is ever imported without going
+            # through run_aviary_mission() first.
             'mach_initial': (0.3, 'unitless'), 'mach_final': (0.6, 'unitless'),
             'mach_bounds': ((0.28, 0.62), 'unitless'),
             'mach_polynomial_order': 3,

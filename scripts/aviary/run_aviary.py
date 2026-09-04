@@ -188,6 +188,44 @@ def run_aviary_mission(
     for phase_name in ("climb", "cruise", "descent"):
         phase_info[phase_name]["subsystem_options"]["aerodynamics"]["aero_data"] = aero_data
 
+    # Climb start-of-phase Mach — computed from THIS run's actual gross
+    # mass and the REAL max CL your aero sweep reached, instead of
+    # phase_info.py's own static mach_initial. A too-low starting Mach at
+    # low altitude demands more lift than this wing+mass can produce
+    # within the tested alpha range, which makes solve_alpha's Newton
+    # iteration walk off the edge of the LIFT_POLAR table (extrapolation
+    # -> singular gradient) and the climb-phase RHS solve fails outright
+    # with an AnalysisError. That's exactly what broke an earlier run at
+    # mach_initial=0.2 (CL~1.68 needed at sea level vs. a ~1.0 max tested
+    # CL for this geometry) — this closes that failure mode for any
+    # mass/wing/aero-table combination, not just this run's specific
+    # numbers, the same way the initial-guess block below already does
+    # for distance/mass.
+    #
+    # CL = W / (0.5*rho*V^2*S); solved for the minimum sea-level Mach that
+    # keeps CL at or below 90% of the max CL this run's own aero sweep
+    # actually reached — a margin below the table's hard edge (not right
+    # at it), since solve_alpha's local interpolation gradient degrades
+    # near the edge even before literally exceeding it.
+    max_tested_cl = float(external_aero._data["cl"].max())
+    cl_margin = 0.9
+    weight_N = gross_mass_lbm * 0.45359237 * 9.80665
+    wing_area_m2 = wing_area_ft2 * 0.09290304
+    _, rho_sl, _, a_sl = vsp_setup.isa_atmosphere(0.0)
+    climb_mach_initial = (
+        weight_N / (0.5 * rho_sl * a_sl**2 * wing_area_m2 * cl_margin * max_tested_cl)
+    ) ** 0.5
+    climb_mach_initial = round(climb_mach_initial + 0.02, 2)  # small extra margin, clean value
+
+    print(f"   [climb] computed start-of-climb Mach={climb_mach_initial:.2f} "
+          f"(sea-level CL vs. this run's measured max CL={max_tested_cl:.3f})")
+
+    phase_info["climb"]["user_options"]["mach_initial"] = (climb_mach_initial, "unitless")
+    (lo0, hi0), mach_unit = phase_info["climb"]["user_options"]["mach_bounds"]
+    phase_info["climb"]["user_options"]["mach_bounds"] = (
+        (min(lo0, climb_mach_initial - 0.02), hi0), mach_unit
+    )
+
     # Dynamic Dymos initial guesses — computed from THIS run's actual
     # gross_mass_lbm/design_range_nmi instead of phase_info.py's frozen
     # numbers, so they can't silently go stale if TEST_WING_AREA_FT2 or the
