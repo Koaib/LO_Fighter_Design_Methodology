@@ -390,6 +390,34 @@ def run_aviary_mission(
         prob.aviary_inputs.set_val(Aircraft.Design.GROSS_MASS, gross_mass_lbm, units="lbm")
         prob.aviary_inputs.set_val(Aircraft.Fuel.TOTAL_CAPACITY, fuel_mass_lbm, units="lbm")
 
+        # Found by actually reading Aviary's own documented off-design
+        # workflow (docs/examples/off_design_missions.ipynb) end to end and
+        # comparing it line-for-line against what this script does. Aviary's
+        # own AviaryProblem.run_off_design_mission() - the method the docs
+        # say is THE way to run an OFF_DESIGN_MIN_FUEL mission - always seeds
+        # Mission.GROSS_MASS (the sole design variable in this problem type)
+        # at 0.9x the target gross mass before calling setup()
+        # (aviary_problem.py ~line 1612: "set initial guess for
+        # Mission.GROSS_MASS to help optimizer with new design variable
+        # bounds"). This project's script never set Mission.GROSS_MASS at
+        # all, only Aircraft.Design.GROSS_MASS (the fixed MTOW input) above -
+        # and aviary_group.py's add_design_variables() for
+        # OFF_DESIGN_MIN_FUEL sets Mission.GROSS_MASS's upper bound to
+        # exactly that same MTOW (line ~1425: upper=MTOW). With nothing else
+        # seeding it, the design variable started AT its own upper bound.
+        # This matches the actual failure data exactly: every diagnostic
+        # dump from every failed run showed Mission.GROSS_MASS
+        # (83800.00623705) equal to Aircraft.Design.GROSS_MASS/MTOW
+        # (83800.00623707) to 8 significant figures, even after 100 SLSQP
+        # iterations - the design variable never moved off the bound it
+        # started on. A design variable pinned to its own bound from
+        # iteration 1, with a badly infeasible RANGE_RESIDUAL constraint
+        # that needs an interior point to satisfy, is a textbook cause of
+        # the degenerate/inconsistent QP linearization this run kept hitting
+        # - not a scaling problem (the mass_ref/distance_ref fix above was
+        # real and correct, just not the actual cause of the stall).
+        prob.aviary_inputs.set_val(Mission.GROSS_MASS, gross_mass_lbm * 0.9, units="lbm")
+
         # Mission.Constraints.MAX_MACH defaults to 0.0 (Aviary's own metadata
         # has a "TODO: derived default value" comment acknowledging this) and
         # is read by FLOPS's PassengerServiceMass component as
