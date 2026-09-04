@@ -374,6 +374,17 @@ def run_aviary_mission(
         total_range = prob.get_val(Mission.RANGE)
         fuel_burned = prob.get_val(Mission.FUEL_MASS)
 
+        # Real, solved values of the FLOPS "operating items" that sit between
+        # our Aircraft.Design.EMPTY_MASS override and Aviary's own internal
+        # Mission.ZERO_FUEL_MASS (see aviary/subsystems/mass/flops_based/
+        # mass_summation.py: OperatingItemsMass -> OperatingMass -> ZeroFuelMass).
+        # These are FLOPS-computed defaults this pipeline never overrides, so
+        # they're pulled from the solved problem rather than assumed.
+        unusable_fuel_lbm = float(prob.get_val(Aircraft.Fuel.UNUSABLE_FUEL_MASS, units="lbm")[0])
+        operating_items_lbm = float(prob.get_val(Mission.OPERATING_ITEMS_MASS, units="lbm")[0])
+        zero_fuel_mass_lbm = float(prob.get_val(Mission.ZERO_FUEL_MASS, units="lbm")[0])
+        total_fuel_mass_lbm = float(prob.get_val(Mission.TOTAL_FUEL_MASS, units="lbm")[0])
+
     finally:
         os.chdir(original_cwd)
 
@@ -382,16 +393,25 @@ def run_aviary_mission(
     print(f"   Fuel burned        : {fuel_burned[0]:.2f} lbm")
     print(f"   Fuel mass residual : {fuel_residual[0]:.2f} lbm  "
           f"(positive = margin, negative = infeasible)")
+    print(f"   [mass] Mission.ZERO_FUEL_MASS={zero_fuel_mass_lbm:.2f} lbm "
+          f"= our EMPTY_MASS override ({empty_mass_lbm:.2f}) + FLOPS operating "
+          f"items ({operating_items_lbm:.2f}, of which unusable fuel = "
+          f"{unusable_fuel_lbm:.2f} lbm) — this is why Mission.TOTAL_FUEL_MASS "
+          f"({total_fuel_mass_lbm:.2f} lbm) is a bit below our specified tank "
+          f"capacity ({fuel_mass_lbm:.2f} lbm); real, expected, not a bug.")
 
     _save_curated_reports(geom_stem)
     _save_plain_summary(
         geom_stem, design_range_nmi, total_range[0], fuel_burned[0],
         fuel_residual[0], gross_mass_lbm, empty_mass_lbm, fuel_mass_lbm,
+        unusable_fuel_lbm, operating_items_lbm, zero_fuel_mass_lbm, total_fuel_mass_lbm,
     )
 
 
 def _save_plain_summary(geom_stem, design_range_nmi, total_range, fuel_burned,
-                         fuel_residual, gross_mass_lbm, empty_mass_lbm, fuel_mass_lbm):
+                         fuel_residual, gross_mass_lbm, empty_mass_lbm, fuel_mass_lbm,
+                         unusable_fuel_lbm, operating_items_lbm, zero_fuel_mass_lbm,
+                         total_fuel_mass_lbm):
     """
     Our OWN plain-language mission summary — deliberately separate from
     Aviary's native mission_summary.md (Results/aviary_perf/native_aviary_files/),
@@ -405,8 +425,16 @@ def _save_plain_summary(geom_stem, design_range_nmi, total_range, fuel_burned,
 
     real_margin = fuel_mass_lbm - fuel_burned
     real_margin_pct = 100.0 * real_margin / fuel_mass_lbm
-    approx_total_fuel_mass = gross_mass_lbm - empty_mass_lbm  # Mission.TOTAL_FUEL_MASS ~= GROSS - ZERO_FUEL_MASS (ZERO_FUEL_MASS ~= EMPTY_MASS here, 0 payload)
-    mass_gap = gross_mass_lbm - empty_mass_lbm - fuel_mass_lbm
+    # GROSS_MASS = EMPTY_MASS + FUEL_MASS + payload(0) closes exactly by
+    # construction (see the empty:fuel ratio scaling above) — this is OUR
+    # external mass model. residual_gap is a *different*, much smaller thing:
+    # the FLOPS "operating items" (unusable fuel, crew, oil, passenger
+    # service, cargo container mass — all still at FLOPS defaults, none
+    # overridden by this pipeline) that Aviary adds internally on top of our
+    # EMPTY_MASS override to get its own Mission.ZERO_FUEL_MASS. That's why
+    # Mission.TOTAL_FUEL_MASS (= GROSS_MASS - ZERO_FUEL_MASS) sits a bit
+    # below our specified Aircraft.Fuel.TOTAL_CAPACITY, even after that fix.
+    residual_gap = fuel_mass_lbm - total_fuel_mass_lbm
 
     lines = [
         "# Mission Summary (plain-language)",
@@ -429,53 +457,67 @@ def _save_plain_summary(geom_stem, design_range_nmi, total_range, fuel_burned,
         "",
         "**Verdict: the mission flew successfully, with real, credible fuel margin.**",
         "",
-        "## Why other files in this run show confusing or negative fuel numbers",
+        "## Why other files in this run show smaller, different fuel numbers",
         "",
-        "Two other numbers from this same run can look alarming or "
-        "contradictory if read without this context. Both formulas below "
-        "are copied directly from Aviary v1.0.1's own source "
-        "(aviary/core/aviary_group.py) — not inferred.",
+        "Two other numbers from this same run can look confusing if read "
+        "without this context. Both formulas below are copied directly from "
+        "Aviary v1.0.1's own source (aviary/core/aviary_group.py and "
+        "aviary/subsystems/mass/flops_based/mass_summation.py) — not inferred "
+        "— and all the values plugged in are this run's actual solved "
+        "numbers, not estimates.",
         "",
         f"**Console print** `Fuel mass residual: {fuel_residual:+.2f} lbm` "
         "(positive = margin, per Aviary's own label) =",
         "```",
         "Mission.TOTAL_FUEL_MASS - fuel_burned - reserves",
-        f"= {approx_total_fuel_mass:.0f} (approx.) - {fuel_burned:.0f} - 0",
+        f"= {total_fuel_mass_lbm:.2f} - {fuel_burned:.2f} - 0",
         "```",
         "",
         "**Results/aviary_perf/native_aviary_files/mission_summary.md** "
-        "`Excess Fuel Capacity` (often negative) =",
+        "`Excess Fuel Capacity` =",
         "```",
         "Aircraft.Fuel.TOTAL_CAPACITY - unusable_fuel - Mission.TOTAL_FUEL_MASS",
-        f"= {fuel_mass_lbm:.0f} - (small) - {approx_total_fuel_mass:.0f} (approx.)",
+        f"= {fuel_mass_lbm:.2f} - {unusable_fuel_lbm:.2f} - {total_fuel_mass_lbm:.2f}",
         "```",
         "",
-        "**Both use the same `Mission.TOTAL_FUEL_MASS`, which Aviary computes "
-        "as `GROSS_MASS - ZERO_FUEL_MASS`** "
-        f"(here, {gross_mass_lbm:.0f} - {empty_mass_lbm:.0f} ≈ "
-        f"{approx_total_fuel_mass:.0f} lbm, since payload is 0 in this run — "
-        "Aviary's own \"you have not specified at least one passenger\" "
-        "warning is the tell). That is NOT the fuel tank capacity we "
-        f"actually specified ({fuel_mass_lbm:.0f} lbm) — it's \"whatever "
-        "mass is left after empty structure,\" independent of what "
-        "Aircraft.Fuel.TOTAL_CAPACITY was actually set to.",
+        "**Both use `Mission.TOTAL_FUEL_MASS`, which Aviary computes as "
+        "`GROSS_MASS - Mission.ZERO_FUEL_MASS`** "
+        f"({gross_mass_lbm:.2f} - {zero_fuel_mass_lbm:.2f} = "
+        f"{total_fuel_mass_lbm:.2f} lbm). `Mission.ZERO_FUEL_MASS` is NOT "
+        "the same thing as our `Aircraft.Design.EMPTY_MASS` override — "
+        "Aviary's own FLOPS mass buildup adds a small \"operating items\" "
+        "bucket on top of it "
+        f"(`Mission.ZERO_FUEL_MASS = EMPTY_MASS + OPERATING_ITEMS_MASS`, "
+        f"{zero_fuel_mass_lbm:.2f} = {empty_mass_lbm:.2f} + "
+        f"{operating_items_lbm:.2f}). Of that {operating_items_lbm:.2f} lbm, "
+        f"{unusable_fuel_lbm:.2f} lbm is `Aircraft.Fuel.UNUSABLE_FUEL_MASS` "
+        "— fuel that physically can never be burned (trapped in tank "
+        "corners/lines), computed from FLOPS's own empirical formula "
+        "(aviary/subsystems/mass/flops_based/unusable_fuel.py) from this "
+        "run's actual wing area, thrust, and tank capacity. The rest is "
+        "FLOPS's default flight/cabin crew, engine oil, and passenger-"
+        "service mass — none of which this pipeline currently overrides, "
+        "so they're still using Aviary's stock defaults rather than "
+        "project-specific values.",
         "",
-        "**Root cause**: this run's mass model doesn't internally balance — "
-        f"GROSS_MASS ({gross_mass_lbm:.0f}) does not equal EMPTY_MASS "
-        f"({empty_mass_lbm:.0f}) + FUEL_CAPACITY ({fuel_mass_lbm:.0f}) + "
-        f"payload (0). There's a real, unaccounted {mass_gap:.0f} lbm gap. "
-        "This traces to the F-22 mass basis itself: even the real F-22's "
-        "own published figures don't close either (43,340 empty + 18,000 "
-        "fuel = 61,340 lbm, vs. 83,500 lbm MTOW) — that gap is weapons/"
-        "stores/payload provision in the real aircraft's max gross weight, "
-        "which this model has nowhere to put since payload is 0 here.",
+        f"**So the gap is real and expected, not a bug**: "
+        f"{fuel_mass_lbm:.2f} (tank capacity) - {total_fuel_mass_lbm:.2f} "
+        f"(usable/burnable fuel Aviary tracks internally) = "
+        f"{residual_gap:.2f} lbm, i.e. {100.0*residual_gap/fuel_mass_lbm:.1f}% "
+        "of tank capacity — mostly unusable fuel plus a small FLOPS "
+        "operating-items default, not an unclosed mass budget. (The "
+        "GROSS_MASS = EMPTY_MASS + FUEL_MASS + payload(0) budget this "
+        "pipeline builds *does* close exactly — see the mass_empty_fuel "
+        "closure fix in run_aviary.py.)",
         "",
         "**Bottom line**: use \"fuel burned vs. specified tank capacity\" "
-        "(top of this file) to state whether the mission is feasible. Don't "
-        "quote \"Excess Fuel Capacity\" or the raw \"Fuel mass residual\" "
-        "number on their own — both are measuring against an inflated "
-        "internal fuel budget caused by the un-closed mass model, not the "
-        "real tank capacity that was actually specified.",
+        "(top of this file) to state whether the mission is feasible. "
+        "\"Excess Fuel Capacity\" and \"Fuel mass residual\" are correct "
+        "numbers, just measured against Aviary's internal *usable* fuel "
+        "figure (tank capacity minus unusable fuel and other operating "
+        "items) rather than the raw tank capacity we specified — expect "
+        "them to run a little smaller than the top-of-file margin, not "
+        "identical to it.",
         "",
     ]
 
