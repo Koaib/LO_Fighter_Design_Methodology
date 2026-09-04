@@ -448,14 +448,14 @@ def run_aviary_mission(
         # for the full history of why. SLSQP (ships with scipy, no external
         # solver install needed) rather than add_driver()'s IPOPT default,
         # which this machine may not have installed.
-        # max_iter=200 hit "Iteration limit reached (Exit mode 9)" without
-        # converging on the first real test of this driver-based solve -
-        # SLSQP's own analytic-gradient iterations are cheap for a problem
-        # this size (each one was a single Newton-converged trajectory
-        # evaluation, not a finite-difference sweep), so raising the ceiling
-        # substantially is the first, cheapest thing to try before assuming
-        # the problem itself is ill-posed/badly scaled.
-        prob.add_driver("SLSQP", max_iter=1000)
+        # max_iter=200 and max_iter=1000 both hit "Iteration limit reached
+        # (Exit mode 9)" at the IDENTICAL objective value (2.39276676923517)
+        # -- proof this stalls early and more iterations don't help, so
+        # there's no point spending the extra runtime on a higher ceiling
+        # while debugging why it's stuck (see the new diagnostic dump in
+        # the failure branch below). Back to a low value just to fail fast;
+        # raise it again once the actual stall cause is fixed.
+        prob.add_driver("SLSQP", max_iter=100)
         prob.add_design_variables()
         prob.add_objective()
 
