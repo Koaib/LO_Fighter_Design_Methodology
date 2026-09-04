@@ -57,7 +57,7 @@ RESULTS_ROOT = ROOT_DIR / "Results" / "RCS_SensitivityStudy"
 LOG_ROOT     = RESULTS_ROOT / "_logs"
 LOG_ROOT.mkdir(parents=True, exist_ok=True)
 
-TIMEOUT_SEC = 40 * 60   # frontal cut is now 61x7=427 angle pairs (was 1891) at frontal_delt=5.0
+TIMEOUT_SEC = 60 * 60   # per-delta wall-clock cap; frontal cut (61x7=427 pts) is the slow part
 
 # Same CFD-mesh settings as main.py's USE_CFD_MESH block, TE-z-only /
 # azimuth+frontal cuts per the confirmed sensitivity-study scope.
