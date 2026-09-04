@@ -35,6 +35,17 @@ scripts/aviary/run_aviary.py for a normal run.
 import vsp_setup
 import openvsp as vsp
 import os
+
+# vspaero.exe (launched later, as a subprocess, by vsp_setup's ExecAnalysis
+# calls) intermittently crashes under its default -omp 4 multi-threading —
+# a genuine data race in its own OpenMP setup code (confirmed: repeat runs
+# crash at DIFFERENT points in the solver's setup sequence for DIFFERENT,
+# physically unrelated Mach/Altitude cases — the signature of a race, not
+# a deterministic numerical failure). Forcing single-threaded execution
+# eliminates the race entirely (slower, but no longer intermittent). Must
+# be set before vspaero.exe is spawned, which is any time after this point.
+os.environ["OMP_NUM_THREADS"] = "1"
+
 import matplotlib.pyplot as plt
 import pandas as pd
 import time
@@ -242,20 +253,19 @@ WAKE_ITERS   = 8
 # (vsp_setup.run_vspaero_aero()), which read plain model-unit coordinates.
 #
 # X_CG traces to Giannelis, Bykerk & Vio, Aerospace 2023, 10, 746 (the
-# SSAM-Gen5 source paper), Table 1: "XCoG = -0.4385 m" for their 0.75 m
-# wind-tunnel-scale model (sign convention differs from this .vsp3's axis
-# direction, magnitude matches exactly). This project's own two .vsp3
-# geometries are NOT a 1:25.339 copy of the paper's exact model (this
-# project's "NOT_scaled_by_19" file measures 0.2169 m^2 / 0.7135 m,
-# bigger than the paper's Table 1 0.1091 m^2 / 0.535 m — expected, since
-# it's a locally modified "nozzle_mod" variant, not a byte-identical
-# reproduction). "scaled_by_19" (this file) IS confirmed, via its own
-# .vsp3 dump, to be a clean, exact 19x scale-up of THAT file specifically
-# — span ratio 19.000000, area ratio 361=19^2, aspect ratio identical to
-# 12 decimal places between the two dumps. So 0.4385 m scales by 19 (the
-# real ratio between this project's own two files), not by 25.339 (the
-# paper's wind-tunnel-to-full-scale ratio, which doesn't apply here).
-X_CG = 8.3315   # m — 0.4385 * 19 (see note above)
+# SSAM-Gen5 source paper), Table 1: "XCoG = -0.4385 m" — confirmed
+# (paper text: "the load cell reference location is measured from the
+# origin located at the nose tip") to be a plain nose-referenced distance
+# on their 0.75 m model, i.e. CG sits at 0.4385/0.75 = 58.47% of vehicle
+# length from the nose. Applied to THIS geometry's own real nose-to-tail
+# length (17.67 m, computed directly from the scaled_by_19 params dump's
+# X_Min/Length/Root_Chord per component, sweep-corrected) rather than to
+# the paper's separately-stated "19 m" figure, since this geometry
+# measures 17.67 m, not 19 m, by direct measurement — not a byte-for-byte
+# copy of the paper's real aircraft. 8.3315 (0.4385 x 19, this project's
+# own file-to-file scale factor) was an earlier, superseded value: it
+# ignored the 0.75 m model-to-CG-fraction relationship entirely.
+X_CG = 10.33   # m — 0.58467 * 17.67 (see note above)
 Y_CG = 0.0      # m
 Z_CG = 0.0      # m
 
