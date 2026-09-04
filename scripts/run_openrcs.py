@@ -545,9 +545,11 @@ def run_openrcs_pipeline(
     delstd      : float = 0.0,
     rs          : int   = 0,
     az_range    : str   = "full",   # "full" (0-360) or "half" (0-180, symmetric aircraft)
-    delp        : float = 1.0,      # phi step, deg
+    delp        : float = 1.0,      # azimuth-cut phi step, deg — frontal has its own steps below
+    frontal_delp: float = 1.0,      # frontal-sector phi (azimuth-direction) step, deg
+    frontal_delt: float = 1.0,      # frontal-sector theta (elevation-direction) step, deg
 ) -> dict:
-    
+
     """
     End-to-end OpenRCS monostatic RCS pipeline.
 
@@ -560,6 +562,24 @@ def run_openrcs_pipeline(
     corr        : surface roughness correlation length m (0 = smooth PEC)
     delstd      : surface roughness std deviation m     (0 = smooth PEC)
     rs          : 0 = Perfect Electric Conductor
+    delp        : azimuth-cut (θ=90° sweep) phi step, degrees. Does NOT
+                  affect the frontal 2-D grid — that has its own
+                  frontal_delp/frontal_delt below, since coarsening the
+                  frontal sector's elevation resolution (which is what
+                  Touzopoulos 2017 itself uses — 1° azimuth, 5° elevation)
+                  is a much bigger, better-justified compute saving than
+                  coarsening the azimuth cut, which is cheap already and
+                  is the one cut actually visualised (polar plots/overlays)
+                  where narrow specular flashes matter most.
+    frontal_delp: frontal-sector phi (azimuth-direction) step, degrees.
+                  Kept fine by default (1°) — same "specular flashes are
+                  only a few degrees wide" reasoning as the azimuth cut.
+    frontal_delt: frontal-sector theta (elevation-direction) step, degrees.
+                  The default (1°) is finer than Touzopoulos 2017's own 5°;
+                  pass 5.0 to match the paper's resolution exactly and cut
+                  the frontal run's point count by ~4.4x (31 theta rows ->
+                  7), since RCS varies more smoothly across the narrow
+                  +-15° elevation band than across azimuth.
 
     Returns
     -------
@@ -572,6 +592,7 @@ def run_openrcs_pipeline(
     print(f"  Frequency  : {freq} GHz    Polarisation: {pol}")
     print(f"  Cuts       : Azimuth θ=90°  |  Elevation φ=0°  |  Frontal 2-D")
     print(f"  Azimuth    : range={az_range}  delp={delp}°")
+    print(f"  Frontal    : delp={frontal_delp}°  delt={frontal_delt}°")
     print("=" * 60 + "\n")
 
     if not os.path.isfile(stl_path):
@@ -671,10 +692,15 @@ def run_openrcs_pipeline(
 
         # Frontal 2-D: az ±30° and el ±15° (theta 75°→105°).
         # Used only for mean frontal sector RCS — no plot generated.
-        # ip = (-30 to 30)/1 + 1 = 61,  it = (75 to 105)/1 + 1 = 31
+        # Step sizes are independent of the azimuth cut's delp — see
+        # frontal_delp/frontal_delt in this function's signature.
+        # ip = (-30 to 30)/frontal_delp + 1,  it = (75 to 105)/frontal_delt + 1
+        # e.g. frontal_delp=1.0, frontal_delt=1.0 -> ip=61, it=31 (default)
+        #      frontal_delp=1.0, frontal_delt=5.0 -> ip=61, it=7  (matches
+        #      Touzopoulos 2017's own resolution, ~4.4x fewer points)
         params_fr = _make_params(
-            pstart=-30.0, pstop=30.0, delp=1.0,
-            tstart=75.0, tstop=105.0, delt=1.0,
+            pstart=-30.0, pstop=30.0, delp=frontal_delp,
+            tstart=75.0, tstop=105.0, delt=frontal_delt,
         )
 
         pol_upper  = pol.upper()

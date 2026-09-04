@@ -57,14 +57,20 @@ RESULTS_ROOT = ROOT_DIR / "Results" / "RCS_SensitivityStudy"
 LOG_ROOT     = RESULTS_ROOT / "_logs"
 LOG_ROOT.mkdir(parents=True, exist_ok=True)
 
-TIMEOUT_SEC = 90 * 60   # frontal cut (61x31=1891 angle pairs) is the slow one
+TIMEOUT_SEC = 40 * 60   # frontal cut is now 61x7=427 angle pairs (was 1891) at frontal_delt=5.0
 
 # Same CFD-mesh settings as main.py's USE_CFD_MESH block, TE-z-only /
 # azimuth+frontal cuts per the confirmed sensitivity-study scope.
+# frontal_delt=5.0 matches Touzopoulos 2017's own elevation resolution
+# (theirs is 5 deg, ours is now the same) and cuts the frontal run's
+# point count ~4.4x (31 theta rows -> 7); frontal_delp stays at 1.0
+# (azimuth-direction) since narrow specular flashes are the concern
+# there, same reasoning as keeping the azimuth cut itself at delp=1.0.
 BASE = dict(
     vsp3=VSP3_FILE, sets_file=SETS_FILE,
     freq_ghz=12.0, pol="TE-z", cuts="azimuth+frontal",
     az_range="half", delp=1.0,
+    frontal_delp=1.0, frontal_delt=5.0,
     min_edge_factor=3, max_edge_factor=1, max_gap_factor=3,
     growth_ratio=1.6, num_circle_segs=12.0,
 )

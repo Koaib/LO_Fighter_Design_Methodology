@@ -87,6 +87,8 @@ def main():
             freq=cfg["freq_ghz"], pol=cfg.get("pol", "TE-z"),
             cuts=cfg.get("cuts", "azimuth+frontal"),
             az_range=cfg.get("az_range", "half"), delp=cfg.get("delp", 1.0),
+            frontal_delp=cfg.get("frontal_delp", 1.0),
+            frontal_delt=cfg.get("frontal_delt", 1.0),
         )
         if not rcs_out:
             entry["status"] = "rcs_failed"; _write(manifest_path, entry); return
