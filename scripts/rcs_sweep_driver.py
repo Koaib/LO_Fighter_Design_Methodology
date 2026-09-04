@@ -398,7 +398,12 @@ if __name__ == "__main__":
 
     # -- VT sweep (leading edge, deg) -- PLACEHOLDER range, no existing
     #    precedent in this codebase to reuse (unlike wing/VT-cant). Confirm
-    #    before running.
+    #    before running. Key verified directly against the real
+    #    sweep_params.json: VT only has section0 (root stub, Sweep=0,
+    #    not a real design knob) and section1 (the actual LE sweep,
+    #    baseline 22.5 deg) -- VT sweep was never given a friendly alias
+    #    the way VTCant/WingSweep_secN were, so it's the raw
+    #    auto-generated key, not "VTSweep_sec1".
     DELTAS_VT_SWEEP = [0.0, -10, -5, 5, 10]
 
     # -- Wing sweep (leading edge, deg): SAME delta list and SAME
@@ -411,7 +416,7 @@ if __name__ == "__main__":
     run_baseline()   # once, shared — every run_parameter() call below reuses it for Δ=0
 
     run_parameter("VTCant", DELTAS_VT_CANT)
-    run_parameter("VTSweep_sec1", DELTAS_VT_SWEEP)
+    run_parameter("VT_Sweep_surf0sec1", DELTAS_VT_SWEEP)
 
     # Wing sweep ALIGNED with HT — HT sweep moves together with the wing,
     # same as the existing aero sweep's "WingSweep_aligned" family.
@@ -425,20 +430,26 @@ if __name__ == "__main__":
                   extra_param_keys=["WingSweep_sec2"],
                   study_name="WingSweepMisaligned")
 
-    # -- Thickness-to-chord (t/c): NOT wired in yet. Baseline is stated as
-    #    0.04, deltas [-0.02, -0.01, 0.0, +0.01, +0.02] -> absolute t/c
-    #    [0.02, 0.03, 0.04, 0.05, 0.06] -- that math is unambiguous and
-    #    ready to go. What's NOT verified: t/c isn't a plain XSec parm
-    #    like Sweep/Twist/Cant for every airfoil type OpenVSP supports
-    #    (e.g. a NACA 4-series XSec has a literal "ThickChord" parm, but
-    #    a FILE_AIRFOIL/CST_AIRFOIL XSec doesn't expose thickness as one
-    #    scalar the same way) -- so the existing
-    #    [geom,surf,section,parm,baseline] override mechanism may not
-    #    even apply as-is. Find the real parm name for your wing's actual
-    #    airfoil XSec type (run extract_params.py / vsp_setup.dump_geom_params()
-    #    and search the dump for "Thick"/"TC"/"T/C" on the wing geom) and
-    #    confirm it before this gets added — a wrong-but-existing parm
-    #    name would silently change the wrong thing rather than error out.
+    # -- Thickness-to-chord (t/c): verified directly against the real
+    #    params dump (params_dump.json -> Main_Wing -> sections
+    #    surf0_sec0/1/2 -> "ThickChord"): the parm is literally
+    #    ThickChord, and its value is uniform across ALL THREE wing
+    #    sections (0.04, 0.04000000000000001, 0.039999999999999994 --
+    #    all effectively 0.04, confirming the stated baseline). Since
+    #    it's the same value everywhere, changing t/c consistently means
+    #    moving all three sections together -- same multi-section
+    #    pattern as WingSweep's extra_param_keys, just three keys
+    #    instead of two.
     #
-    # DELTAS_TC = [0.0, -0.02, -0.01, 0.01, 0.02]
-    # run_parameter("WingThickChord_sec1", DELTAS_TC)
+    #    sweep_params.json does NOT have a ThickChord entry yet -- add
+    #    these three before running (same schema/convention as the
+    #    existing WingSweep_secN keys):
+    #      "WingThickChord_sec0": {"geom":"Main_Wing","surf":0,"section":0,"parm":"ThickChord","baseline":0.04}
+    #      "WingThickChord_sec1": {"geom":"Main_Wing","surf":0,"section":1,"parm":"ThickChord","baseline":0.04}
+    #      "WingThickChord_sec2": {"geom":"Main_Wing","surf":0,"section":2,"parm":"ThickChord","baseline":0.04}
+    #
+    #    Deltas: [-0.02, -0.01, 0.0, +0.01, +0.02] -> absolute t/c
+    #    [0.02, 0.03, 0.04, 0.05, 0.06], as specified.
+    DELTAS_TC = [0.0, -0.02, -0.01, 0.01, 0.02]
+    run_parameter("WingThickChord_sec0", DELTAS_TC,
+                  extra_param_keys=["WingThickChord_sec1", "WingThickChord_sec2"])
