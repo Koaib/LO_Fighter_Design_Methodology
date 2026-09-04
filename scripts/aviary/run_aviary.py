@@ -509,10 +509,16 @@ def _save_plain_summary(geom_stem, design_range_nmi, total_range, fuel_burned,
         "- **Pilot + Engine Oil Weight** — fixed weight Aviary adds for the "
         "1 pilot (225 lbm) and engine oil. Has nothing to do with how far "
         "the mission flew.",
-        "- Add Unusable Fuel + Pilot/Oil Weight together and you get the "
-        "\"Excess Fuel Capacity\" number shown in "
-        "`native_aviary_files/mission_summary.md` — same misleading name, "
-        "same two things, just relabeled here.",
+        "- **Pilot + Engine Oil Weight is the exact same number as "
+        "\"Excess Fuel Capacity\"** in `native_aviary_files/mission_summary.md` "
+        "— same figure, just under a misleading name there. Unusable Fuel "
+        "does NOT get added to it: because our tank-capacity number already "
+        "accounts for unusable fuel once, that term cancels out of Excess "
+        "Fuel Capacity's math (Aviary's own formula subtracts it, then adds "
+        "it straight back in through Mission.TOTAL_FUEL_MASS). Unusable "
+        "Fuel is listed above purely so you can see it's a real, separate, "
+        "physically-explainable number — not because it combines with "
+        "anything else here.",
         "",
         "**Bottom line for a presentation or report: only ever quote Fuel "
         "Margin from the top table. The other two numbers are internal "
