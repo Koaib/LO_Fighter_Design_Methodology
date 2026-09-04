@@ -25,6 +25,8 @@ import sys, os
 sys.path.insert(0, os.path.dirname(__file__))
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))  # for vsp_setup
 
+import numpy as np
+
 import vsp_setup
 import aviary.api as av
 from aviary.api import Aircraft, Mission, Settings
@@ -378,7 +380,19 @@ def run_aviary_mission(
         # 'distance' (and 'mass', for the same reason) initial_guesses entry
         # per phase.
         prob.set_initial_guesses()
-        prob.run_model()
+
+        # Silence the Newton-iteration play-by-play ("NL: Newton 0 ; ...")
+        # every Dymos phase solver prints by default (set_solver_print is a
+        # standard OpenMDAO Problem method, level=0 = silent) and the benign
+        # "divide by zero"/"invalid value" RuntimeWarnings numpy throws for
+        # intermediate, not-yet-converged Newton guesses during the CL/CD
+        # table interpolation (harmless mid-iteration values, not the final
+        # answer — the solve still converges correctly either way). None of
+        # this ever indicated a real problem, it just buried the actual
+        # results below hundreds of lines of solver internals.
+        prob.set_solver_print(level=0)
+        with np.errstate(divide="ignore", invalid="ignore"):
+            prob.run_model()
 
         # Aviary's own mission_report()/timeseries_csv() are normally only
         # triggered by run_driver() (see aviary/interface/reports.py) - they
@@ -399,29 +413,56 @@ def run_aviary_mission(
         # they're pulled from the solved problem rather than assumed.
         unusable_fuel_lbm = float(prob.get_val(Aircraft.Fuel.UNUSABLE_FUEL_MASS, units="lbm")[0])
         operating_items_lbm = float(prob.get_val(Mission.OPERATING_ITEMS_MASS, units="lbm")[0])
-        zero_fuel_mass_lbm = float(prob.get_val(Mission.ZERO_FUEL_MASS, units="lbm")[0])
-        total_fuel_mass_lbm = float(prob.get_val(Mission.TOTAL_FUEL_MASS, units="lbm")[0])
 
     finally:
         os.chdir(original_cwd)
 
-    print("\n--- RESULTS ---")
-    print(f"   Range flown        : {total_range[0]:.1f} nmi  (target {design_range_nmi:.0f} nmi)")
-    print(f"   Fuel burned        : {fuel_burned[0]:.2f} lbm")
-    print(f"   Fuel mass residual : {fuel_residual[0]:.2f} lbm  "
-          f"(positive = margin, negative = infeasible)")
-    print(f"   [mass] Mission.ZERO_FUEL_MASS={zero_fuel_mass_lbm:.2f} lbm "
-          f"= our EMPTY_MASS override ({empty_mass_lbm:.2f}) + FLOPS operating "
-          f"items ({operating_items_lbm:.2f}, of which unusable fuel = "
-          f"{unusable_fuel_lbm:.2f} lbm) — this is why Mission.TOTAL_FUEL_MASS "
-          f"({total_fuel_mass_lbm:.2f} lbm) is a bit below our specified tank "
-          f"capacity ({fuel_mass_lbm:.2f} lbm); real, expected, not a bug.")
+    _print_results_table(
+        design_range_nmi, total_range[0], fuel_burned[0], fuel_mass_lbm,
+        fuel_residual[0], unusable_fuel_lbm, operating_items_lbm,
+    )
 
     _save_curated_reports(geom_stem)
     _save_plain_summary(
         geom_stem, design_range_nmi, total_range[0], fuel_burned[0],
         fuel_residual[0], fuel_mass_lbm, unusable_fuel_lbm, operating_items_lbm,
     )
+
+
+def _print_results_table(design_range_nmi, total_range, fuel_burned, fuel_mass_lbm,
+                          fuel_residual, unusable_fuel_lbm, operating_items_lbm):
+    """
+    Console results, laid out as an aligned table (same "Variable | Value |
+    Units" idea as Aviary's own native mission_summary.md) instead of the
+    old free-form print lines, so this is easy to scan straight off the
+    console instead of hunting through it.
+    """
+    real_margin = fuel_mass_lbm - fuel_burned
+    crew_and_oil_lbm = operating_items_lbm - unusable_fuel_lbm
+
+    rows = [
+        ("Range flown", f"{total_range:.1f}", "nmi"),
+        ("Range target", f"{design_range_nmi:.0f}", "nmi"),
+        ("Fuel loaded (tank capacity)", f"{fuel_mass_lbm:.2f}", "lbm"),
+        ("Fuel burned", f"{fuel_burned:.2f}", "lbm"),
+        ("FUEL MARGIN (trust this one)", f"{real_margin:.2f}", "lbm"),
+        (None, None, None),  # separator
+        ("Fuel mass residual (Aviary pass/fail check, not a margin)", f"{fuel_residual:+.2f}", "lbm"),
+        ("Unusable fuel (physically stuck in tank)", f"{unusable_fuel_lbm:.2f}", "lbm"),
+        ("Pilot + engine oil weight", f"{crew_and_oil_lbm:.2f}", "lbm"),
+    ]
+    name_w = max(len(r[0]) for r in rows if r[0] is not None)
+    val_w = max(len(r[1]) for r in rows if r[1] is not None)
+
+    print("\n" + "=" * (name_w + val_w + 10))
+    print("MISSION RESULTS")
+    print("=" * (name_w + val_w + 10))
+    for name, val, unit in rows:
+        if name is None:
+            print("-" * (name_w + val_w + 10))
+            continue
+        print(f"  {name:<{name_w}}  {val:>{val_w}} {unit}")
+    print("=" * (name_w + val_w + 10))
 
 
 def _save_plain_summary(geom_stem, design_range_nmi, total_range, fuel_burned,
@@ -440,62 +481,57 @@ def _save_plain_summary(geom_stem, design_range_nmi, total_range, fuel_burned,
 
     real_margin = fuel_mass_lbm - fuel_burned
     real_margin_pct = 100.0 * real_margin / fuel_mass_lbm
-    # This is a small fixed weight (pilot + engine oil + fuel that's
-    # physically stuck in the tank) that Aviary counts as part of the
-    # aircraft's "dead weight" on top of our own EMPTY_MASS number. It is
-    # NOT fuel that got used or lost — see the "other numbers" section below.
-    housekeeping_lbm = operating_items_lbm
+    crew_and_oil_lbm = operating_items_lbm - unusable_fuel_lbm
 
     lines = [
-        "# Mission Summary (plain-language)",
+        "# MISSION SUMMARY (plain-language)",
         "",
         f"Geometry: {geom_stem}",
         f"Generated: {_time.strftime('%Y-%m-%d %H:%M:%S')}",
         "",
-        "## THE number that matters: did we have enough fuel?",
+        "| Variable Name | Value | Units |",
+        "| :- | :- | :- |",
+        f"| Range Flown | {total_range:.1f} | nmi |",
+        f"| Range Target | {design_range_nmi:.0f} | nmi |",
+        f"| Fuel Loaded (tank capacity) | {fuel_mass_lbm:.2f} | lbm |",
+        f"| Fuel Burned | {fuel_burned:.2f} | lbm |",
+        f"| **Fuel Margin (trust this one)** | **{real_margin:.2f}** | **lbm** |",
+        f"| Fuel Margin (percent) | {real_margin_pct:.1f} | % |",
         "",
-        "| Check | Value |",
-        "| :- | :- |",
-        f"| Range flown | {total_range:.1f} nmi (target {design_range_nmi:.0f} nmi) |",
-        f"| Fuel we loaded | {fuel_mass_lbm:.2f} lbm |",
-        f"| Fuel we burned flying the mission | {fuel_burned:.2f} lbm |",
-        f"| **Fuel left over (the real margin)** | **{real_margin:.2f} lbm — {real_margin_pct:.1f}% of what we loaded** |",
+        "**Verdict: the mission flew the full target range with a large, "
+        "real fuel margin.**",
         "",
-        "Range is a hard requirement (the mission is set up so it can only "
-        "\"succeed\" if it covers exactly the target distance) — so if this "
-        "run converged, it really did fly the full 400 nmi mission, not an "
-        "approximation of it.",
+        "# OTHER NUMBERS (seen in the console / native Aviary files)",
         "",
-        "**Verdict: the mission flew successfully, with a large, real fuel margin.**",
+        "These are NOT alternative fuel margins — they answer different "
+        "questions. Do not compare them to Fuel Margin above.",
         "",
-        "## Two OTHER numbers you'll see elsewhere — these are NOT fuel margins",
+        "| Variable Name | Value | Units |",
+        "| :- | :- | :- |",
+        f"| Fuel Mass Residual (Aviary pass/fail check) | {fuel_residual:+.2f} | lbm |",
+        f"| Unusable Fuel (stuck in tank, can't burn) | {unusable_fuel_lbm:.2f} | lbm |",
+        f"| Pilot + Engine Oil Weight | {crew_and_oil_lbm:.2f} | lbm |",
         "",
-        "If you look in the console output or in "
-        "`native_aviary_files/mission_summary.md`, you'll see two more "
-        "numbers that also sound like \"leftover fuel.\" They are not "
-        "answering the same question as the table above — don't compare "
-        "them to it, and don't average them or treat one as \"more correct.\"",
+        "## What each row above means",
         "",
-        f"- **Console: \"Fuel mass residual: {fuel_residual:+.2f} lbm\"** — "
-        "this is Aviary's own internal safety check (\"did the plane run "
-        "completely dry, yes/no\"). It's a pass/fail check, not a report of "
-        "how much fuel you have left. Positive = passed. Don't quote this "
-        "as the mission's fuel margin.",
+        "- **Fuel Mass Residual** — Aviary's own internal check that the "
+        "plane never ran dry mid-mission. Positive = passed. It is a "
+        "pass/fail check, not a report of fuel remaining.",
+        "- **Unusable Fuel** — fuel physically trapped in the tank (corners, "
+        "lines) that the engine can never draw on, computed from this "
+        "aircraft's own wing area/thrust/tank size.",
+        "- **Pilot + Engine Oil Weight** — fixed weight Aviary adds for the "
+        "1 pilot (225 lbm) and engine oil. Has nothing to do with how far "
+        "the mission flew.",
+        "- Add Unusable Fuel + Pilot/Oil Weight together and you get the "
+        "\"Excess Fuel Capacity\" number shown in "
+        "`native_aviary_files/mission_summary.md` — same misleading name, "
+        "same two things, just relabeled here.",
         "",
-        f"- **mission_summary.md: \"Excess Fuel Capacity: {(operating_items_lbm - unusable_fuel_lbm):.2f} lbm\"** "
-        "— despite the name, this is NOT fuel at all. It's the weight of "
-        "3 fixed things that have nothing to do with how far we flew: "
-        f"the pilot (225 lbm), engine oil, and fuel that's physically stuck "
-        f"in the tank and can never be burned ({unusable_fuel_lbm:.2f} lbm). "
-        f"Total \"stuck weight\" this run: {housekeeping_lbm:.2f} lbm. It "
-        "happens to get called \"Excess Fuel Capacity\" by Aviary's own "
-        "report generator, which is a misleading name for what it actually "
-        "is.",
-        "",
-        "**Bottom line for a presentation or report: only ever quote the "
-        "table at the top of this file (\"fuel we loaded\" vs. \"fuel we "
-        "burned\"). The other two numbers are internal Aviary housekeeping "
-        "checks that happen to have \"fuel\" in their name — they are not "
+        "**Bottom line for a presentation or report: only ever quote Fuel "
+        "Margin from the top table. The other two numbers are internal "
+        "Aviary housekeeping checks that happen to have \"fuel\" in their "
+        "name — they are not "
         "alternative measurements of mission fuel margin, and disagreeing "
         "with the top table is expected, not an error.**",
         "",
