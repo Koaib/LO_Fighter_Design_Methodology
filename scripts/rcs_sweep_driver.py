@@ -25,6 +25,15 @@ left-right symmetric (both sides moved together) — a delta that breaks
 symmetry (e.g. canting only one of two vertical tails) needs
 az_range="full" for that specific parameter, or its azimuth mean will
 only ever see one side of the aircraft.
+
+Δ=0.0 (baseline) is run exactly ONCE, shared across every parameter —
+call run_baseline() before any run_parameter() calls. Every parameter's
+delta list should still list 0.0 (it's the anchor point on the plots),
+but build_param_configs() skips spawning a worker for it and
+_load_done_manifests() splices in the shared baseline manifest instead
+— applying "+0" to any parameter produces the identical untouched
+geometry, so re-running the (expensive) RCS solve on it once per
+parameter would be pure waste.
 """
 import subprocess, json, os, sys, csv
 from pathlib import Path
@@ -75,6 +84,48 @@ BASE = dict(
     growth_ratio=1.6, num_circle_segs=12.0,
 )
 
+# Delta=0.0 is the SAME physical geometry no matter which parameter's
+# sweep it nominally belongs to — applying "+0" to VTCant vs. WingTwist
+# vs. anything else all produce the untouched baseline aircraft. Running
+# it once here and reusing the result as every parameter's Δ=0 anchor
+# point avoids paying for the (expensive) RCS solve on the identical
+# baseline geometry once per parameter. See run_baseline() /
+# build_param_configs()'s d==0.0 skip / _load_done_manifests()'s splice.
+BASELINE_ROOT = RESULTS_ROOT / "_baseline"
+
+
+def build_baseline_config():
+    return {
+        **BASE, "tag": "baseline", "param": "baseline", "delta": 0.0,
+        "parm_overrides": [],
+        "results_root": str(BASELINE_ROOT),
+        "manifest_dir": str(BASELINE_ROOT / "manifest"),
+    }
+
+
+def run_baseline():
+    """Runs the shared Δ=0 baseline once (manifest-skip makes repeat calls free)."""
+    (BASELINE_ROOT / "rcs").mkdir(parents=True, exist_ok=True)
+    (BASELINE_ROOT / "stl").mkdir(parents=True, exist_ok=True)
+    cfg = build_baseline_config()
+    if not run_one(cfg):
+        raise RuntimeError(
+            "Baseline RCS run failed — every parameter's Δ=0 anchor point "
+            "depends on it. Check Results/RCS_SensitivityStudy/_logs/baseline.log"
+        )
+    return cfg
+
+
+def _load_baseline_manifest():
+    mpath = BASELINE_ROOT / "manifest" / "baseline.json"
+    if not mpath.exists():
+        raise FileNotFoundError(
+            "No shared baseline manifest found — call run_baseline() before "
+            "any run_parameter() call."
+        )
+    with open(mpath) as f:
+        return json.load(f)
+
 
 def _override(param_key, delta):
     spec = SWEEP_PARAMS[param_key]
@@ -84,6 +135,8 @@ def _override(param_key, delta):
 def build_param_configs(param_key, deltas, results_root, extra_param_keys=None):
     configs = []
     for d in deltas:
+        if d == 0.0:
+            continue   # shared baseline covers this — see run_baseline()
         overrides = [_override(param_key, d)]
         for extra_key in (extra_param_keys or []):
             overrides.append(_override(extra_key, d))
@@ -135,10 +188,19 @@ def run_one(cfg, retry=True):
 # ── per-parameter outputs (plots + summary CSV) ────────────────────────────
 
 def _load_done_manifests(param_key, deltas, results_root):
-    """Returns [(delta, manifest_dict), ...] sorted by delta, done runs only."""
+    """Returns [(delta, manifest_dict), ...] sorted by delta, done runs only.
+    Δ=0.0 is spliced in from the shared baseline manifest (see
+    run_baseline()) rather than a per-parameter "<param>_+0.00" file,
+    since build_param_configs() never runs that case per-parameter."""
     manifest_dir = results_root / "manifest"
     rows = []
     for d in deltas:
+        if d == 0.0:
+            try:
+                rows.append((0.0, _load_baseline_manifest()))
+            except FileNotFoundError:
+                print(f"  [outputs] no shared baseline manifest — skipping Δ=0 for {param_key}")
+            continue
         tag = f"{param_key}_{d:+.2f}"
         mpath = manifest_dir / f"{tag}.json"
         if not mpath.exists():
@@ -304,13 +366,21 @@ def run_parameter(param_key, deltas, extra_param_keys=None):
 
 
 if __name__ == "__main__":
-    # ── TODO: fill in your actual shaping parameters + delta lists here ──
-    # Each param_key must exist in SWEEP_PARAMS_FILE (same
-    # geom/surf/section/parm/baseline schema the aero sweep already uses).
-    # Always include 0.0 so the plots have a baseline point to anchor on.
-    #
-    # run_parameter("VTCant",         [0.0, -20, -10, -5, 5, 10, 20])
-    # run_parameter("WingTwist_sec1", [0.0, -3, -2, -1, 1, 2, 3])
-    # run_parameter("WingSweep_sec1", [0.0, -15, -10, -5, 5, 10, 15],
-    #               extra_param_keys=["WingSweep_sec2", "HTSweep_sec1", "HTSweep_sec2"])
-    pass
+    # Sample fill — reuses the exact param_key names and delta lists
+    # sweep_driver.py's own Stage-2 (RUN_RCS=True) block already settled
+    # on for an RCS-inclusive run, since those deltas were chosen with
+    # solver cost already in mind. Each param_key must exist in
+    # SWEEP_PARAMS_FILE (same geom/surf/section/parm/baseline schema the
+    # aero sweep already uses) — swap these for your real N parameters
+    # once you have them; the 0.0 in every list is the shared baseline
+    # (see run_baseline()), not a per-parameter run.
+    DELTAS_VT_CANT     = [0.0, -15, -8, 8, 15]
+    DELTAS_WING_TWIST  = [0.0, -2, -1, 1, 2]
+    DELTAS_WING_SWEEP  = [0.0, -12, -8, -4, 4, 8, 12]
+
+    run_baseline()   # once, shared — every run_parameter() call below reuses it for Δ=0
+
+    run_parameter("VTCant",         DELTAS_VT_CANT)
+    run_parameter("WingTwist_sec1", DELTAS_WING_TWIST)
+    run_parameter("WingSweep_sec1", DELTAS_WING_SWEEP,
+                  extra_param_keys=["WingSweep_sec2", "HTSweep_sec1", "HTSweep_sec2"])
