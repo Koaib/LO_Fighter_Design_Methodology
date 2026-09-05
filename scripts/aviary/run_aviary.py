@@ -22,6 +22,7 @@ Usage (standalone, uses this file's own placeholder defaults):
 """
 
 import sys, os
+import numpy as np
 sys.path.insert(0, os.path.dirname(__file__))
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))  # for vsp_setup
 
@@ -734,6 +735,54 @@ def run_aviary_mission(
                       f"mass-link constraint is satisfied): {climb_mass0}")
             except Exception as diag_err:
                 print(f"   traj.<first_phase>.states:mass[0]: <could not read: {diag_err}>")
+
+            # Direct test of the "badlin" hypothesis from the comment above
+            # prob.add_driver() - that SLSQP is stalling because the
+            # linearized equality-constraint Jacobian is rank-deficient
+            # (scipy's compiled __slsqp.c sets an internal `badlin` flag in
+            # that case and then can never report success, regardless of
+            # tol/max_iter, which matches the bit-identical stalls already
+            # observed at max_iter=100/200/1000). That flag isn't exposed by
+            # scipy's Python wrapper, but the same Jacobian SLSQP builds it
+            # from is: prob.compute_totals() with driver_scaling=True
+            # returns the exact scaled equality-constraint Jacobian
+            # OpenMDAO hands to the driver, and its rank vs. row count is a
+            # direct, non-guessing answer to whether it's singular.
+            try:
+                eq_con_names = [
+                    name for name, meta in prob.driver._cons.items()
+                    if meta.get('equals') is not None
+                ]
+                dv_names = list(prob.driver._designvars.keys())
+                totals = prob.compute_totals(
+                    of=eq_con_names, wrt=dv_names, driver_scaling=True
+                )
+                jac_rows = []
+                for con_name in eq_con_names:
+                    row_blocks = [totals[con_name, dv_name] for dv_name in dv_names]
+                    jac_rows.append(np.hstack(row_blocks))
+                jac = np.vstack(jac_rows)
+                rank = np.linalg.matrix_rank(jac)
+                print(
+                    f"\n   equality-constraint Jacobian rank check (badlin test): "
+                    f"{jac.shape[0]} equality-constraint rows, {jac.shape[1]} design "
+                    f"variable columns, numerical rank={rank}."
+                )
+                if rank < jac.shape[0]:
+                    print(
+                        f"   RANK-DEFICIENT by {jac.shape[0] - rank} row(s) - this "
+                        f"CONFIRMS the badlin hypothesis: SLSQP's equality-constraint "
+                        f"linearization is singular at this point, which is why it "
+                        f"can never report success here regardless of tol/max_iter."
+                    )
+                else:
+                    print(
+                        "   Full rank - this RULES OUT badlin/rank-deficiency as the "
+                        "cause of the stall; the real cause is elsewhere."
+                    )
+            except Exception as diag_err:
+                print(f"   equality-constraint Jacobian rank check: <could not compute: {diag_err}>")
+
             print("--- end diagnostic dump ---\n")
             raise RuntimeError(
                 "Aviary mission solve did not converge (prob.result=True means "
