@@ -1,4 +1,11 @@
 # -*- coding: utf-8 -*-
+
+"""
+Created on Thu Apr 16 20:24:37 2026
+
+@author: KK
+"""
+
 """
 rcs_sweep_driver.py — RCS-only shaping-parameter sensitivity study.
 
@@ -29,27 +36,33 @@ only ever see one side of the aircraft.
 Δ=0.0 (baseline) is run exactly ONCE, shared across every parameter —
 call run_baseline() before any run_parameter() calls. Every parameter's
 delta list should still list 0.0 (it's the anchor point on the plots),
-but build_param_configs() skips spawning a worker for it and
-_load_done_manifests() splices in the shared baseline manifest instead
-— applying "+0" to any parameter produces the identical untouched
+but build_param_configs() skips spawning a worker for it — the shared
+baseline manifest is spliced in later, at PLOT time, by the separate
+rcs_compare_family.py script (not by this driver — see that file).
+Applying "+0" to any parameter produces the identical untouched
 geometry, so re-running the (expensive) RCS solve on it once per
 parameter would be pure waste.
-"""
-import subprocess, json, os, sys, csv
-from pathlib import Path
 
-import numpy as np
-import matplotlib
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt
+NOTE — plotting was deliberately pulled OUT of this file (used to live
+here as _load_done_manifests/_plot_.../build_param_outputs). Two
+problems with having it here: (1) it made re-plotting depend on
+re-running this driver, so you couldn't just regenerate plots once
+baseline finally finished without touching the run loop again; (2) the
+polar-overlay plotter called run_openrcs._azimuth_to_full_circle(...),
+but that function is defined NESTED inside run_openrcs_pipeline() in
+run_openrcs.py, not at module level — that call would have raised
+AttributeError the first time it actually ran. Both are fixed in
+rcs_compare_family.py, which now owns all plotting: run it any time,
+as often as you want, and it just reads whatever manifests are on disk.
+"""
+import subprocess, json, os, sys
+from pathlib import Path
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 ROOT_DIR   = SCRIPT_DIR.parent
 sys.path.insert(0, str(SCRIPT_DIR))
 
 from pipeline_config import GEOMETRY_DIR, IMPORT_FILE
-import run_openrcs  # reused for _parse_dat / _azimuth_to_full_circle — avoids
-                     # duplicating the .dat-parsing logic for the polar overlay
 
 VSP3_FILE = str(Path(GEOMETRY_DIR) / IMPORT_FILE)
 SETS_FILE = str(Path(GEOMETRY_DIR) / (Path(IMPORT_FILE).stem + "_sets.json"))
@@ -66,16 +79,27 @@ RESULTS_ROOT = ROOT_DIR / "Results" / "RCS_SensitivityStudy"
 LOG_ROOT     = RESULTS_ROOT / "_logs"
 LOG_ROOT.mkdir(parents=True, exist_ok=True)
 
-TIMEOUT_SEC = 150 * 60  # per-delta wall-clock cap. Was 60 min, which killed the baseline
-                        # worker mid-CFD-mesh (main.py's own CFD-mesh export on this same
-                        # geometry has no timeout at all and takes longer than that to
-                        # triangulate the full aircraft) - confirmed the geometry/mesh
-                        # settings themselves are fine (main.py has produced this exact
-                        # STL before), so this was purely too tight a wall-clock cap, not
-                        # a meshing failure. Frontal cut (61x7=427 pts) is the other slow
-                        # part once meshing is done. Bumped from 120 to 150 for extra
-                        # margin since actual mesh time on the full aircraft is still
-                        # unmeasured (main.py runs it unbounded, with no timeout).
+TIMEOUT_SEC = None     # No wall-clock cap. Was 150 min (before that, 60 then 120)
+                        # and each bump still risked killing a legitimate run
+                        # mid-CFD-mesh — main.py's own CFD-mesh export on this same
+                        # geometry has no timeout at all, so the mesh alone can
+                        # legitimately outlast whatever number we guessed here.
+                        # subprocess.run(timeout=None) never raises TimeoutExpired,
+                        # so this matches main.py's own unbounded behaviour instead
+                        # of guessing another arbitrary cap.
+                        #
+                        # Trade-off: this removes the only automatic protection
+                        # against a genuinely HUNG worker (e.g. the Octave-GUI-hang
+                        # failure mode noted elsewhere in this project). If a run
+                        # looks stuck, check the matching file under
+                        # Results/RCS_SensitivityStudy/_logs/<tag>.log — its
+                        # last-modified time tells you whether OpenVSP/OpenRCS is
+                        # still actively writing output or has actually frozen.
+                        # If you'd rather keep an automatic safety net, set this
+                        # back to a number (in seconds) generous enough for the
+                        # single most expensive case (baseline, azimuth+frontal) —
+                        # e.g. 4-6 hours — rather than the per-delta sweep points,
+                        # which are far cheaper.
 
 # Same CFD-mesh settings as main.py's USE_CFD_MESH block, TE-z-only /
 # azimuth+frontal cuts per the confirmed sensitivity-study scope.
@@ -113,27 +137,33 @@ def build_baseline_config():
 
 
 def run_baseline():
-    """Runs the shared Δ=0 baseline once (manifest-skip makes repeat calls free)."""
+    """
+    Runs the shared Δ=0 baseline once (manifest-skip makes repeat calls free).
+
+    Deliberately does NOT raise on failure/timeout. It used to — but that
+    made every other parameter study wait on baseline succeeding first,
+    even though none of them actually need baseline's RCS *result* to run
+    their own (non-zero-delta) geometry variants. Baseline is only needed
+    later, as the Δ=0 anchor point when rcs_compare_family.py builds plots
+    — and that script already tolerates a missing baseline manifest fine
+    (see its load_family()). So: best-effort here, loud warning if it
+    fails, and the calling code carries on regardless.
+    """
     (BASELINE_ROOT / "rcs").mkdir(parents=True, exist_ok=True)
     (BASELINE_ROOT / "stl").mkdir(parents=True, exist_ok=True)
     cfg = build_baseline_config()
-    if not run_one(cfg):
-        raise RuntimeError(
-            "Baseline RCS run failed — every parameter's Δ=0 anchor point "
-            "depends on it. Check Results/RCS_SensitivityStudy/_logs/baseline.log"
+    ok = run_one(cfg)
+    if not ok:
+        print(
+            "[baseline] FAILED or still running — continuing WITHOUT it.\n"
+            "  Every parameter study below will still run its own deltas.\n"
+            "  Check Results/RCS_SensitivityStudy/_logs/baseline.log, then "
+            "re-run run_baseline() (or just this whole script — manifest-skip "
+            "makes finished deltas free) once it's fixed. Re-run "
+            "rcs_compare_family.py afterwards to fill in the Δ=0 anchor point "
+            "on every study's plots."
         )
-    return cfg
-
-
-def _load_baseline_manifest():
-    mpath = BASELINE_ROOT / "manifest" / "baseline.json"
-    if not mpath.exists():
-        raise FileNotFoundError(
-            "No shared baseline manifest found — call run_baseline() before "
-            "any run_parameter() call."
-        )
-    with open(mpath) as f:
-        return json.load(f)
+    return cfg if ok else None
 
 
 def _override(param_key, delta):
@@ -206,169 +236,14 @@ def run_one(cfg, retry=True):
     print(f"RAN BUT NOT DONE ({status}) — {cfg['tag']}, see {log_path}"); return False
 
 
-# ── per-parameter outputs (plots + summary CSV) ────────────────────────────
-
-def _load_done_manifests(study_name, deltas, results_root):
-    """Returns [(delta, manifest_dict), ...] sorted by delta, done runs only.
-    Δ=0.0 is spliced in from the shared baseline manifest (see
-    run_baseline()) rather than a per-study "<study>_+0.00" file, since
-    build_param_configs() never runs that case per-study."""
-    manifest_dir = results_root / "manifest"
-    rows = []
-    for d in deltas:
-        if d == 0.0:
-            try:
-                rows.append((0.0, _load_baseline_manifest()))
-            except FileNotFoundError:
-                print(f"  [outputs] no shared baseline manifest — skipping Δ=0 for {study_name}")
-            continue
-        tag = f"{study_name}_{d:+.2f}"
-        mpath = manifest_dir / f"{tag}.json"
-        if not mpath.exists():
-            print(f"  [outputs] no manifest for {tag} — skipping"); continue
-        with open(mpath) as f:
-            entry = json.load(f)
-        if entry.get("status") != "done":
-            print(f"  [outputs] {tag} status={entry.get('status')!r} — skipping"); continue
-        rows.append((d, entry))
-    return sorted(rows, key=lambda r: r[0])
-
-
-def _plot_mean_vs_delta(rows, tag_key, study_name, ylabel, out_path):
-    deltas = [d for d, e in rows if tag_key in e.get("means", {})]
-    means  = [e["means"][tag_key] for d, e in rows if tag_key in e.get("means", {})]
-    if not deltas:
-        print(f"  [outputs] no {tag_key} means to plot for {study_name}"); return None
-
-    fig, ax = plt.subplots(figsize=(7, 4.5), facecolor="white")
-    ax.set_facecolor("white")
-    ax.plot(deltas, means, color="steelblue", lw=1.4, marker="o", markersize=5, zorder=3)
-    baseline_val = np.mean(means)
-    if 0.0 in deltas:
-        i0 = deltas.index(0.0)
-        baseline_val = means[i0]
-        ax.plot(deltas[i0], means[i0], marker="o", markersize=9,
-                markerfacecolor="none", markeredgecolor="crimson", markeredgewidth=1.6,
-                zorder=4, label="baseline (Δ=0)")
-        ax.legend(fontsize=9)
-    ax.axhline(baseline_val, color="grey", lw=0.6, linestyle=":", zorder=1)
-    ax.set_xlabel(f"{study_name}  Δ", fontsize=11)
-    ax.set_ylabel(ylabel, fontsize=11)
-    ax.grid(True, linestyle="--", alpha=0.5)
-    ax.set_title(f"{study_name} — {ylabel} vs. Δ", fontsize=11)
-    fig.tight_layout()
-    fig.savefig(out_path, dpi=150, bbox_inches="tight")
-    plt.close(fig)
-    print(f"  saved -> {out_path.name}")
-    return out_path
-
-
-def _plot_azimuth_polar_overlay(rows, study_name, out_path):
-    """
-    All deltas' azimuth cuts (TE-z co-pol = Sph) overlaid on one polar plot.
-    Reuses run_openrcs's own half->full-circle mirror and dat parser so this
-    stays visually consistent with the single-run polar maps.
-    """
-    curves = []
-    for d, e in rows:
-        dat_path = e.get("rcs_outputs", {}).get("AZ_TE")
-        if not dat_path or not os.path.isfile(dat_path):
-            continue
-        parsed = run_openrcs._parse_dat(dat_path)
-        if not len(parsed["sph"]):
-            continue
-        phi_full, sph_full = run_openrcs._azimuth_to_full_circle(parsed["phi_vals"], parsed["sph"])
-        curves.append((d, phi_full, sph_full))
-    if not curves:
-        print(f"  [outputs] no azimuth .dat files to overlay for {study_name}"); return None
-
-    all_sph = np.concatenate([c[2] for c in curves])
-    rcs_max = np.ceil(np.nanmax(all_sph) / 10) * 10
-    rcs_min = rcs_max - 60.0
-
-    fig = plt.figure(figsize=(7.5, 7.5), facecolor="#e8e8e8")
-    ax = fig.add_subplot(111, polar=True, facecolor="#e8e8e8")
-    ax.set_theta_zero_location("N")
-    ax.set_theta_direction(-1)
-
-    # Diverging colormap centred on delta=0 so negative/positive deltas read
-    # as opposite hues and the baseline (if present) is visually neutral.
-    max_abs_delta = max(abs(d) for d, _, _ in curves) or 1.0
-    cmap = matplotlib.colormaps["coolwarm"]
-
-    def _rcs_to_r(rcs):
-        return np.clip((rcs - rcs_min) / (rcs_max - rcs_min), 0.0, 1.0)
-
-    ring_vals = np.linspace(rcs_min, rcs_max, 7)
-    ring_angles = np.linspace(0, 2 * np.pi, 361)
-    for rv in ring_vals:
-        rr = _rcs_to_r(rv)
-        ax.plot(ring_angles, np.full_like(ring_angles, rr), color="grey", lw=0.5, zorder=1)
-        if rr > 0.05:
-            ax.text(np.deg2rad(105), rr, f"{rv:.0f}", ha="left", va="center",
-                    fontsize=7, color="dimgrey", zorder=6)
-    for sd in range(0, 360, 30):
-        ax.plot([np.deg2rad(sd), np.deg2rad(sd)], [0, 1], color="grey", lw=0.5, zorder=1)
-
-    for d, phi_full, sph_full in curves:
-        color = "black" if d == 0.0 else cmap(0.5 + 0.5 * d / max_abs_delta)
-        r = _rcs_to_r(sph_full)
-        t = np.append(np.deg2rad(phi_full), np.deg2rad(phi_full[0]))
-        r = np.append(r, r[0])
-        ax.plot(t, r, color=color, lw=1.6 if d == 0.0 else 1.0,
-                alpha=1.0 if d == 0.0 else 0.85, zorder=5,
-                label=f"Δ={d:+.2f}" + ("  (baseline)" if d == 0.0 else ""))
-
-    ax.legend(loc="lower left", bbox_to_anchor=(-0.15, -0.15), fontsize=7.5, framealpha=0.7)
-    spokes = {0: "0°\n(nose)", 90: "90°", 180: "180°\n(tail)", 270: "270°"}
-    ax.set_xticks(np.deg2rad(list(spokes.keys())))
-    ax.set_xticklabels(list(spokes.values()), fontsize=8)
-    ax.set_yticks([])
-    ax.grid(False)
-    ax.spines["polar"].set_visible(False)
-    ax.set_ylim(0, 1)
-    fig.suptitle(f"{study_name} — Azimuth RCS overlay, all Δ  (TE-z co-pol Sφ, θ=90°)\n"
-                 f"scale: {rcs_min:.0f} dBsm (centre) → {rcs_max:.0f} dBsm (rim)",
-                 fontsize=10, y=1.0)
-    fig.tight_layout()
-    fig.savefig(out_path, dpi=150, bbox_inches="tight", facecolor="#e8e8e8")
-    plt.close(fig)
-    print(f"  saved -> {out_path.name}")
-    return out_path
-
-
-def _write_summary_csv(rows, study_name, out_path):
-    with open(out_path, "w", newline="") as f:
-        w = csv.writer(f)
-        w.writerow(["delta", "tag", "az_mean_TE_dBsm", "frontal_mean_TE_dBsm",
-                    "stl_path", "az_dat_path", "frontal_dat_path"])
-        for d, e in rows:
-            means = e.get("means", {})
-            rcs_out = e.get("rcs_outputs", {})
-            w.writerow([
-                d, e.get("tag"),
-                means.get("AZ_TE", ""), means.get("FR_TE", ""),
-                e.get("stl_path", ""),
-                rcs_out.get("AZ_TE", ""), rcs_out.get("FR_TE", ""),
-            ])
-    print(f"  saved -> {out_path.name}")
-
-
-def build_param_outputs(study_name, deltas, results_root):
-    rows = _load_done_manifests(study_name, deltas, results_root)
-    if not rows:
-        print(f"[outputs] {study_name}: no completed deltas — nothing to plot"); return
-
-    plots_dir = results_root / "plots"
-    plots_dir.mkdir(parents=True, exist_ok=True)
-    print(f"[outputs] {study_name}: building comparison plots from {len(rows)} completed deltas")
-
-    _plot_mean_vs_delta(rows, "AZ_TE", study_name, "Mean Azimuth RCS (dBsm)",
-                         plots_dir / f"{study_name}_AzimuthMean_vs_delta.png")
-    _plot_mean_vs_delta(rows, "FR_TE", study_name, "Mean Frontal-Sector RCS (dBsm)",
-                         plots_dir / f"{study_name}_FrontalMean_vs_delta.png")
-    _plot_azimuth_polar_overlay(rows, study_name, plots_dir / f"{study_name}_AzimuthPolar_overlay.png")
-    _write_summary_csv(rows, study_name, results_root / f"summary_{study_name}.csv")
+# ── outputs note ─────────────────────────────────────────────────────────
+# Plotting (mean-vs-delta lines, azimuth polar overlay, summary CSV) used
+# to live in this file as _load_done_manifests/_plot_.../build_param_outputs,
+# called automatically at the end of run_parameter(). It has moved to the
+# standalone rcs_compare_family.py — run that separately, any time, to
+# (re)build every study's plots from whatever manifests already exist on
+# disk. See that file's docstring for why (git history / diff has the old
+# version if you need to compare).
 
 
 # ── orchestration ───────────────────────────────────────────────────────────
@@ -379,6 +254,10 @@ def run_parameter(param_key, deltas, extra_param_keys=None, study_name=None):
     study_name  : results-folder/tag name, if it must differ from
                   param_key (see build_param_configs' docstring) —
                   defaults to param_key.
+
+    Only RUNS the sweep (subprocess-per-delta, manifest-skip/resume) —
+    no plotting here anymore. Call rcs_compare_family.py separately
+    (once, after some/all studies below have run) to build plots.
     """
     study_name = study_name or param_key
     results_root = RESULTS_ROOT / study_name
@@ -388,8 +267,6 @@ def run_parameter(param_key, deltas, extra_param_keys=None, study_name=None):
     configs = build_param_configs(param_key, deltas, results_root, extra_param_keys, study_name)
     results = {cfg["tag"]: run_one(cfg) for cfg in configs}
     print(json.dumps(results, indent=2))
-
-    build_param_outputs(study_name, deltas, results_root)
     return results
 
 
@@ -413,7 +290,10 @@ if __name__ == "__main__":
     DELTAS_WING_SWEEP = [-15, -12, -9, -6, -3, 0.0, 3, 6, 9, 12, 15]  # deg
     DELTAS_TC         = [-0.02, -0.01, 0.0, 0.01, 0.02]  # absolute t/c 0.02-0.06 around baseline 0.04
 
-    run_baseline()   # once, shared — every run_parameter() call below reuses it for Δ=0
+    run_baseline()   # once, shared, BEST-EFFORT — no longer blocks the studies
+                     # below if it fails/is slow (see run_baseline() docstring).
+                     # Its Δ=0 result gets picked up later by
+                     # rcs_compare_family.py whenever it's actually done.
 
     run_parameter("VT_Cant", DELTAS_VT_CANT)
 
@@ -457,3 +337,8 @@ if __name__ == "__main__":
     #   "WingThickChord_sec2": {"geom":"Main_Wing","surf":0,"section":2,"parm":"ThickChord","baseline":0.04}
     run_parameter("WingThickChord_sec0", DELTAS_TC,
                   extra_param_keys=["WingThickChord_sec1", "WingThickChord_sec2"])
+
+    print("\nAll studies dispatched. Run `python rcs_compare_family.py` "
+          "(no args) to build/refresh plots for every study found under "
+          f"{RESULTS_ROOT} — safe to re-run any time, including once "
+          "baseline finishes later.")
