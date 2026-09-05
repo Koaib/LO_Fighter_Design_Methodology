@@ -783,6 +783,75 @@ def run_aviary_mission(
             except Exception as diag_err:
                 print(f"   equality-constraint Jacobian rank check: <could not compute: {diag_err}>")
 
+            # Full rank rules out badlin, but doesn't say WHY x stopped
+            # moving. Mission.GROSS_MASS printed identical to full float
+            # precision across all 100 iterations, and it's the only design
+            # variable the objective depends on at all (reg_objective =
+            # overall_fuel/10000 + ascent_duration/30, ascent_duration a
+            # dangling 0 here per the earlier finding, overall_fuel =
+            # gross_mass - zero_fuel_mass per aviary_group.py) - so if x is
+            # already a first-order KKT point of the equality-constrained
+            # problem (grad(objective) expressible as J^T @ lambda for some
+            # multiplier vector lambda), SLSQP would have every reason to
+            # stop moving it, and the "Iteration limit reached" failure
+            # would just be SLSQP's own convergence test not recognizing a
+            # point it has, in substance, already reached (e.g. because of
+            # floating-point noise in the constraint residuals from the
+            # nested Newton solves, or an unaccounted-for active inequality
+            # such as the throttle path constraints or excess fuel
+            # capacity). Solving the least-squares system J^T @ lambda =
+            # grad(objective) and checking the residual is a direct,
+            # non-guessing test of that: a near-zero residual confirms x is
+            # already stationary; a large one proves it is NOT, and SLSQP
+            # is genuinely stuck rather than just failing to declare victory.
+            try:
+                eq_con_names = [
+                    name for name, meta in prob.driver._cons.items()
+                    if meta.get('equals') is not None
+                ]
+                dv_names = list(prob.driver._designvars.keys())
+                totals = prob.compute_totals(
+                    of=eq_con_names + [Mission.Objectives.FUEL],
+                    wrt=dv_names, driver_scaling=True,
+                )
+                jac_rows = []
+                for con_name in eq_con_names:
+                    row_blocks = [totals[con_name, dv_name] for dv_name in dv_names]
+                    jac_rows.append(np.hstack(row_blocks))
+                jac = np.vstack(jac_rows)
+                grad_obj = np.hstack(
+                    [totals[Mission.Objectives.FUEL, dv_name] for dv_name in dv_names]
+                ).ravel()
+                lam, _, _, _ = np.linalg.lstsq(jac.T, grad_obj, rcond=None)
+                residual = grad_obj - jac.T @ lam
+                grad_norm = np.linalg.norm(grad_obj)
+                residual_norm = np.linalg.norm(residual)
+                print(
+                    f"\n   KKT-stationarity check (equality constraints only): "
+                    f"||grad(objective)||={grad_norm:.6g}, ||residual after projecting "
+                    f"onto the constraint-gradient row space||={residual_norm:.6g} "
+                    f"({100 * residual_norm / grad_norm:.4g}% of the gradient norm)."
+                )
+                if residual_norm < 1e-3 * grad_norm:
+                    print(
+                        "   Residual is negligible - Mission.GROSS_MASS is already a "
+                        "first-order KKT-stationary point for the equality-constrained "
+                        "problem. SLSQP not moving it further is CORRECT behavior; the "
+                        "'Iteration limit reached' failure is SLSQP's own stopping test "
+                        "not recognizing a point it has effectively already reached "
+                        "(likely constraint-tolerance/noise or an unmodeled active "
+                        "inequality, e.g. a throttle path constraint or the excess fuel "
+                        "capacity bound), not evidence of a real remaining defect."
+                    )
+                else:
+                    print(
+                        "   Residual is NOT negligible - Mission.GROSS_MASS is genuinely "
+                        "NOT at a stationary point yet. SLSQP failing to move it is a "
+                        "real stall, not just a missed convergence declaration."
+                    )
+            except Exception as diag_err:
+                print(f"   KKT-stationarity check: <could not compute: {diag_err}>")
+
             print("--- end diagnostic dump ---\n")
             raise RuntimeError(
                 "Aviary mission solve did not converge (prob.result=True means "
