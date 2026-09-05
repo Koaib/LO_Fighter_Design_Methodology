@@ -51,6 +51,42 @@ from external_aero_builder import ExternalAeroBuilder
 from build_engine_deck import build_deck
 
 # =============================================================================
+# CONSOLE-TO-FILE LOGGING — Spyder's IPython console has a scrollback limit,
+# and a single run here (suppress_solver_print=False, iprint=2) prints
+# thousands of lines (Newton-solver sub-iteration spam x ~100 SLSQP
+# iterations). Once that limit is hit, Spyder silently drops the OLDEST
+# lines from the console, which is why copy-pasting "the whole run" kept
+# coming back incomplete/stale no matter how carefully it was copied - the
+# lines were gone from the console itself, not lost in the copy. This tees
+# every print() (this file's own + Aviary's + OpenMDAO's + Dymos's, since
+# they all go through the same sys.stdout) to a plain text file as well,
+# so the full, exact transcript of a run is always available on disk
+# regardless of what the console can hold or show.
+# Appends (not overwrites) so old runs stay in the file too - each run is
+# marked with its own timestamped header so the LATEST run is easy to find
+# (jump to the end of the file / search for the last "RUN START").
+class _ConsoleTee:
+    def __init__(self, *streams):
+        self._streams = streams
+    def write(self, data):
+        for s in self._streams:
+            s.write(data)
+    def flush(self):
+        for s in self._streams:
+            s.flush()
+
+_CONSOLE_LOG_PATH = os.path.join(vsp_setup.AVIARY_FILES, "run_aviary_console_log.txt")
+if not isinstance(sys.stdout, _ConsoleTee):  # avoid stacking tees on re-import in the same kernel
+    import datetime as _datetime
+    _console_log_file = open(_CONSOLE_LOG_PATH, "a", encoding="utf-8")
+    _console_log_file.write(
+        f"\n\n{'=' * 80}\nRUN START {_datetime.datetime.now().isoformat()}\n{'=' * 80}\n"
+    )
+    _console_log_file.flush()
+    sys.stdout = _ConsoleTee(sys.stdout, _console_log_file)
+    print(f"(Full console output for this run is also being saved to: {_CONSOLE_LOG_PATH})")
+
+# =============================================================================
 # FIXED ARCHITECTURE CHOICES — not user config, don't move to main.py.
 # Other files assume these exact values: phase_info.py's 'tabular_cruise'
 # aero method is GASP-specific; the mass overrides below assume FLOPS's
