@@ -638,12 +638,34 @@ def run_aviary_mission(
                 ("Mission.FUEL_MASS (fuel burned)", Mission.FUEL_MASS),
                 ("Mission.Objectives.FUEL (actual SLSQP objective)", Mission.Objectives.FUEL),
                 ("Mission.Takeoff.ASCENT_DURATION (feeds the objective; may be a dangling default since include_takeoff=False)", Mission.Takeoff.ASCENT_DURATION),
+                # Aviary's own energy_state_problem_configurator.py
+                # (add_post_mission_systems(), the include_takeoff=False
+                # branch) automatically adds an EQConstraintComp forcing
+                # traj.<first-phase>.states:mass[0] == Mission.Takeoff.FINAL_MASS
+                # (= Mission.GROSS_MASS - taxi/takeoff fuel burn) - this is
+                # how Mission.GROSS_MASS is actually supposed to tie into the
+                # real flown trajectory, as a CONSTRAINT rather than a direct
+                # connection. The last run's negative Mission.FUEL_MASS at an
+                # "Iteration limit reached" (Exit mode 9, non-converged) stop
+                # is consistent with this constraint simply not having been
+                # driven to zero yet, not with GROSS_MASS being physically
+                # disconnected from the trajectory. Printing both sides
+                # directly settles which it is instead of guessing further.
+                ("Mission.Takeoff.FINAL_MASS (should equal the climb phase's actual starting mass)", Mission.Takeoff.FINAL_MASS),
             ]:
                 try:
                     val = prob.get_val(var)
                     print(f"   {label}: {val}")
                 except Exception as diag_err:
                     print(f"   {label}: <could not read: {diag_err}>")
+            try:
+                first_phase_name = list(prob.model.mission_info.keys())[0]
+                climb_mass0 = prob.get_val(f"traj.{first_phase_name}.states:mass")[0]
+                print(f"   traj.{first_phase_name}.states:mass[0] (actual flown starting "
+                      f"mass - should equal Mission.Takeoff.FINAL_MASS above if the "
+                      f"mass-link constraint is satisfied): {climb_mass0}")
+            except Exception as diag_err:
+                print(f"   traj.<first_phase>.states:mass[0]: <could not read: {diag_err}>")
             print("--- end diagnostic dump ---\n")
             raise RuntimeError(
                 "Aviary mission solve did not converge (prob.result=True means "
