@@ -542,18 +542,34 @@ def run_aviary_mission(
         # Aircraft.Design.EMPTY_MASS - which is exactly what the failed
         # run's diagnostic dump showed: Mission.GROSS_MASS=75420 lbm with
         # Mission.FUEL_MASS=-2681.6 lbm (negative fuel is unphysical - you
-        # cannot carry less fuel than zero). Re-declaring the same design
-        # variable with a real lower bound overrides the metadata
-        # add_design_variables() just set - this is the identical pattern
-        # Aviary's own run_off_design_mission() uses for its fill_fuel
-        # option (aviary_problem.py ~line 1694: a follow-up
-        # model.add_design_var(Mission.GROSS_MASS, ...) call after
-        # add_design_variables()), not a workaround improvised here.
-        prob.model.add_design_var(
+        # cannot carry less fuel than zero).
+        #
+        # CORRECTED: an earlier version of this fix called
+        # prob.model.add_design_var(Mission.GROSS_MASS, ...) again here,
+        # on the theory that it mirrored Aviary's own run_off_design_mission()
+        # fill_fuel pattern. That was a misreading, caught only when it
+        # crashed: "RuntimeError: Design Variable 'mission:gross_mass'
+        # already exists." OpenMDAO's add_design_var() does not overwrite -
+        # confirmed directly in openmdao/core/system.py, it raises if the
+        # name is already registered. Aviary's fill_fuel option only ever
+        # calls add_design_var() for problem types where Mission.GROSS_MASS
+        # is NOT already a design variable (e.g. OFF_DESIGN_MAX_RANGE, which
+        # adds none by default) - it is never used to re-bound a variable
+        # add_design_variables() already added, which is exactly our case
+        # for OFF_DESIGN_MIN_FUEL.
+        # The actual supported way to change an existing design variable's
+        # bounds after the fact is System.set_design_var_options()
+        # (openmdao/core/system.py, ~line 955) - its own docstring: "Can be
+        # used to set the options outside of setting them when calling
+        # add_design_var." It takes lower/upper/scaler/adder/ref/ref0 (no
+        # units - it reuses whatever units the variable was already
+        # registered with, 'lbm' here, matching empty_mass_lbm/
+        # gross_mass_lbm directly) and updates the existing entry in place
+        # instead of registering a second one.
+        prob.model.set_design_var_options(
             Mission.GROSS_MASS,
             lower=empty_mass_lbm,
             upper=gross_mass_lbm,
-            units="lbm",
             ref=gross_mass_lbm,
         )
 
