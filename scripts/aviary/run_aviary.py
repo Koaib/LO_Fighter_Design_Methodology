@@ -244,6 +244,24 @@ def run_aviary_mission(
     wing_loading_lbm_per_ft2 = f22_gross_mass_lbm / f22_wing_area_ft2
     gross_mass_lbm = wing_loading_lbm_per_ft2 * wing_area_ft2
 
+    # Mission.GROSS_MASS (the OFF_DESIGN_MIN_FUEL design variable) is seeded
+    # at 0.9x gross_mass_lbm below, per Aviary's own documented
+    # run_off_design_mission() pattern. The trajectory's own starting-mass
+    # guesses (mass_initial and initial_guesses["mass"] for climb/cruise/
+    # descent, set from this single seed_gross_mass_lbm value) MUST use the
+    # same number, not the raw gross_mass_lbm - a run with these two
+    # inconsistent by ~10% at iteration 0 produced a diagnostic dump showing
+    # Mission.GROSS_MASS (75420 lbm) and traj.climb.states:mass[0] (~83800
+    # lbm) both frozen at their own mutually-contradictory seed values
+    # across all 46 SLSQP iterations, ending in "Positive directional
+    # derivative for linesearch" (Exit mode 8) - the optimizer could never
+    # find a step that didn't worsen Aviary's automatically-added
+    # link_climb_mass equality constraint tying these two quantities
+    # together (energy_state_problem_configurator.py's add_post_mission_
+    # systems(), include_takeoff=False branch). Defining the seed once here
+    # and reusing it everywhere below makes them identical by construction.
+    seed_gross_mass_lbm = gross_mass_lbm * 0.9
+
     # Empty/fuel split preserves the REAL F-22's own empty:fuel PROPORTION,
     # not each one's own independent fraction of GROSS_MASS. The latter
     # (empty_mass = gross*(f22_empty/f22_gross), same for fuel) is what
@@ -361,28 +379,32 @@ def run_aviary_mission(
     # needs this fixed explicitly — cruise/descent inherit their starting
     # mass from the previous phase via Aviary's own phase linking, not
     # from this option.
-    phase_info["climb"]["user_options"]["mass_initial"] = (gross_mass_lbm, "lbm")
+    phase_info["climb"]["user_options"]["mass_initial"] = (seed_gross_mass_lbm, "lbm")
 
     # Dynamic Dymos initial guesses — computed from THIS run's actual
-    # gross_mass_lbm/design_range_nmi instead of phase_info.py's frozen
+    # seed_gross_mass_lbm/design_range_nmi instead of phase_info.py's frozen
     # numbers, so they can't silently go stale if TEST_WING_AREA_FT2 or the
     # F22 mass-basis constants change in main.py. A bad/stale initial
     # guess is exactly what caused the Newton solve non-convergence fixed
     # earlier this project (see phase_info.py's history) - recomputing
-    # these here every run closes that failure mode for good.
+    # these here every run closes that failure mode for good. Based on
+    # seed_gross_mass_lbm (not the raw gross_mass_lbm) so the trajectory's
+    # starting mass agrees with Mission.GROSS_MASS's own seed at iteration 0
+    # - see the comment above seed_gross_mass_lbm's definition for why that
+    # match matters.
     #
     # Split ratios (25%/50%/25% of range; ~3:3:1 of guessed fuel burn
     # across climb/cruise/descent) reproduce phase_info.py's original
     # hand-picked seed values at the 103.59 lbm gross-mass test point that
     # was validated to converge - still just seed values for the
     # collocation solve, not meant to be physically exact.
-    guessed_total_burn_lbm = gross_mass_lbm * 0.068   # ~7/103.59 lbm, from
+    guessed_total_burn_lbm = seed_gross_mass_lbm * 0.068   # ~7/103.59 lbm, from
                                                         # the validated test run
     climb_burn = guessed_total_burn_lbm * (3 / 7)
     cruise_burn = guessed_total_burn_lbm * (3 / 7)
     descent_burn = guessed_total_burn_lbm * (1 / 7)
 
-    mass_after_climb = gross_mass_lbm - climb_burn
+    mass_after_climb = seed_gross_mass_lbm - climb_burn
     mass_after_cruise = mass_after_climb - cruise_burn
     mass_after_descent = mass_after_cruise - descent_burn
 
@@ -390,7 +412,7 @@ def run_aviary_mission(
     dist_cruise_end = 0.75 * design_range_nmi
 
     phase_info["climb"]["initial_guesses"]["distance"] = ([0.0, dist_climb_end], "nmi")
-    phase_info["climb"]["initial_guesses"]["mass"] = ([gross_mass_lbm, mass_after_climb], "lbm")
+    phase_info["climb"]["initial_guesses"]["mass"] = ([seed_gross_mass_lbm, mass_after_climb], "lbm")
     phase_info["cruise"]["initial_guesses"]["distance"] = ([dist_climb_end, dist_cruise_end], "nmi")
     phase_info["cruise"]["initial_guesses"]["mass"] = ([mass_after_climb, mass_after_cruise], "lbm")
     phase_info["descent"]["initial_guesses"]["distance"] = ([dist_cruise_end, design_range_nmi], "nmi")
@@ -452,7 +474,17 @@ def run_aviary_mission(
         # the degenerate/inconsistent QP linearization this run kept hitting
         # - not a scaling problem (the mass_ref/distance_ref fix above was
         # real and correct, just not the actual cause of the stall).
-        prob.aviary_inputs.set_val(Mission.GROSS_MASS, gross_mass_lbm * 0.9, units="lbm")
+        #
+        # Uses the same seed_gross_mass_lbm already used above for
+        # phase_info's mass_initial/initial_guesses, instead of an
+        # independently-recomputed gross_mass_lbm * 0.9 - a run where these
+        # two were computed separately (before this fix) showed the
+        # trajectory (traj.climb.states:mass[0]) and this design variable
+        # frozen ~8400 lbm apart from iteration 1 through 46, never moving,
+        # because they disagreed at the starting point before any step was
+        # even taken. See seed_gross_mass_lbm's own definition for the full
+        # diagnostic evidence.
+        prob.aviary_inputs.set_val(Mission.GROSS_MASS, seed_gross_mass_lbm, units="lbm")
 
         # Mission.Constraints.MAX_MACH defaults to 0.0 (Aviary's own metadata
         # has a "TODO: derived default value" comment acknowledging this) and
