@@ -212,6 +212,7 @@ def run_one(cfg, retry=True):
 
     log_path = LOG_ROOT / f"{cfg['tag']}.log"
     worker = str(SCRIPT_DIR / "rcs_sweep_worker.py")
+    crashed = False
     with open(log_path, "w", encoding="utf-8") as logf:
         try:
             subprocess.run([sys.executable, worker, json.dumps(cfg)],
@@ -219,7 +220,20 @@ def run_one(cfg, retry=True):
         except subprocess.TimeoutExpired:
             print(f"TIMEOUT — {cfg['tag']} skipped (see {log_path})"); return False
         except subprocess.CalledProcessError:
-            print(f"FAILED — {cfg['tag']}, see {log_path}"); return False
+            # A genuine exception in the worker (status="error" in its
+            # manifest, e.g. a real file-lock race that run_openrcs.py
+            # doesn't catch and turns into a raised exception rather than a
+            # falsy return) makes the worker process exit non-zero. Used to
+            # bail out here immediately, which meant the "rcs_failed" retry
+            # below could never actually be reached by a real failure — only
+            # by a soft, falsy-return case that run_openrcs_pipeline()
+            # never actually produces (checked directly: its only return is
+            # an always-truthy dict). Falling through to the same
+            # manifest-based retry check below instead, so an actual
+            # failure gets the one automatic retry too — checkpointing
+            # makes this cheap, since mesh/already-finished cuts are
+            # skipped on the retried run.
+            crashed = True
 
     if not manifest_file.exists():
         print(f"RAN BUT NO MANIFEST — {cfg['tag']}"); return False
@@ -228,10 +242,14 @@ def run_one(cfg, retry=True):
     if status == "done":
         print(f"OK {cfg['tag']}"); return True
 
-    if status == "rcs_failed" and retry:
-        print(f"RETRYING (possible file-lock race) — {cfg['tag']}")
+    if status in ("rcs_failed", "error") and retry:
+        reason = "possible file-lock race" if status == "rcs_failed" else "worker raised an exception"
+        print(f"RETRYING ({reason}) — {cfg['tag']}")
         manifest_file.unlink(missing_ok=True)
         return run_one(cfg, retry=False)   # one retry only, no infinite loop
+
+    if crashed:
+        print(f"FAILED — {cfg['tag']}, see {log_path}"); return False
 
     print(f"RAN BUT NOT DONE ({status}) — {cfg['tag']}, see {log_path}"); return False
 
