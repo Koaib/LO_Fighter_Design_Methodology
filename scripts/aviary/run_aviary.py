@@ -148,20 +148,36 @@ def _build_aircraft_inputs(wing_area_ft2, wing_span_ft, wing_aspect_ratio,
     aviary_inputs.set_val(Settings.EQUATIONS_OF_MOTION, EQUATIONS_OF_MOTION)
     aviary_inputs.set_val(Settings.MASS_METHOD, MASS_METHOD)
     aviary_inputs.set_val(Settings.AERODYNAMICS_METHOD, AERODYNAMICS_METHOD)
-    # OFF_DESIGN_MIN_FUEL: fixed range (phase_info's target_range), solve
-    # for the minimum fuel/mission gross mass needed to fly it — see
-    # aviary/core/aviary_group.py's add_design_variables(): for this
-    # problem_type, only Mission.GROSS_MASS becomes a design variable
-    # (bounded above by our own Aircraft.Design.GROSS_MASS, i.e. it can
-    # never exceed the MTOW we already fixed via wing-loading scaling), a
-    # RANGE_RESIDUAL constraint makes the flown range hit target_range
-    # exactly (not by us hand-tuning phase durations), and every problem
-    # type gets a final-cruise-mass design variable + residual mass
-    # constraint that actually closes the mass/fuel-burn trajectory — the
-    # exact thing missing from a plain run_model() call all along. This
-    # is a real (if narrow) optimizer, not the full aircraft-sizing kind:
-    # Aircraft.Design.GROSS_MASS itself is never touched.
-    aviary_inputs.set_val(Settings.PROBLEM_TYPE, ProblemType.OFF_DESIGN_MIN_FUEL)
+    # SWITCHED from OFF_DESIGN_MIN_FUEL to OFF_DESIGN_MAX_RANGE after
+    # root-causing why every OFF_DESIGN_MIN_FUEL run stalled: check_totals()
+    # (compute_totals vs. finite-difference, both agreeing) proved
+    # Mission.GROSS_MASS has an EXACT, structural zero derivative w.r.t.
+    # both Mission.Constraints.RANGE_RESIDUAL and .MASS_RESIDUAL - and
+    # d(Mission.FUEL_MASS)/d(Mission.GROSS_MASS) = 1.000000 exactly, i.e. a
+    # pure "vertical shift" (fuel burned is completely insensitive to
+    # starting weight in this collocation trajectory; every node's mass is
+    # its own independent design variable, not something integrated forward
+    # from Mission.GROSS_MASS). That's not a bug (verified solve_alpha uses
+    # the real per-node Dynamic.Vehicle.MASS, aviary/subsystems/
+    # aerodynamics/solve_alpha_group.py) - it's why SLSQP could never move
+    # Mission.GROSS_MASS: no amount of tolerance/scaling/iteration tuning
+    # was ever going to fix a design variable that's structurally
+    # disconnected from the constraints meant to pin it down.
+    #
+    # OFF_DESIGN_MAX_RANGE fixes Mission.GROSS_MASS as a plain INPUT (our
+    # real takeoff gross mass, full internal fuel, below) instead of a
+    # design variable - confirmed directly in aviary/core/aviary_group.py's
+    # add_design_variables(): its OFF_DESIGN_MAX_RANGE branch adds NO
+    # aircraft-level design variable and NO RANGE_RESIDUAL constraint at
+    # all (that constraint only exists in the SIZING/OFF_DESIGN_MIN_FUEL
+    # branches) - so the exact degenerate mechanism above cannot recur, and
+    # the objective becomes genuinely maximizing Mission.RANGE (add_objective()
+    # auto-selects Mission.Objectives.RANGE for this problem_type). Same
+    # feasibility question as before, asked from the other direction: "with
+    # a full tank, how far can it fly?" instead of "for this range, how
+    # much fuel is needed?" - compare the answer against our design range
+    # instead of against fuel capacity.
+    aviary_inputs.set_val(Settings.PROBLEM_TYPE, ProblemType.OFF_DESIGN_MAX_RANGE)
     aviary_inputs.set_val(Aircraft.Wing.AREA, wing_area_ft2, units="ft**2")
     aviary_inputs.set_val(Aircraft.Wing.SPAN, wing_span_ft, units="ft")
     aviary_inputs.set_val(Aircraft.Wing.ASPECT_RATIO, wing_aspect_ratio, units="unitless")
@@ -261,23 +277,14 @@ def run_aviary_mission(
     wing_loading_lbm_per_ft2 = f22_gross_mass_lbm / f22_wing_area_ft2
     gross_mass_lbm = wing_loading_lbm_per_ft2 * wing_area_ft2
 
-    # Mission.GROSS_MASS (the OFF_DESIGN_MIN_FUEL design variable) is seeded
-    # at 0.9x gross_mass_lbm below, per Aviary's own documented
-    # run_off_design_mission() pattern. The trajectory's own starting-mass
-    # guesses (initial_guesses["mass"] for climb/cruise/descent, set from
-    # this single seed_gross_mass_lbm value) MUST use the
-    # same number, not the raw gross_mass_lbm - a run with these two
-    # inconsistent by ~10% at iteration 0 produced a diagnostic dump showing
-    # Mission.GROSS_MASS (75420 lbm) and traj.climb.states:mass[0] (~83800
-    # lbm) both frozen at their own mutually-contradictory seed values
-    # across all 46 SLSQP iterations, ending in "Positive directional
-    # derivative for linesearch" (Exit mode 8) - the optimizer could never
-    # find a step that didn't worsen Aviary's automatically-added
-    # link_climb_mass equality constraint tying these two quantities
-    # together (energy_state_problem_configurator.py's add_post_mission_
-    # systems(), include_takeoff=False branch). Defining the seed once here
-    # and reusing it everywhere below makes them identical by construction.
-    seed_gross_mass_lbm = gross_mass_lbm * 0.9
+    # Under OFF_DESIGN_MAX_RANGE, Mission.GROSS_MASS is a plain fixed INPUT
+    # (set directly below, no design-variable seeding needed) - the mission
+    # genuinely starts at gross_mass_lbm (full internal fuel), not at some
+    # 0.9x guess. The old seed_gross_mass_lbm variable (a leftover from the
+    # OFF_DESIGN_MIN_FUEL formulation this project switched away from - see
+    # ProblemType.OFF_DESIGN_MAX_RANGE's own comment above for why) has been
+    # removed; every place that used it below now uses gross_mass_lbm
+    # directly, since they're now the same number by construction.
 
     # Empty/fuel split preserves the REAL F-22's own empty:fuel PROPORTION,
     # not each one's own independent fraction of GROSS_MASS. The latter
@@ -430,41 +437,43 @@ def run_aviary_mission(
     # Leaving it unset matches Aviary's own reference mission
     # (aviary/models/missions/energy_state_default.py has no mass_initial at
     # all) and is what "the optimizer controls the value" is supposed to
-    # mean for a problem type where Mission.GROSS_MASS is a design variable.
+    # mean - even under OFF_DESIGN_MAX_RANGE where Mission.GROSS_MASS itself
+    # is now a fixed input rather than a design variable, this state is
+    # still driven by Aviary's own Mission.Takeoff.FINAL_MASS connection,
+    # not by a phase_info boundary condition.
 
     # Dynamic Dymos initial guesses — computed from THIS run's actual
-    # seed_gross_mass_lbm/design_range_nmi instead of phase_info.py's frozen
+    # gross_mass_lbm/design_range_nmi instead of phase_info.py's frozen
     # numbers, so they can't silently go stale if TEST_WING_AREA_FT2 or the
     # F22 mass-basis constants change in main.py. A bad/stale initial
     # guess is exactly what caused the Newton solve non-convergence fixed
     # earlier this project (see phase_info.py's history) - recomputing
     # these here every run closes that failure mode for good. Based on
-    # seed_gross_mass_lbm (not the raw gross_mass_lbm) so the trajectory's
-    # starting mass agrees with Mission.GROSS_MASS's own seed at iteration 0
-    # - see the comment above seed_gross_mass_lbm's definition for why that
-    # match matters.
+    # gross_mass_lbm since that IS the mission's actual starting mass now
+    # (Mission.GROSS_MASS is fixed to it directly, below - no seed/design
+    # -variable mismatch to keep in sync any more).
     #
     # Split ratios (25%/50%/25% of range; ~3:3:1 of guessed fuel burn
     # across climb/cruise/descent) reproduce phase_info.py's original
     # hand-picked seed values at the 103.59 lbm gross-mass test point that
     # was validated to converge - still just seed values for the
     # collocation solve, not meant to be physically exact.
-    guessed_total_burn_lbm = seed_gross_mass_lbm * 0.068   # ~7/103.59 lbm, from
+    guessed_total_burn_lbm = gross_mass_lbm * 0.068   # ~7/103.59 lbm, from
                                                         # the validated test run
 
     if simple_mission:
         # No climb/descent to split fuel burn across — the whole guessed
         # burn happens over the single cruise phase, which now spans the
         # entire design range.
-        mass_after_cruise_only = seed_gross_mass_lbm - guessed_total_burn_lbm
+        mass_after_cruise_only = gross_mass_lbm - guessed_total_burn_lbm
         phase_info_local["cruise"]["initial_guesses"]["distance"] = ([0.0, design_range_nmi], "nmi")
-        phase_info_local["cruise"]["initial_guesses"]["mass"] = ([seed_gross_mass_lbm, mass_after_cruise_only], "lbm")
+        phase_info_local["cruise"]["initial_guesses"]["mass"] = ([gross_mass_lbm, mass_after_cruise_only], "lbm")
     else:
         climb_burn = guessed_total_burn_lbm * (3 / 7)
         cruise_burn = guessed_total_burn_lbm * (3 / 7)
         descent_burn = guessed_total_burn_lbm * (1 / 7)
 
-        mass_after_climb = seed_gross_mass_lbm - climb_burn
+        mass_after_climb = gross_mass_lbm - climb_burn
         mass_after_cruise = mass_after_climb - cruise_burn
         mass_after_descent = mass_after_cruise - descent_burn
 
@@ -472,7 +481,7 @@ def run_aviary_mission(
         dist_cruise_end = 0.75 * design_range_nmi
 
         phase_info_local["climb"]["initial_guesses"]["distance"] = ([0.0, dist_climb_end], "nmi")
-        phase_info_local["climb"]["initial_guesses"]["mass"] = ([seed_gross_mass_lbm, mass_after_climb], "lbm")
+        phase_info_local["climb"]["initial_guesses"]["mass"] = ([gross_mass_lbm, mass_after_climb], "lbm")
         phase_info_local["cruise"]["initial_guesses"]["distance"] = ([dist_climb_end, dist_cruise_end], "nmi")
         phase_info_local["cruise"]["initial_guesses"]["mass"] = ([mass_after_climb, mass_after_cruise], "lbm")
         phase_info_local["descent"]["initial_guesses"]["distance"] = ([dist_cruise_end, design_range_nmi], "nmi")
@@ -508,43 +517,17 @@ def run_aviary_mission(
         prob.aviary_inputs.set_val(Aircraft.Design.GROSS_MASS, gross_mass_lbm, units="lbm")
         prob.aviary_inputs.set_val(Aircraft.Fuel.TOTAL_CAPACITY, fuel_mass_lbm, units="lbm")
 
-        # Found by actually reading Aviary's own documented off-design
-        # workflow (docs/examples/off_design_missions.ipynb) end to end and
-        # comparing it line-for-line against what this script does. Aviary's
-        # own AviaryProblem.run_off_design_mission() - the method the docs
-        # say is THE way to run an OFF_DESIGN_MIN_FUEL mission - always seeds
-        # Mission.GROSS_MASS (the sole design variable in this problem type)
-        # at 0.9x the target gross mass before calling setup()
-        # (aviary_problem.py ~line 1612: "set initial guess for
-        # Mission.GROSS_MASS to help optimizer with new design variable
-        # bounds"). This project's script never set Mission.GROSS_MASS at
-        # all, only Aircraft.Design.GROSS_MASS (the fixed MTOW input) above -
-        # and aviary_group.py's add_design_variables() for
-        # OFF_DESIGN_MIN_FUEL sets Mission.GROSS_MASS's upper bound to
-        # exactly that same MTOW (line ~1425: upper=MTOW). With nothing else
-        # seeding it, the design variable started AT its own upper bound.
-        # This matches the actual failure data exactly: every diagnostic
-        # dump from every failed run showed Mission.GROSS_MASS
-        # (83800.00623705) equal to Aircraft.Design.GROSS_MASS/MTOW
-        # (83800.00623707) to 8 significant figures, even after 100 SLSQP
-        # iterations - the design variable never moved off the bound it
-        # started on. A design variable pinned to its own bound from
-        # iteration 1, with a badly infeasible RANGE_RESIDUAL constraint
-        # that needs an interior point to satisfy, is a textbook cause of
-        # the degenerate/inconsistent QP linearization this run kept hitting
-        # - not a scaling problem (the mass_ref/distance_ref fix above was
-        # real and correct, just not the actual cause of the stall).
-        #
-        # Uses the same seed_gross_mass_lbm already used above for
-        # phase_info's initial_guesses, instead of an
-        # independently-recomputed gross_mass_lbm * 0.9 - a run where these
-        # two were computed separately (before this fix) showed the
-        # trajectory (traj.climb.states:mass[0]) and this design variable
-        # frozen ~8400 lbm apart from iteration 1 through 46, never moving,
-        # because they disagreed at the starting point before any step was
-        # even taken. See seed_gross_mass_lbm's own definition for the full
-        # diagnostic evidence.
-        prob.aviary_inputs.set_val(Mission.GROSS_MASS, seed_gross_mass_lbm, units="lbm")
+        # Under OFF_DESIGN_MAX_RANGE, Mission.GROSS_MASS is a fixed INPUT,
+        # not a design variable (confirmed in aviary/core/aviary_group.py's
+        # add_design_variables(): its OFF_DESIGN_MAX_RANGE branch adds no
+        # aircraft-level design variable at all - see the comment on
+        # ProblemType.OFF_DESIGN_MAX_RANGE above for the full reasoning on
+        # why this project switched to this problem type). Set to
+        # gross_mass_lbm directly - the real question this run answers is
+        # "how far can the aircraft fly starting at its actual gross weight
+        # (full internal fuel, no payload)", so it must start there, not at
+        # some fraction of it.
+        prob.aviary_inputs.set_val(Mission.GROSS_MASS, gross_mass_lbm, units="lbm")
 
         # Mission.Constraints.MAX_MACH defaults to 0.0 (Aviary's own metadata
         # has a "TODO: derived default value" comment acknowledging this) and
@@ -619,44 +602,22 @@ def run_aviary_mission(
         # Loosening tol from Aviary's hard-coded SLSQP default (1e-9, set
         # in aviary/core/aviary_problem.py's add_driver() - not setdefault,
         # so it has to be overridden here, after add_driver() returns) to
-        # ScipyOptimizeDriver's own default (1e-6) was TESTED and made
-        # ZERO difference - objective landed at 2.3927667692332304, bit
-        # -identical (to 10+ sig figs) to every earlier run at 1e-9 with
-        # max_iter=100/200/1000. So tol/acc was never the actual blocker;
-        # kept at 1e-6 since it's still the more sensible default, but the
-        # real cause is elsewhere.
+        # ScipyOptimizeDriver's own default (1e-6): tested under the old
+        # OFF_DESIGN_MIN_FUEL formulation and made zero difference there, so
+        # it was never the actual blocker - kept at 1e-6 since it's still
+        # the more sensible default regardless of problem type.
         #
-        # Read scipy's actual compiled SLSQP source directly (__slsqp.c
-        # from the scipy==1.17.1 sdist, not the Python wrapper, which just
-        # calls into this compiled core) to find the REAL convergence
-        # test. It only ever sets mode=0 (success) in two places, and BOTH
-        # require `!badlin` — `badlin` gets set to 1 for the rest of that
-        # iteration whenever the QP subproblem's equality-constraint
-        # matrix comes back rank-deficient (lsq() returns mode=6 with
-        # n==meq, remapped to mode=4) and SLSQP has to re-solve an
-        # augmented/regularized version instead. On a `badlin` iteration,
-        # convergence can NEVER be reported, no matter how tight/loose
-        # `acc` (tol) is or how many iterations are allowed — which
-        # exactly matches what we're seeing: identical stall point
-        # regardless of tol or max_iter. This mission's Dymos collocation
-        # defects (3 phases x 5 segments, all handled by the optimizer
-        # since we removed solve_segments) are a strong candidate for
-        # producing a rank-deficient linearized equality-constraint
-        # Jacobian near a converged trajectory.
-        # CORRECTION after reading __slsqp.c line-by-line (not just
-        # skimming): badlin does NOT require GNORM to be small. It only
-        # ever gates the two `mode=0` (success) return points - it does
-        # not change what search direction gets computed or force x to
-        # stop moving. A badlin iteration still solves an augmented/
-        # rho-regularized QP and takes a real line-search step; it just
-        # permanently forbids reporting success afterward, for ANY
-        # gradient magnitude. So "GNORM stays large and flat" is NOT
-        # evidence against badlin the way an earlier version of this
-        # comment claimed - that claim was wrong. badlin remains a live,
-        # unconfirmed hypothesis; ruling it in or out needs the actual
-        # `mode` value badlin sets internally (not exposed by scipy's
-        # Python wrapper) or a from-scratch reimplementation of the QP
-        # rank check, not GNORM's printed magnitude.
+        # HISTORY (OFF_DESIGN_MIN_FUEL, before the switch to
+        # OFF_DESIGN_MAX_RANGE - see the comment on ProblemType.
+        # OFF_DESIGN_MAX_RANGE above): a long investigation chased scipy's
+        # internal SLSQP "badlin" (rank-deficient QP) flag as the cause of
+        # the stall. check_totals() later proved the real cause was
+        # unrelated to badlin/rank at all: Mission.GROSS_MASS (that problem
+        # type's design variable) had an exact, structural zero derivative
+        # w.r.t. both RANGE_RESIDUAL and MASS_RESIDUAL - not a
+        # rank/conditioning issue, a genuine missing coupling. Left here so
+        # the badlin hypothesis isn't accidentally re-investigated from
+        # scratch if a future stall looks superficially similar.
         #
         # bump SLSQP's own iprint (via opt_settings, not the 'disp' bool,
         # which only ever yields iprint=1/summary-only per
@@ -667,50 +628,17 @@ def run_aviary_mission(
         prob.driver.opt_settings['iprint'] = 2
         prob.add_design_variables()
 
-        # The Mission.GROSS_MASS seed fix above (0.9x MTOW) got the design
-        # variable off its bound and RANGE_RESIDUAL to ~1e-14 (feasible) -
-        # real progress. But the very next failure mode it hit
-        # (Exit mode 8, "Positive directional derivative for linesearch")
-        # exposed a second, separate gap: add_design_variables() (called
-        # just above) sets Mission.GROSS_MASS's lower bound to a bare
-        # 10.0 lbm (aviary_group.py ~line 1424) - no floor tied to this
-        # aircraft's actual empty mass. Since add_objective() (below) makes
-        # the objective directly proportional to Mission.TOTAL_FUEL_MASS,
-        # and nothing here constrains gross mass to stay above empty mass,
-        # the optimizer was free to push Mission.GROSS_MASS down past
-        # Aircraft.Design.EMPTY_MASS - which is exactly what the failed
-        # run's diagnostic dump showed: Mission.GROSS_MASS=75420 lbm with
-        # Mission.FUEL_MASS=-2681.6 lbm (negative fuel is unphysical - you
-        # cannot carry less fuel than zero).
-        #
-        # CORRECTED: an earlier version of this fix called
-        # prob.model.add_design_var(Mission.GROSS_MASS, ...) again here,
-        # on the theory that it mirrored Aviary's own run_off_design_mission()
-        # fill_fuel pattern. That was a misreading, caught only when it
-        # crashed: "RuntimeError: Design Variable 'mission:gross_mass'
-        # already exists." OpenMDAO's add_design_var() does not overwrite -
-        # confirmed directly in openmdao/core/system.py, it raises if the
-        # name is already registered. Aviary's fill_fuel option only ever
-        # calls add_design_var() for problem types where Mission.GROSS_MASS
-        # is NOT already a design variable (e.g. OFF_DESIGN_MAX_RANGE, which
-        # adds none by default) - it is never used to re-bound a variable
-        # add_design_variables() already added, which is exactly our case
-        # for OFF_DESIGN_MIN_FUEL.
-        # The actual supported way to change an existing design variable's
-        # bounds after the fact is System.set_design_var_options()
-        # (openmdao/core/system.py, ~line 955) - its own docstring: "Can be
-        # used to set the options outside of setting them when calling
-        # add_design_var." It takes lower/upper/scaler/adder/ref/ref0 (no
-        # units - it reuses whatever units the variable was already
-        # registered with, 'lbm' here, matching empty_mass_lbm/
-        # gross_mass_lbm directly) and updates the existing entry in place
-        # instead of registering a second one.
-        prob.model.set_design_var_options(
-            Mission.GROSS_MASS,
-            lower=empty_mass_lbm,
-            upper=gross_mass_lbm,
-            ref=gross_mass_lbm,
-        )
+        # No Mission.GROSS_MASS bound-setting needed here any more: under
+        # OFF_DESIGN_MAX_RANGE it's a fixed input (set above), never
+        # registered as a design variable by add_design_variables() in the
+        # first place (confirmed in aviary/core/aviary_group.py - its
+        # OFF_DESIGN_MAX_RANGE branch adds none), so
+        # set_design_var_options(Mission.GROSS_MASS, ...) would now error
+        # ("not a design variable") rather than do anything useful. The old
+        # empty_mass_lbm lower-bound fix this used to need (preventing
+        # negative fuel under OFF_DESIGN_MIN_FUEL) doesn't apply either:
+        # there's no design variable left for the optimizer to push below
+        # empty mass.
 
         prob.add_objective()
 
@@ -751,70 +679,26 @@ def run_aviary_mission(
         prob.list_driver_vars(driver_scaling=True)
         print("--- end design-variable scaling check ---\n")
 
-        # check_totals(): cross-checks Aviary's ANALYTIC total derivative of
-        # the objective/constraints w.r.t. Mission.GROSS_MASS against a
-        # finite-difference estimate computed straight from the nonlinear
-        # model - independent of SLSQP entirely, and cheap (a couple of
-        # run_model() calls, no optimization). Added after a run that
-        # stalled at "Positive directional derivative for linesearch" (Exit
-        # mode 8) with Mission.GROSS_MASS and GNORM frozen bit-identical for
-        # 70+ straight SLSQP iterations regardless of max_iter.
-        #
-        # First pass (RANGE_RESIDUAL) came back analytic=0, fd=0 - both
-        # agree, so that derivative isn't broken, it's just genuinely zero:
-        # this project's climb/cruise/descent phases all use
-        # mach_optimize=False / altitude_optimize=False (prescribed
-        # Mach/altitude vs. time, not solved from a mass-dependent force
-        # balance), so flown distance never depended on Mission.GROSS_MASS
-        # in the first place - RANGE_RESIDUAL is closed entirely by the free
-        # phase-duration variables. That constraint was never GROSS_MASS's
-        # job to satisfy.
-        #
-        # Reading aviary/core/aviary_group.py's add_post_mission_systems()
-        # directly (not guessing) shows the constraint that IS actually
-        # supposed to tie Mission.GROSS_MASS to the real fuel-burn
-        # trajectory is Mission.Constraints.MASS_RESIDUAL (= TOTAL_FUEL_MASS
-        # - FUEL_MASS - RESERVE_FUEL_MASS, registered with equals=0.0), via
-        # Mission.FUEL_MASS = Mission.GROSS_MASS - traj.<last
-        # phase>.timeseries.mass[-1].
-        #
-        # SECOND RESULT: MASS_RESIDUAL also came back analytic=fd=0 (both
-        # agree, so still not a broken partial). Confirmed solve_alpha
-        # itself is wired correctly too (aviary/subsystems/aerodynamics/
-        # solve_alpha_group.py promotes mass from Dynamic.Vehicle.MASS, the
-        # real per-node trajectory state, not a fixed/wrong reference).
-        # The likely mechanical reason: this is a Dymos COLLOCATION
-        # trajectory (no solve_segments), so every node's mass is ITSELF an
-        # independent design variable, not something recomputed by
-        # integrating forward from Mission.GROSS_MASS - its only direct
-        # graph edge is into states:mass[0] via the Mission.Takeoff.
-        # FINAL_MASS connection. The final trajectory mass that
-        # MASS_RESIDUAL actually depends on is a SEPARATE free variable,
-        # coupled to GROSS_MASS only through the joint web of defect
-        # constraints, not a direct partial - so d(MASS_RESIDUAL)/
-        # d(GROSS_MASS) alone is a legitimate zero even in a healthy model.
-        # Adding Mission.FUEL_MASS directly (one algebraic step upstream of
-        # MASS_RESIDUAL) to see empirically whether it's exactly 0, exactly
-        # 1 (a pure "vertical shift", final mass moving in lockstep with
-        # GROSS_MASS), or something else - settles which mechanism this
-        # actually is instead of hand-deriving it.
-        try:
-            print("\n--- check_totals: analytic vs. finite-difference derivative "
-                  "w.r.t. Mission.GROSS_MASS ---")
-            prob.check_totals(
-                of=[
-                    Mission.Objectives.FUEL,
-                    Mission.Constraints.RANGE_RESIDUAL,
-                    Mission.Constraints.MASS_RESIDUAL,
-                    Mission.FUEL_MASS,
-                ],
-                wrt=[Mission.GROSS_MASS],
-                method="fd",
-                compact_print=True,
-            )
-            print("--- end check_totals ---\n")
-        except Exception as diag_err:
-            print(f"   check_totals: <could not compute: {diag_err}>")
+        # HISTORY: check_totals(of=[FUEL objective, RANGE_RESIDUAL,
+        # MASS_RESIDUAL, FUEL_MASS], wrt=[Mission.GROSS_MASS]) is what
+        # actually root-caused the OFF_DESIGN_MIN_FUEL stall this project
+        # switched away from (see the comment on ProblemType.
+        # OFF_DESIGN_MAX_RANGE above) - analytic and finite-difference
+        # derivatives agreed exactly that Mission.GROSS_MASS had a
+        # structural zero effect on both RANGE_RESIDUAL and MASS_RESIDUAL,
+        # and d(FUEL_MASS)/d(GROSS_MASS)=1.000000 (a pure "vertical shift":
+        # fuel burned never responds to starting weight in this collocation
+        # trajectory). Not a broken partial (both methods agreed) and not a
+        # wrong-mass-reference bug (solve_alpha_group.py correctly uses
+        # Dynamic.Vehicle.MASS) - just a design variable with no real lever
+        # on the constraints meant to pin it down.
+        # Removed now that Mission.GROSS_MASS is a fixed input rather than a
+        # design variable (this check_totals(wrt=Mission.GROSS_MASS) call
+        # would error under OFF_DESIGN_MAX_RANGE - it's not a registered
+        # design variable any more). If a new stall shows up, re-add a
+        # check_totals() call here with wrt= set to whatever IS a design
+        # variable under the new formulation (see
+        # prob.driver._designvars.keys() in the diagnostic dump below).
 
         # suppress_solver_print=False: this project's user explicitly wants
         # the Newton-iteration console output left as-is, not silenced.
@@ -851,12 +735,13 @@ def run_aviary_mission(
             # was unquestionably fine. Forcing a common unit below removes
             # that false signal.
             for label, var, units in [
-                ("Mission.GROSS_MASS (design var, bounded by our fixed MTOW)", Mission.GROSS_MASS, "lbm"),
+                ("Mission.GROSS_MASS (fixed input under OFF_DESIGN_MAX_RANGE, our real takeoff gross mass - NOT a design variable, should be unchanged run to run)", Mission.GROSS_MASS, "lbm"),
                 ("Aircraft.Design.GROSS_MASS (our fixed MTOW, should be unchanged)", Aircraft.Design.GROSS_MASS, "lbm"),
-                ("Mission.RANGE (actual flown range)", Mission.RANGE, "nmi"),
-                ("Mission.Constraints.RANGE_RESIDUAL (should be ~0 if feasible)", Mission.Constraints.RANGE_RESIDUAL, None),
+                ("Mission.RANGE (actual flown range - THIS is what's being maximized)", Mission.RANGE, "nmi"),
+                ("Mission.Objectives.RANGE (actual SLSQP objective: -range/1000 + ascent_duration/30)", Mission.Objectives.RANGE, None),
+                ("Mission.Constraints.RANGE_RESIDUAL (not an active constraint under OFF_DESIGN_MAX_RANGE - only meaningful under SIZING/OFF_DESIGN_MIN_FUEL)", Mission.Constraints.RANGE_RESIDUAL, None),
                 ("Mission.FUEL_MASS (fuel burned)", Mission.FUEL_MASS, "lbm"),
-                ("Mission.Objectives.FUEL (actual SLSQP objective)", Mission.Objectives.FUEL, None),
+                ("Mission.Objectives.FUEL (NOT the active objective under OFF_DESIGN_MAX_RANGE, printed for reference only)", Mission.Objectives.FUEL, None),
                 ("Mission.Takeoff.ASCENT_DURATION (feeds the objective; may be a dangling default since include_takeoff=False)", Mission.Takeoff.ASCENT_DURATION, None),
                 # Aviary's own energy_state_problem_configurator.py
                 # (add_post_mission_systems(), the include_takeoff=False
@@ -1206,18 +1091,34 @@ def _print_results_table(design_range_nmi, total_range, fuel_burned, fuel_mass_l
     Units" idea as Aviary's own native mission_summary.md) instead of the
     old free-form print lines, so this is easy to scan straight off the
     console instead of hunting through it.
+
+    Since the switch to OFF_DESIGN_MAX_RANGE (aircraft flies at its actual
+    gross weight until fuel runs out - see the ProblemType.
+    OFF_DESIGN_MAX_RANGE comment in run_aviary_mission()), fuel margin is no
+    longer the headline pass/fail number: a max-range mission is BY
+    CONSTRUCTION meant to burn ~all its usable fuel by the endpoint, so
+    "fuel remaining" being small is expected, not a warning sign. The real
+    feasibility question is now range achieved vs. range required.
     """
-    real_margin = fuel_mass_lbm - fuel_burned
+    range_margin = total_range - design_range_nmi
+    range_margin_pct = 100.0 * range_margin / design_range_nmi if design_range_nmi else float("nan")
+    # Small negative tolerance (0.5 nmi) so solver-noise-level shortfalls
+    # don't get reported as an infeasible mission.
+    feasible = range_margin >= -0.5
+    fuel_remaining = fuel_mass_lbm - fuel_burned
     crew_and_oil_lbm = operating_items_lbm - unusable_fuel_lbm
 
     rows = [
-        ("Range flown", f"{total_range:.1f}", "nmi"),
-        ("Range target", f"{design_range_nmi:.0f}", "nmi"),
-        ("Fuel loaded (tank capacity)", f"{fuel_mass_lbm:.2f}", "lbm"),
-        ("Fuel burned", f"{fuel_burned:.2f}", "lbm"),
-        ("FUEL MARGIN (trust this one)", f"{real_margin:.2f}", "lbm"),
+        ("Range flown (max range on full internal fuel)", f"{total_range:.1f}", "nmi"),
+        ("Range required (design range)", f"{design_range_nmi:.0f}", "nmi"),
+        ("RANGE MARGIN (trust this one)", f"{range_margin:+.1f}", "nmi"),
+        ("Range margin (percent)", f"{range_margin_pct:+.1f}", "%"),
         (None, None, None),  # separator
-        ("Fuel mass residual (margin vs. Aviary's smaller internal fuel figure)", f"{fuel_residual:+.2f}", "lbm"),
+        ("Fuel loaded (tank capacity)", f"{fuel_mass_lbm:.2f}", "lbm"),
+        ("Fuel burned reaching max range", f"{fuel_burned:.2f}", "lbm"),
+        ("Fuel remaining (expected to be small - see docstring)", f"{fuel_remaining:.2f}", "lbm"),
+        (None, None, None),  # separator
+        ("Fuel mass residual (Aviary's own internal mass-closure check)", f"{fuel_residual:+.2f}", "lbm"),
         ("Unusable fuel (physically stuck in tank)", f"{unusable_fuel_lbm:.2f}", "lbm"),
         ("Pilot + engine oil weight", f"{crew_and_oil_lbm:.2f}", "lbm"),
     ]
@@ -1232,6 +1133,10 @@ def _print_results_table(design_range_nmi, total_range, fuel_burned, fuel_mass_l
             print("-" * (name_w + val_w + 10))
             continue
         print(f"  {name:<{name_w}}  {val:>{val_w}} {unit}")
+    print("=" * (name_w + val_w + 10))
+    verdict = "MISSION FEASIBLE" if feasible else "MISSION NOT FEASIBLE"
+    print(f"  VERDICT: {verdict} — max range {total_range:.1f} nmi vs. "
+          f"required {design_range_nmi:.0f} nmi (margin {range_margin:+.1f} nmi)")
     print("=" * (name_w + val_w + 10))
 
 
@@ -1249,9 +1154,21 @@ def _save_plain_summary(geom_stem, design_range_nmi, total_range, fuel_burned,
     """
     import time as _time
 
-    real_margin = fuel_mass_lbm - fuel_burned
-    real_margin_pct = 100.0 * real_margin / fuel_mass_lbm
+    range_margin = total_range - design_range_nmi
+    range_margin_pct = 100.0 * range_margin / design_range_nmi if design_range_nmi else float("nan")
+    feasible = range_margin >= -0.5  # small solver-noise tolerance
+    fuel_remaining = fuel_mass_lbm - fuel_burned
     crew_and_oil_lbm = operating_items_lbm - unusable_fuel_lbm
+
+    verdict_text = (
+        f"**Verdict: MISSION FEASIBLE — max range {total_range:.1f} nmi meets the "
+        f"{design_range_nmi:.0f} nmi requirement, with a margin of "
+        f"{range_margin:+.1f} nmi ({range_margin_pct:+.1f}%).**"
+        if feasible else
+        f"**Verdict: MISSION NOT FEASIBLE — max range on full internal fuel is only "
+        f"{total_range:.1f} nmi, short of the {design_range_nmi:.0f} nmi requirement "
+        f"by {-range_margin:.1f} nmi ({-range_margin_pct:.1f}%).**"
+    )
 
     lines = [
         "# MISSION SUMMARY (plain-language)",
@@ -1259,43 +1176,46 @@ def _save_plain_summary(geom_stem, design_range_nmi, total_range, fuel_burned,
         f"Geometry: {geom_stem}",
         f"Generated: {_time.strftime('%Y-%m-%d %H:%M:%S')}",
         "",
+        "Analysis type: OFF_DESIGN_MAX_RANGE — aircraft flies at its actual "
+        "gross weight (full internal fuel, no payload) until fuel runs out; "
+        "Aviary finds the trajectory that maximizes range. Range achieved vs. "
+        "range required is the feasibility question, not fuel margin — a "
+        "max-range mission is meant to burn ~all its usable fuel by design, "
+        "so a small \"Fuel Remaining\" below is expected, not a warning sign.",
+        "",
         "| Variable Name | Value | Units |",
         "| :- | :- | :- |",
-        f"| Range Flown | {total_range:.1f} | nmi |",
-        f"| Range Target | {design_range_nmi:.0f} | nmi |",
+        f"| Range Flown (max range) | {total_range:.1f} | nmi |",
+        f"| Range Required (design range) | {design_range_nmi:.0f} | nmi |",
+        f"| **Range Margin (trust this one)** | **{range_margin:+.1f}** | **nmi** |",
+        f"| Range Margin (percent) | {range_margin_pct:+.1f} | % |",
         f"| Fuel Loaded (tank capacity) | {fuel_mass_lbm:.2f} | lbm |",
-        f"| Fuel Burned | {fuel_burned:.2f} | lbm |",
-        f"| **Fuel Margin (trust this one)** | **{real_margin:.2f}** | **lbm** |",
-        f"| Fuel Margin (percent) | {real_margin_pct:.1f} | % |",
+        f"| Fuel Burned reaching max range | {fuel_burned:.2f} | lbm |",
+        f"| Fuel Remaining (expected to be small) | {fuel_remaining:.2f} | lbm |",
         "",
-        "**Verdict: the mission flew the full target range with a large, "
-        "real fuel margin.**",
+        verdict_text,
         "",
         "# OTHER NUMBERS (seen in the console / native Aviary files)",
         "",
-        "These are NOT alternative fuel margins — they answer different "
-        "questions. Do not compare them to Fuel Margin above.",
+        "These do not compete with Range Margin above for feasibility — it's "
+        "the one to quote. They're internal fuel-accounting detail, useful "
+        "for understanding the fuel numbers in the top table but not "
+        "alternative pass/fail checks.",
         "",
         "| Variable Name | Value | Units |",
         "| :- | :- | :- |",
-        f"| Fuel Mass Residual (Aviary pass/fail check) | {fuel_residual:+.2f} | lbm |",
+        f"| Fuel Mass Residual (Aviary's own internal mass-closure check) | {fuel_residual:+.2f} | lbm |",
         f"| Unusable Fuel (stuck in tank, can't burn) | {unusable_fuel_lbm:.2f} | lbm |",
         f"| Pilot + Engine Oil Weight | {crew_and_oil_lbm:.2f} | lbm |",
         "",
         "## What each row above means",
         "",
-        "- **Fuel Mass Residual** — this IS a real fuel-remaining number, "
-        "computed the same way as Fuel Margin above (fuel available minus "
-        "fuel burned minus reserves). The only difference is which "
-        "'fuel available' it starts from: Fuel Margin uses the full tank "
-        "capacity we specified, Fuel Mass Residual uses Aviary's smaller "
-        "internal usable-fuel figure (tank capacity minus the Pilot + "
-        "Engine Oil Weight overhead below). That's the entire reason the "
-        "two numbers differ, by exactly the Pilot + Engine Oil Weight "
-        "amount. Aviary also uses this same number as a pass/fail "
-        "feasibility check during optimization (must stay positive) — but "
-        "the number itself is a genuine fuel-remaining figure, not just a "
-        "flag.",
+        "- **Fuel Mass Residual** — Aviary's own internal check that the "
+        "fuel budget balances (tank capacity minus fuel burned minus "
+        "reserves minus the Pilot + Engine Oil overhead below); it's "
+        "enforced as an equality constraint during optimization, which is "
+        "why it should sit near zero here almost by construction, not "
+        "because of anything specific to this aircraft.",
         "- **Unusable Fuel** — fuel physically trapped in the tank (corners, "
         "lines) that the engine can never draw on, computed from this "
         "aircraft's own wing area/thrust/tank size.",
@@ -1304,21 +1224,12 @@ def _save_plain_summary(geom_stem, design_range_nmi, total_range, fuel_burned,
         "the mission flew.",
         "- **Pilot + Engine Oil Weight is the exact same number as "
         "\"Excess Fuel Capacity\"** in `native_aviary_files/mission_summary.md` "
-        "— same figure, just under a misleading name there. Unusable Fuel "
-        "does NOT get added to it: because our tank-capacity number already "
-        "accounts for unusable fuel once, that term cancels out of Excess "
-        "Fuel Capacity's math (Aviary's own formula subtracts it, then adds "
-        "it straight back in through Mission.TOTAL_FUEL_MASS). Unusable "
-        "Fuel is listed above purely so you can see it's a real, separate, "
-        "physically-explainable number — not because it combines with "
-        "anything else here.",
+        "— same figure, just under a misleading name there.",
         "",
-        "**Bottom line for a presentation or report: only ever quote Fuel "
-        "Margin from the top table. The other two numbers are internal "
-        "Aviary housekeeping checks that happen to have \"fuel\" in their "
-        "name — they are not "
-        "alternative measurements of mission fuel margin, and disagreeing "
-        "with the top table is expected, not an error.**",
+        "**Bottom line for a presentation or report: only ever quote Range "
+        "Margin from the top table as the feasibility answer. The fuel "
+        "numbers explain HOW the aircraft used its tank getting to that "
+        "range, they are not a second feasibility check.**",
         "",
     ]
 
