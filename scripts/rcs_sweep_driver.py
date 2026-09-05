@@ -66,14 +66,16 @@ RESULTS_ROOT = ROOT_DIR / "Results" / "RCS_SensitivityStudy"
 LOG_ROOT     = RESULTS_ROOT / "_logs"
 LOG_ROOT.mkdir(parents=True, exist_ok=True)
 
-TIMEOUT_SEC = 120 * 60  # per-delta wall-clock cap. Was 60 min, which killed the baseline
+TIMEOUT_SEC = 150 * 60  # per-delta wall-clock cap. Was 60 min, which killed the baseline
                         # worker mid-CFD-mesh (main.py's own CFD-mesh export on this same
                         # geometry has no timeout at all and takes longer than that to
                         # triangulate the full aircraft) - confirmed the geometry/mesh
                         # settings themselves are fine (main.py has produced this exact
                         # STL before), so this was purely too tight a wall-clock cap, not
                         # a meshing failure. Frontal cut (61x7=427 pts) is the other slow
-                        # part once meshing is done.
+                        # part once meshing is done. Bumped from 120 to 150 for extra
+                        # margin since actual mesh time on the full aircraft is still
+                        # unmeasured (main.py runs it unbounded, with no timeout).
 
 # Same CFD-mesh settings as main.py's USE_CFD_MESH block, TE-z-only /
 # azimuth+frontal cuts per the confirmed sensitivity-study scope.
