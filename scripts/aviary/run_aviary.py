@@ -711,35 +711,68 @@ def run_aviary_mission(
         # the same "independent collocation variable with no working
         # lever" pattern as Mission.GROSS_MASS before, just one level
         # removed.
+        # NOTE: check_totals()'s finite-difference path cannot take a Dymos
+        # state (states:distance) as a wrt= target at all - confirmed by
+        # actually hitting it: "the wrt variable ... is not an independent
+        # variable or does not have an independent variable as a source."
+        # (An earlier version of this diagnostic put states:distance in the
+        # SAME check_totals() call as t_duration; that raised before
+        # computing anything, so the whole check produced nothing useful on
+        # a real run - caught only by testing this exact code against
+        # Aviary's own reference aircraft before trusting it again.) Split
+        # into two separate calls: check_totals() (analytic vs. finite
+        # difference) for the plain-scalar t_duration variables, and a
+        # direct compute_totals(driver_scaling=True) - the same pattern
+        # already used successfully in the badlin/KKT checks above - for
+        # the states:distance array, printing just the value so it's
+        # visible whether only the LAST node (the one actually connected to
+        # Mission.RANGE) is nonzero, as it should be.
+        _dv_names = set(prob.driver._designvars.keys())
+        _t_duration_names = [
+            n for n in ["traj.climb.t_duration", "traj.cruise.t_duration",
+                        "traj.descent.t_duration"]
+            if n in _dv_names
+        ]
+        _last_phase_distance = [
+            n for n in ["traj.descent.states:distance", "traj.cruise.states:distance",
+                        "traj.climb.states:distance"]
+            if n in _dv_names
+        ][:1]  # just the actual last regular phase, whichever one that is
+
         try:
             print("\n--- check_totals: does Mission.RANGE actually respond to the "
-                  "phase durations (the real lever) and to states:distance (the "
-                  "direct connection, expected to be a clean ~1 regardless)? ---")
-            _dv_names = set(prob.driver._designvars.keys())
-            _t_duration_names = [
-                n for n in ["traj.climb.t_duration", "traj.cruise.t_duration",
-                            "traj.descent.t_duration"]
-                if n in _dv_names
-            ]
-            _last_phase_distance = [
-                n for n in ["traj.descent.states:distance", "traj.cruise.states:distance",
-                            "traj.climb.states:distance"]
-                if n in _dv_names
-            ][:1]  # just the actual last regular phase, whichever one that is
-            _wrt = _t_duration_names + _last_phase_distance
-            if _wrt:
+                  "phase durations (the real lever)? ---")
+            if _t_duration_names:
                 prob.check_totals(
                     of=[Mission.RANGE, Mission.Objectives.RANGE],
-                    wrt=_wrt,
+                    wrt=_t_duration_names,
                     method="fd",
                     compact_print=True,
                 )
             else:
-                print("   (none of the expected duration/distance design variables were "
-                      f"found - actual design variables: {sorted(_dv_names)})")
+                print("   (no t_duration design variables found - actual design "
+                      f"variables: {sorted(_dv_names)})")
             print("--- end check_totals ---\n")
         except Exception as diag_err:
-            print(f"   check_totals (Mission.RANGE vs. phase durations/distance): "
+            print(f"   check_totals (Mission.RANGE vs. phase durations): "
+                  f"<could not compute: {diag_err}>")
+
+        try:
+            print("--- compute_totals: d(Mission.RANGE)/d(states:distance) - expect "
+                  "~0 for every node except the last one ---")
+            if _last_phase_distance:
+                _totals = prob.compute_totals(
+                    of=[Mission.RANGE], wrt=_last_phase_distance, driver_scaling=True,
+                )
+                for _d in _last_phase_distance:
+                    print(f"   d(Mission.RANGE)/d({_d}) = "
+                          f"{np.asarray(_totals[Mission.RANGE, _d]).ravel()}")
+            else:
+                print("   (no states:distance design variable found - actual design "
+                      f"variables: {sorted(_dv_names)})")
+            print("--- end compute_totals ---\n")
+        except Exception as diag_err:
+            print(f"   compute_totals (Mission.RANGE vs. states:distance): "
                   f"<could not compute: {diag_err}>")
 
         # suppress_solver_print=False: this project's user explicitly wants
