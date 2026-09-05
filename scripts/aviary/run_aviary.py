@@ -213,13 +213,16 @@ def run_aviary_mission(
     down to a single cruise-only phase spanning the full design range, at
     fixed cruise Mach/altitude — same aircraft, aero table and engine deck
     as the full mission ("for our case"), just far fewer collocation nodes
-    and no phase-linking. A cheap diagnostic to isolate whether an SLSQP
-    stall is inherent to this problem's scale/formulation (still stalls
-    here too) or specific to the climb/descent phase machinery (converges
-    once removed) — see the "SOLVE DID NOT CONVERGE" diagnostic dump below
-    for the actual verdict on a given run. Never edits the module-level
-    phase_info import in place (only a deepcopy() of it), so a later
-    full-mission call in the same process still sees climb/descent intact.
+    and no phase-linking. A cheap diagnostic to isolate whether a stall is
+    inherent to this problem's scale/formulation or specific to the
+    climb/descent phase machinery — see the "SOLVE DID NOT CONVERGE"
+    diagnostic dump below for the actual verdict on a given run (the
+    mass_initial-based version of this comparison from an earlier debugging
+    pass was invalid: mass_initial turned out to be a no-op on the first
+    flight phase either way, so it was never actually testing what it
+    claimed to). Never edits the module-level phase_info import in place
+    (only a deepcopy() of it), so a later full-mission call in the same
+    process still sees climb/descent intact.
 
     custom_engine_deck_path: if given, this CSV file is used directly as
     the engine deck instead of the auto-generated Mattingly & Heiser deck
@@ -261,8 +264,8 @@ def run_aviary_mission(
     # Mission.GROSS_MASS (the OFF_DESIGN_MIN_FUEL design variable) is seeded
     # at 0.9x gross_mass_lbm below, per Aviary's own documented
     # run_off_design_mission() pattern. The trajectory's own starting-mass
-    # guesses (mass_initial and initial_guesses["mass"] for climb/cruise/
-    # descent, set from this single seed_gross_mass_lbm value) MUST use the
+    # guesses (initial_guesses["mass"] for climb/cruise/descent, set from
+    # this single seed_gross_mass_lbm value) MUST use the
     # same number, not the raw gross_mass_lbm - a run with these two
     # inconsistent by ~10% at iteration 0 produced a diagnostic dump showing
     # Mission.GROSS_MASS (75420 lbm) and traj.climb.states:mass[0] (~83800
@@ -354,16 +357,12 @@ def run_aviary_mission(
     for phase_name in phase_names:
         phase_info_local[phase_name]["subsystem_options"]["aerodynamics"]["aero_data"] = aero_data
 
-    if simple_mission:
-        # cruise is now the FIRST (and only) phase, so it needs the same
-        # mass_initial boundary condition climb sets below in the full
-        # mission. cruise's own mach_initial/altitude_initial are already
-        # fixed constants in phase_info.py (0.6 / 35000 ft, both ends) —
-        # the low-altitude sea-level-CL problem the climb hack below
-        # exists for doesn't apply to a phase that starts at cruise
-        # altitude/Mach directly.
-        phase_info_local["cruise"]["user_options"]["mass_initial"] = (seed_gross_mass_lbm, "lbm")
-    else:
+    # cruise (simple_mission's FIRST and only phase)'s mach_initial/
+    # altitude_initial are already fixed constants in phase_info.py (0.6 /
+    # 35000 ft, both ends) — the low-altitude sea-level-CL problem the climb
+    # hack below exists for doesn't apply to a phase that starts at cruise
+    # altitude/Mach directly, so nothing else is needed for that branch.
+    if not simple_mission:
         # Climb start-of-phase Mach — computed from THIS run's actual gross
         # mass and the REAL max CL your aero sweep reached, instead of
         # phase_info.py's own static mach_initial. A too-low starting Mach at
@@ -402,25 +401,36 @@ def run_aviary_mission(
             (min(lo0, climb_mach_initial - 0.02), hi0), mach_unit
         )
 
-    if not simple_mission:
-        # mass_initial: a real physical boundary condition (the mission
-        # starts at this run's actual gross weight), not a guess — but per
-        # Aviary's own AviaryOptionsDict docstring ("mass_initial ... When
-        # unspecified, the optimizer controls the value"), leaving this
-        # unset means climb's starting mass is meant to be picked by an
-        # optimizer we don't have. With mass_solve_segments=True (see
-        # phase_info.py) actually trying to Newton-solve the segment, an
-        # unset mass_initial left NOTHING pinning the phase's starting
-        # mass, producing a singular Jacobian for 'states:mass' the moment
-        # that solve was for real (confirmed: this crashed identically on
-        # both the F100 and a completely different civil engine deck,
-        # ruling out an engine-specific cause). Only climb needs this fixed
-        # explicitly — cruise/descent inherit their starting mass from the
-        # previous phase via Aviary's own phase linking, not from this
-        # option. (simple_mission already set the equivalent mass_initial
-        # on cruise itself, above, since cruise is that mission's only/
-        # first phase.)
-        phase_info_local["climb"]["user_options"]["mass_initial"] = (seed_gross_mass_lbm, "lbm")
+    # NOTE: mass_initial is deliberately NOT set on climb (or on cruise in
+    # simple_mission, above). An earlier version of this script set it to
+    # seed_gross_mass_lbm to fix a singular-Jacobian crash that came from a
+    # since-removed mass_solve_segments=True path. That original justification
+    # is gone, and the "fix" turned out to be a no-op anyway - confirmed by
+    # reading Aviary's own source, not just re-guessing:
+    #   - aviary/utils/aviary_options_dict.py's add_state_options() docstring
+    #     for mass_initial: "When unspecified, the optimizer controls the
+    #     value. When specified, a constraint is created on the initial
+    #     mass" - i.e. specifying it calls Dymos add_state(fix_initial=True).
+    #   - aviary/mission/energy_state_problem_configurator.py's
+    #     add_post_mission_systems(), the include_takeoff=False branch (what
+    #     this project uses): it unconditionally calls
+    #     first_flight_phase.set_state_options(Dynamic.Vehicle.MASS,
+    #     fix_initial=False, input_initial=False) and then connects
+    #     Mission.Takeoff.FINAL_MASS (itself derived from the free
+    #     Mission.GROSS_MASS design variable) straight into
+    #     traj.<first_phase>.initial_states:mass. This runs AFTER phases are
+    #     built, so it overrides whatever fix_initial phase_info asked for on
+    #     the first flight phase - mass_initial there never had a chance to
+    #     take effect.
+    #   - Reproduced directly against aviary==1.0.1 (OFF_DESIGN_MIN_FUEL,
+    #     Aviary's own bundled advanced_single_aisle_FLOPS aircraft): running
+    #     the exact same problem with vs. without a fixed mass_initial on the
+    #     first flight phase produced bit-identical SLSQP iteration histories
+    #     end to end. It is inert here, not just theoretically overridden.
+    # Leaving it unset matches Aviary's own reference mission
+    # (aviary/models/missions/energy_state_default.py has no mass_initial at
+    # all) and is what "the optimizer controls the value" is supposed to
+    # mean for a problem type where Mission.GROSS_MASS is a design variable.
 
     # Dynamic Dymos initial guesses — computed from THIS run's actual
     # seed_gross_mass_lbm/design_range_nmi instead of phase_info.py's frozen
@@ -526,7 +536,7 @@ def run_aviary_mission(
         # real and correct, just not the actual cause of the stall).
         #
         # Uses the same seed_gross_mass_lbm already used above for
-        # phase_info's mass_initial/initial_guesses, instead of an
+        # phase_info's initial_guesses, instead of an
         # independently-recomputed gross_mass_lbm * 0.9 - a run where these
         # two were computed separately (before this fix) showed the
         # trajectory (traj.climb.states:mass[0]) and this design variable
@@ -590,11 +600,22 @@ def run_aviary_mission(
 
         # Real driver, matching Aviary's own documented sequence
         # (aviary/interface/run_aviary.py's run_aviary() function) instead
-        # of a bare run_model() — see phase_info.py's climb-phase comment
-        # for the full history of why. SLSQP (ships with scipy, no external
-        # solver install needed) rather than add_driver()'s IPOPT default,
-        # which this machine may not have installed.
-        prob.add_driver("SLSQP", max_iter=100)
+        # of a bare run_model() — confirmed directly with the Aviary dev
+        # team (see project notes): mission analysis in Aviary is itself a
+        # Dymos optimization problem, so add_driver()/add_design_variables()/
+        # add_objective() are not optional, and run_aviary_problem() is the
+        # only path that actually converges the trajectory. SLSQP (ships
+        # with scipy, no external solver install needed) rather than
+        # add_driver()'s IPOPT default, which this machine may not have
+        # installed.
+        # max_iter=100 was a deliberate fail-fast setting for stall
+        # debugging (see git history) and was never raised back up for a
+        # real run - this problem has ~95 design variables / ~93 equality
+        # constraints (every collocation node's states are design variables
+        # here, since solve_segments isn't used), which can legitimately
+        # need more than 100 SLSQP iterations even when everything else is
+        # correct. Raised to a real production budget.
+        prob.add_driver("SLSQP", max_iter=400)
         # Loosening tol from Aviary's hard-coded SLSQP default (1e-9, set
         # in aviary/core/aviary_problem.py's add_driver() - not setdefault,
         # so it has to be overridden here, after add_driver() returns) to
@@ -748,14 +769,30 @@ def run_aviary_mission(
             # independently guarded so one inaccessible variable doesn't
             # hide the rest.
             print("\n--- SOLVE DID NOT CONVERGE — diagnostic dump ---")
-            for label, var in [
-                ("Mission.GROSS_MASS (design var, bounded by our fixed MTOW)", Mission.GROSS_MASS),
-                ("Aircraft.Design.GROSS_MASS (our fixed MTOW, should be unchanged)", Aircraft.Design.GROSS_MASS),
-                ("Mission.RANGE (actual flown range)", Mission.RANGE),
-                ("Mission.Constraints.RANGE_RESIDUAL (should be ~0 if feasible)", Mission.Constraints.RANGE_RESIDUAL),
-                ("Mission.FUEL_MASS (fuel burned)", Mission.FUEL_MASS),
-                ("Mission.Objectives.FUEL (actual SLSQP objective)", Mission.Objectives.FUEL),
-                ("Mission.Takeoff.ASCENT_DURATION (feeds the objective; may be a dangling default since include_takeoff=False)", Mission.Takeoff.ASCENT_DURATION),
+            # units=... is explicit below for every mass/range value. An
+            # earlier version of this dump called prob.get_val(var) with no
+            # units on some of these, which returns each variable in
+            # whatever unit IT happens to be stored in internally - Mission.
+            # Takeoff.FINAL_MASS is stored in lbm, traj.<phase>.states:mass
+            # is stored in kg (Dymos state, energy-state EOM works in SI
+            # internally). Printed side by side with no units, those looked
+            # like a huge, broken mass discontinuity (a ~2.2x gap) when they
+            # were actually the same physical value: lbm/kg = 2.20462
+            # exactly matched the observed gap on a real failed run here.
+            # Confirmed harmless by reproducing the same units-native-print
+            # pattern on a run that converged cleanly (aviary==1.0.1,
+            # OFF_DESIGN_MIN_FUEL, Aviary's own bundled reference aircraft):
+            # the same lbm-vs-kg gap showed up there too, on a mass link that
+            # was unquestionably fine. Forcing a common unit below removes
+            # that false signal.
+            for label, var, units in [
+                ("Mission.GROSS_MASS (design var, bounded by our fixed MTOW)", Mission.GROSS_MASS, "lbm"),
+                ("Aircraft.Design.GROSS_MASS (our fixed MTOW, should be unchanged)", Aircraft.Design.GROSS_MASS, "lbm"),
+                ("Mission.RANGE (actual flown range)", Mission.RANGE, "nmi"),
+                ("Mission.Constraints.RANGE_RESIDUAL (should be ~0 if feasible)", Mission.Constraints.RANGE_RESIDUAL, None),
+                ("Mission.FUEL_MASS (fuel burned)", Mission.FUEL_MASS, "lbm"),
+                ("Mission.Objectives.FUEL (actual SLSQP objective)", Mission.Objectives.FUEL, None),
+                ("Mission.Takeoff.ASCENT_DURATION (feeds the objective; may be a dangling default since include_takeoff=False)", Mission.Takeoff.ASCENT_DURATION, None),
                 # Aviary's own energy_state_problem_configurator.py
                 # (add_post_mission_systems(), the include_takeoff=False
                 # branch) automatically adds an EQConstraintComp forcing
@@ -763,25 +800,28 @@ def run_aviary_mission(
                 # (= Mission.GROSS_MASS - taxi/takeoff fuel burn) - this is
                 # how Mission.GROSS_MASS is actually supposed to tie into the
                 # real flown trajectory, as a CONSTRAINT rather than a direct
-                # connection. The last run's negative Mission.FUEL_MASS at an
-                # "Iteration limit reached" (Exit mode 9, non-converged) stop
-                # is consistent with this constraint simply not having been
-                # driven to zero yet, not with GROSS_MASS being physically
-                # disconnected from the trajectory. Printing both sides
-                # directly settles which it is instead of guessing further.
-                ("Mission.Takeoff.FINAL_MASS (should equal the climb phase's actual starting mass)", Mission.Takeoff.FINAL_MASS),
+                # connection. Printed here (now in lbm, matching the
+                # states:mass[0] print below) so the two can be compared
+                # directly instead of by eyeballing two different units.
+                ("Mission.Takeoff.FINAL_MASS (should equal the climb phase's actual starting mass)", Mission.Takeoff.FINAL_MASS, "lbm"),
             ]:
                 try:
-                    val = prob.get_val(var)
-                    print(f"   {label}: {val}")
+                    val = prob.get_val(var, units=units) if units else prob.get_val(var)
+                    print(f"   {label}: {val}" + (f" {units}" if units else ""))
                 except Exception as diag_err:
                     print(f"   {label}: <could not read: {diag_err}>")
             try:
                 first_phase_name = list(prob.model.mission_info.keys())[0]
-                climb_mass0 = prob.get_val(f"traj.{first_phase_name}.states:mass")[0]
+                final_mass_lbm = float(prob.get_val(Mission.Takeoff.FINAL_MASS, units="lbm")[0])
+                climb_mass0_lbm = float(
+                    prob.get_val(f"traj.{first_phase_name}.states:mass", units="lbm")[0]
+                )
                 print(f"   traj.{first_phase_name}.states:mass[0] (actual flown starting "
-                      f"mass - should equal Mission.Takeoff.FINAL_MASS above if the "
-                      f"mass-link constraint is satisfied): {climb_mass0}")
+                      f"mass, converted to lbm to match Mission.Takeoff.FINAL_MASS above): "
+                      f"{climb_mass0_lbm:.4f} lbm")
+                print(f"   mass-link residual (states:mass[0] - Mission.Takeoff.FINAL_MASS, "
+                      f"both in lbm; should be ~0 if the mass-link constraint is satisfied): "
+                      f"{climb_mass0_lbm - final_mass_lbm:+.6f} lbm")
             except Exception as diag_err:
                 print(f"   traj.<first_phase>.states:mass[0]: <could not read: {diag_err}>")
 
