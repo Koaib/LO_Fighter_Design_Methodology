@@ -752,26 +752,40 @@ def run_aviary_mission(
         print("--- end design-variable scaling check ---\n")
 
         # check_totals(): cross-checks Aviary's ANALYTIC total derivative of
-        # the objective/range-residual w.r.t. Mission.GROSS_MASS against a
+        # the objective/constraints w.r.t. Mission.GROSS_MASS against a
         # finite-difference estimate computed straight from the nonlinear
         # model - independent of SLSQP entirely, and cheap (a couple of
         # run_model() calls, no optimization). Added after a run that
         # stalled at "Positive directional derivative for linesearch" (Exit
         # mode 8) with Mission.GROSS_MASS and GNORM frozen bit-identical for
-        # 70+ straight SLSQP iterations regardless of max_iter - a signature
-        # that points at a bad/inconsistent derivative somewhere in the
-        # model rather than a hard-but-honest optimization landscape.
-        # A large relative error below points at the custom subsystem chain
-        # (most likely candidate: ExternalAeroBuilder / the GASP
-        # tabular_cruise aero group differentiating through the solve_alpha
-        # Newton sub-solve) rather than SLSQP or its settings. A small
-        # relative error rules that out and means the stall is a genuine
-        # numerical/scaling issue in the problem itself.
+        # 70+ straight SLSQP iterations regardless of max_iter.
+        #
+        # First pass (RANGE_RESIDUAL) came back analytic=0, fd=0 - both
+        # agree, so that derivative isn't broken, it's just genuinely zero:
+        # this project's climb/cruise/descent phases all use
+        # mach_optimize=False / altitude_optimize=False (prescribed
+        # Mach/altitude vs. time, not solved from a mass-dependent force
+        # balance), so flown distance never depended on Mission.GROSS_MASS
+        # in the first place - RANGE_RESIDUAL is closed entirely by the free
+        # phase-duration variables. That constraint was never GROSS_MASS's
+        # job to satisfy.
+        #
+        # Reading aviary/core/aviary_group.py's add_post_mission_systems()
+        # directly (not guessing) shows the constraint that IS actually
+        # supposed to tie Mission.GROSS_MASS to the real fuel-burn
+        # trajectory is Mission.Constraints.MASS_RESIDUAL (= TOTAL_FUEL_MASS
+        # - FUEL_MASS - RESERVE_FUEL_MASS, registered with equals=0.0), via
+        # Mission.FUEL_MASS = Mission.GROSS_MASS - traj.<last
+        # phase>.timeseries.mass[-1]. Checking that one now instead/as well.
         try:
             print("\n--- check_totals: analytic vs. finite-difference derivative "
                   "w.r.t. Mission.GROSS_MASS ---")
             prob.check_totals(
-                of=[Mission.Objectives.FUEL, Mission.Constraints.RANGE_RESIDUAL],
+                of=[
+                    Mission.Objectives.FUEL,
+                    Mission.Constraints.RANGE_RESIDUAL,
+                    Mission.Constraints.MASS_RESIDUAL,
+                ],
                 wrt=[Mission.GROSS_MASS],
                 method="fd",
                 compact_print=True,
