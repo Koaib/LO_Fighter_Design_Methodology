@@ -679,26 +679,68 @@ def run_aviary_mission(
         prob.list_driver_vars(driver_scaling=True)
         print("--- end design-variable scaling check ---\n")
 
-        # HISTORY: check_totals(of=[FUEL objective, RANGE_RESIDUAL,
-        # MASS_RESIDUAL, FUEL_MASS], wrt=[Mission.GROSS_MASS]) is what
-        # actually root-caused the OFF_DESIGN_MIN_FUEL stall this project
-        # switched away from (see the comment on ProblemType.
-        # OFF_DESIGN_MAX_RANGE above) - analytic and finite-difference
-        # derivatives agreed exactly that Mission.GROSS_MASS had a
-        # structural zero effect on both RANGE_RESIDUAL and MASS_RESIDUAL,
-        # and d(FUEL_MASS)/d(GROSS_MASS)=1.000000 (a pure "vertical shift":
-        # fuel burned never responds to starting weight in this collocation
-        # trajectory). Not a broken partial (both methods agreed) and not a
-        # wrong-mass-reference bug (solve_alpha_group.py correctly uses
-        # Dynamic.Vehicle.MASS) - just a design variable with no real lever
-        # on the constraints meant to pin it down.
-        # Removed now that Mission.GROSS_MASS is a fixed input rather than a
-        # design variable (this check_totals(wrt=Mission.GROSS_MASS) call
-        # would error under OFF_DESIGN_MAX_RANGE - it's not a registered
-        # design variable any more). If a new stall shows up, re-add a
-        # check_totals() call here with wrt= set to whatever IS a design
-        # variable under the new formulation (see
-        # prob.driver._designvars.keys() in the diagnostic dump below).
+        # HISTORY: check_totals(wrt=[Mission.GROSS_MASS]) is what actually
+        # root-caused the OFF_DESIGN_MIN_FUEL stall this project switched
+        # away from (see the comment on ProblemType.OFF_DESIGN_MAX_RANGE
+        # above) - Mission.GROSS_MASS had a structural zero effect on both
+        # RANGE_RESIDUAL and MASS_RESIDUAL. Removed (would now error -
+        # Mission.GROSS_MASS isn't a registered design variable any more).
+        #
+        # NEW CHECK after the first OFF_DESIGN_MAX_RANGE run also stalled
+        # (Exit mode 8, GNORM bit-identical for all 65 iterations, all 164
+        # function evaluations - even more frozen than the old stall):
+        # Mission.RANGE landed at 399.99999999, suspiciously exactly the
+        # 400 nmi target_range used to seed its OWN initial guess in
+        # energy_state_problem_configurator.py's initial_guesses(). That's
+        # the same "did the value ever actually move, or is it just
+        # echoing its own seed" question that caught the GROSS_MASS
+        # problem.
+        #
+        # Two DIFFERENT variables to test here, not one, because
+        # Mission.RANGE is a direct passthrough (aviary_group.py's
+        # 'state_output' ExecComp: range_final = range_in, connected from
+        # the last regular phase's final distance) - so d(Mission.RANGE)/
+        # d(traj.<last phase>.states:distance) SHOULD be a clean ~1 almost
+        # by construction, regardless of whether anything else is broken.
+        # The actually-informative test is d(Mission.RANGE)/d(t_duration):
+        # phase duration is the only thing that can change how far a
+        # PRESCRIBED Mach/altitude-vs-time profile travels, so if that
+        # comes back zero while the states:distance check comes back ~1,
+        # the direct connection is fine but nothing is actually driving
+        # states:distance to a new, longer-range-consistent value - i.e.
+        # the same "independent collocation variable with no working
+        # lever" pattern as Mission.GROSS_MASS before, just one level
+        # removed.
+        try:
+            print("\n--- check_totals: does Mission.RANGE actually respond to the "
+                  "phase durations (the real lever) and to states:distance (the "
+                  "direct connection, expected to be a clean ~1 regardless)? ---")
+            _dv_names = set(prob.driver._designvars.keys())
+            _t_duration_names = [
+                n for n in ["traj.climb.t_duration", "traj.cruise.t_duration",
+                            "traj.descent.t_duration"]
+                if n in _dv_names
+            ]
+            _last_phase_distance = [
+                n for n in ["traj.descent.states:distance", "traj.cruise.states:distance",
+                            "traj.climb.states:distance"]
+                if n in _dv_names
+            ][:1]  # just the actual last regular phase, whichever one that is
+            _wrt = _t_duration_names + _last_phase_distance
+            if _wrt:
+                prob.check_totals(
+                    of=[Mission.RANGE, Mission.Objectives.RANGE],
+                    wrt=_wrt,
+                    method="fd",
+                    compact_print=True,
+                )
+            else:
+                print("   (none of the expected duration/distance design variables were "
+                      f"found - actual design variables: {sorted(_dv_names)})")
+            print("--- end check_totals ---\n")
+        except Exception as diag_err:
+            print(f"   check_totals (Mission.RANGE vs. phase durations/distance): "
+                  f"<could not compute: {diag_err}>")
 
         # suppress_solver_print=False: this project's user explicitly wants
         # the Newton-iteration console output left as-is, not silenced.
@@ -718,6 +760,27 @@ def run_aviary_mission(
             # independently guarded so one inaccessible variable doesn't
             # hide the rest.
             print("\n--- SOLVE DID NOT CONVERGE — diagnostic dump ---")
+            # Read the ACTUAL active objective from the driver rather than
+            # hardcoding Mission.Objectives.FUEL: a run under
+            # OFF_DESIGN_MAX_RANGE (or any future problem-type switch) would
+            # otherwise have every KKT check below silently testing the
+            # WRONG variable - Mission.Objectives.FUEL still exists and is
+            # still computable even when it isn't the thing SLSQP is
+            # actually driving, so a hardcoded reference here would not
+            # error, it would just quietly produce a meaningless "near-zero
+            # gradient" result that looks like good news and isn't. Caught
+            # this exact bug on a real run: the diagnostic dump reported
+            # ||grad(objective)||=0 using Mission.Objectives.FUEL, while the
+            # real SLSQP output for the same run showed a genuinely
+            # nonzero, unmoving GNORM=0.399568 the entire time (Mission.
+            # Objectives.FUEL barely depends on the trajectory design
+            # variables active under OFF_DESIGN_MAX_RANGE, so its gradient
+            # being ~0 said nothing about whether SLSQP's REAL objective was
+            # stationary).
+            try:
+                _active_obj_name = list(prob.driver._objs.keys())[0]
+            except Exception:
+                _active_obj_name = Mission.Objectives.FUEL  # last-resort fallback
             # units=... is explicit below for every mass/range value. An
             # earlier version of this dump called prob.get_val(var) with no
             # units on some of these, which returns each variable in
@@ -850,7 +913,7 @@ def run_aviary_mission(
                 ]
                 dv_names = list(prob.driver._designvars.keys())
                 totals = prob.compute_totals(
-                    of=eq_con_names + [Mission.Objectives.FUEL],
+                    of=eq_con_names + [_active_obj_name],
                     wrt=dv_names, driver_scaling=True,
                 )
                 jac_rows = []
@@ -859,34 +922,47 @@ def run_aviary_mission(
                     jac_rows.append(np.hstack(row_blocks))
                 jac = np.vstack(jac_rows)
                 grad_obj = np.hstack(
-                    [totals[Mission.Objectives.FUEL, dv_name] for dv_name in dv_names]
+                    [totals[_active_obj_name, dv_name] for dv_name in dv_names]
                 ).ravel()
                 lam, _, _, _ = np.linalg.lstsq(jac.T, grad_obj, rcond=None)
                 residual = grad_obj - jac.T @ lam
                 grad_norm = np.linalg.norm(grad_obj)
                 residual_norm = np.linalg.norm(residual)
                 print(
-                    f"\n   KKT-stationarity check (equality constraints only): "
+                    f"\n   KKT-stationarity check on the REAL active objective "
+                    f"({_active_obj_name}, equality constraints only): "
                     f"||grad(objective)||={grad_norm:.6g}, ||residual after projecting "
                     f"onto the constraint-gradient row space||={residual_norm:.6g} "
-                    f"({100 * residual_norm / grad_norm:.4g}% of the gradient norm)."
+                    + (f"({100 * residual_norm / grad_norm:.4g}% of the gradient norm)."
+                       if grad_norm > 0 else
+                       "(gradient norm is exactly 0 - see the note below instead of a "
+                       "percentage, which would be 0/0.)")
                 )
-                if residual_norm < 1e-3 * grad_norm:
+                if grad_norm == 0:
                     print(
-                        "   Residual is negligible - Mission.GROSS_MASS is already a "
-                        "first-order KKT-stationary point for the equality-constrained "
-                        "problem. SLSQP not moving it further is CORRECT behavior; the "
-                        "'Iteration limit reached' failure is SLSQP's own stopping test "
-                        "not recognizing a point it has effectively already reached "
-                        "(likely constraint-tolerance/noise or an unmodeled active "
-                        "inequality, e.g. a throttle path constraint or the excess fuel "
-                        "capacity bound), not evidence of a real remaining defect."
+                        "   ||grad(objective)||=0 through the ANALYTIC total-derivative "
+                        "chain, but check this against the actual SLSQP GNORM printed "
+                        "during the run (iprint=2 output above) - if SLSQP's own GNORM "
+                        "was genuinely nonzero and unmoving instead, that is a direct "
+                        "contradiction: the analytic gradient computed here disagrees "
+                        "with what the optimizer itself is using, which points at a "
+                        "gradient/derivative inconsistency rather than a true optimum."
+                    )
+                elif residual_norm < 1e-3 * grad_norm:
+                    print(
+                        "   Residual is negligible - the design variables are already at "
+                        "a first-order KKT-stationary point for the equality-constrained "
+                        "problem. SLSQP not moving further is CORRECT behavior; the "
+                        "failure is SLSQP's own stopping test not recognizing a point it "
+                        "has effectively already reached (likely constraint-tolerance/"
+                        "noise or an unmodeled active inequality), not evidence of a "
+                        "real remaining defect."
                     )
                 else:
                     print(
-                        "   Residual is NOT negligible - Mission.GROSS_MASS is genuinely "
-                        "NOT at a stationary point yet. SLSQP failing to move it is a "
-                        "real stall, not just a missed convergence declaration."
+                        "   Residual is NOT negligible - the design variables are "
+                        "genuinely NOT at a stationary point yet. SLSQP failing to move "
+                        "them is a real stall, not just a missed convergence declaration."
                     )
             except Exception as diag_err:
                 print(f"   KKT-stationarity check: <could not compute: {diag_err}>")
@@ -929,7 +1005,7 @@ def run_aviary_mission(
 
                 if active:
                     totals_all = prob.compute_totals(
-                        of=eq_con_names + [Mission.Objectives.FUEL] + list(active.keys()),
+                        of=eq_con_names + [_active_obj_name] + list(active.keys()),
                         wrt=dv_names, driver_scaling=True,
                     )
                     jac_rows = [
@@ -940,7 +1016,7 @@ def run_aviary_mission(
                         jac_rows.append(full_rows[mask, :])
                     jac_full = np.vstack(jac_rows)
                     grad_obj = np.hstack(
-                        [totals_all[Mission.Objectives.FUEL, d] for d in dv_names]
+                        [totals_all[_active_obj_name, d] for d in dv_names]
                     ).ravel()
                     lam, _, _, _ = np.linalg.lstsq(jac_full.T, grad_obj, rcond=None)
                     residual = grad_obj - jac_full.T @ lam
@@ -952,9 +1028,17 @@ def run_aviary_mission(
                         f"constraints ({n_active_rows} active row(s) found across "
                         f"{list(active.keys())}): ||grad(objective)||={grad_norm:.6g}, "
                         f"||residual||={residual_norm:.6g} "
-                        f"({100 * residual_norm / grad_norm:.4g}% of the gradient norm)."
+                        + (f"({100 * residual_norm / grad_norm:.4g}% of the gradient norm)."
+                           if grad_norm > 0 else "(gradient norm is exactly 0.)")
                     )
-                    if residual_norm < 1e-3 * grad_norm:
+                    if grad_norm == 0:
+                        print(
+                            "   ||grad(objective)||=0 here too - cross-check against the "
+                            "real SLSQP GNORM from the run above (iprint=2 output); a "
+                            "disagreement points at a derivative inconsistency, not a "
+                            "genuine optimum."
+                        )
+                    elif residual_norm < 1e-3 * grad_norm:
                         print(
                             "   Residual collapses once active inequalities are included "
                             "- x IS effectively a full KKT point; the earlier equality-"
