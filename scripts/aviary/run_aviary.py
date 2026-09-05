@@ -21,7 +21,7 @@ Usage (standalone, uses this file's own placeholder defaults):
     python scripts/aviary/run_aviary.py
 """
 
-import sys, os
+import sys, os, copy
 import numpy as np
 sys.path.insert(0, os.path.dirname(__file__))
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))  # for vsp_setup
@@ -201,12 +201,25 @@ def run_aviary_mission(
     cruise_mach=None, cruise_altitude_ft=None, design_range_nmi=None,
     mach_list=None, altitude_list=None,
     custom_engine_deck_path=None,
+    simple_mission=False,
 ):
     """Run the Aviary mission analysis for geom_stem's already-produced aero
     CSVs (see module docstring). Every argument defaults to this module's
     own placeholder values (DEFAULT_* above) when left as None, for
     standalone use; main.py's AVIARY / MISSION CONFIG section passes its
     own values for all of them on a real pipeline run.
+
+    simple_mission: if True, collapses the climb+cruise+descent mission
+    down to a single cruise-only phase spanning the full design range, at
+    fixed cruise Mach/altitude — same aircraft, aero table and engine deck
+    as the full mission ("for our case"), just far fewer collocation nodes
+    and no phase-linking. A cheap diagnostic to isolate whether an SLSQP
+    stall is inherent to this problem's scale/formulation (still stalls
+    here too) or specific to the climb/descent phase machinery (converges
+    once removed) — see the "SOLVE DID NOT CONVERGE" diagnostic dump below
+    for the actual verdict on a given run. Never edits the module-level
+    phase_info import in place (only a deepcopy() of it), so a later
+    full-mission call in the same process still sees climb/descent intact.
 
     custom_engine_deck_path: if given, this CSV file is used directly as
     the engine deck instead of the auto-generated Mattingly & Heiser deck
@@ -325,62 +338,89 @@ def run_aviary_mission(
     aero_data.set_val("mach", external_aero._data["mach"], "unitless")
     aero_data.set_val("angle_of_attack", external_aero._data["alpha"], "deg")
 
-    for phase_name in ("climb", "cruise", "descent"):
-        phase_info[phase_name]["subsystem_options"]["aerodynamics"]["aero_data"] = aero_data
+    # simple_mission (opt2): deepcopy first — dropping 'climb'/'descent'
+    # below mutates whatever dict phase_info_local points at, and the
+    # bare module-level `phase_info` import is a singleton shared across
+    # every call in this process; popping keys from it directly would
+    # permanently delete those phases for any later full-mission call in
+    # the same run.
+    phase_info_local = copy.deepcopy(phase_info) if simple_mission else phase_info
+    if simple_mission:
+        phase_info_local.pop("climb", None)
+        phase_info_local.pop("descent", None)
+        phase_info_local["post_mission"]["target_range"] = (design_range_nmi, "nmi")
 
-    # Climb start-of-phase Mach — computed from THIS run's actual gross
-    # mass and the REAL max CL your aero sweep reached, instead of
-    # phase_info.py's own static mach_initial. A too-low starting Mach at
-    # low altitude demands more lift than this wing+mass can produce
-    # within the tested alpha range, which makes solve_alpha's Newton
-    # iteration walk off the edge of the LIFT_POLAR table (extrapolation
-    # -> singular gradient) and the climb-phase RHS solve fails outright
-    # with an AnalysisError. That's exactly what broke an earlier run at
-    # mach_initial=0.2 (CL~1.68 needed at sea level vs. a ~1.0 max tested
-    # CL for this geometry) — this closes that failure mode for any
-    # mass/wing/aero-table combination, not just this run's specific
-    # numbers, the same way the initial-guess block below already does
-    # for distance/mass.
-    #
-    # CL = W / (0.5*rho*V^2*S); solved for the minimum sea-level Mach that
-    # keeps CL at or below 90% of the max CL this run's own aero sweep
-    # actually reached — a margin below the table's hard edge (not right
-    # at it), since solve_alpha's local interpolation gradient degrades
-    # near the edge even before literally exceeding it.
-    max_tested_cl = float(external_aero._data["cl"].max())
-    cl_margin = 0.9
-    weight_N = gross_mass_lbm * 0.45359237 * 9.80665
-    wing_area_m2 = wing_area_ft2 * 0.09290304
-    _, rho_sl, _, a_sl = vsp_setup.isa_atmosphere(0.0)
-    climb_mach_initial = (
-        weight_N / (0.5 * rho_sl * a_sl**2 * wing_area_m2 * cl_margin * max_tested_cl)
-    ) ** 0.5
-    climb_mach_initial = round(climb_mach_initial + 0.02, 2)  # small extra margin, clean value
+    phase_names = tuple(name for name in ("climb", "cruise", "descent") if name in phase_info_local)
+    for phase_name in phase_names:
+        phase_info_local[phase_name]["subsystem_options"]["aerodynamics"]["aero_data"] = aero_data
 
-    print(f"   [climb] computed start-of-climb Mach={climb_mach_initial:.2f} "
-          f"(sea-level CL vs. this run's measured max CL={max_tested_cl:.3f})")
+    if simple_mission:
+        # cruise is now the FIRST (and only) phase, so it needs the same
+        # mass_initial boundary condition climb sets below in the full
+        # mission. cruise's own mach_initial/altitude_initial are already
+        # fixed constants in phase_info.py (0.6 / 35000 ft, both ends) —
+        # the low-altitude sea-level-CL problem the climb hack below
+        # exists for doesn't apply to a phase that starts at cruise
+        # altitude/Mach directly.
+        phase_info_local["cruise"]["user_options"]["mass_initial"] = (seed_gross_mass_lbm, "lbm")
+    else:
+        # Climb start-of-phase Mach — computed from THIS run's actual gross
+        # mass and the REAL max CL your aero sweep reached, instead of
+        # phase_info.py's own static mach_initial. A too-low starting Mach at
+        # low altitude demands more lift than this wing+mass can produce
+        # within the tested alpha range, which makes solve_alpha's Newton
+        # iteration walk off the edge of the LIFT_POLAR table (extrapolation
+        # -> singular gradient) and the climb-phase RHS solve fails outright
+        # with an AnalysisError. That's exactly what broke an earlier run at
+        # mach_initial=0.2 (CL~1.68 needed at sea level vs. a ~1.0 max tested
+        # CL for this geometry) — this closes that failure mode for any
+        # mass/wing/aero-table combination, not just this run's specific
+        # numbers, the same way the initial-guess block below already does
+        # for distance/mass.
+        #
+        # CL = W / (0.5*rho*V^2*S); solved for the minimum sea-level Mach that
+        # keeps CL at or below 90% of the max CL this run's own aero sweep
+        # actually reached — a margin below the table's hard edge (not right
+        # at it), since solve_alpha's local interpolation gradient degrades
+        # near the edge even before literally exceeding it.
+        max_tested_cl = float(external_aero._data["cl"].max())
+        cl_margin = 0.9
+        weight_N = gross_mass_lbm * 0.45359237 * 9.80665
+        wing_area_m2 = wing_area_ft2 * 0.09290304
+        _, rho_sl, _, a_sl = vsp_setup.isa_atmosphere(0.0)
+        climb_mach_initial = (
+            weight_N / (0.5 * rho_sl * a_sl**2 * wing_area_m2 * cl_margin * max_tested_cl)
+        ) ** 0.5
+        climb_mach_initial = round(climb_mach_initial + 0.02, 2)  # small extra margin, clean value
 
-    phase_info["climb"]["user_options"]["mach_initial"] = (climb_mach_initial, "unitless")
-    (lo0, hi0), mach_unit = phase_info["climb"]["user_options"]["mach_bounds"]
-    phase_info["climb"]["user_options"]["mach_bounds"] = (
-        (min(lo0, climb_mach_initial - 0.02), hi0), mach_unit
-    )
+        print(f"   [climb] computed start-of-climb Mach={climb_mach_initial:.2f} "
+              f"(sea-level CL vs. this run's measured max CL={max_tested_cl:.3f})")
 
-    # mass_initial: a real physical boundary condition (the mission starts
-    # at this run's actual gross weight), not a guess — but per Aviary's
-    # own AviaryOptionsDict docstring ("mass_initial ... When unspecified,
-    # the optimizer controls the value"), leaving this unset means climb's
-    # starting mass is meant to be picked by an optimizer we don't have.
-    # With mass_solve_segments=True (see phase_info.py) actually trying to
-    # Newton-solve the segment, an unset mass_initial left NOTHING pinning
-    # the phase's starting mass, producing a singular Jacobian for
-    # 'states:mass' the moment that solve was for real (confirmed: this
-    # crashed identically on both the F100 and a completely different
-    # civil engine deck, ruling out an engine-specific cause). Only climb
-    # needs this fixed explicitly — cruise/descent inherit their starting
-    # mass from the previous phase via Aviary's own phase linking, not
-    # from this option.
-    phase_info["climb"]["user_options"]["mass_initial"] = (seed_gross_mass_lbm, "lbm")
+        phase_info_local["climb"]["user_options"]["mach_initial"] = (climb_mach_initial, "unitless")
+        (lo0, hi0), mach_unit = phase_info_local["climb"]["user_options"]["mach_bounds"]
+        phase_info_local["climb"]["user_options"]["mach_bounds"] = (
+            (min(lo0, climb_mach_initial - 0.02), hi0), mach_unit
+        )
+
+    if not simple_mission:
+        # mass_initial: a real physical boundary condition (the mission
+        # starts at this run's actual gross weight), not a guess — but per
+        # Aviary's own AviaryOptionsDict docstring ("mass_initial ... When
+        # unspecified, the optimizer controls the value"), leaving this
+        # unset means climb's starting mass is meant to be picked by an
+        # optimizer we don't have. With mass_solve_segments=True (see
+        # phase_info.py) actually trying to Newton-solve the segment, an
+        # unset mass_initial left NOTHING pinning the phase's starting
+        # mass, producing a singular Jacobian for 'states:mass' the moment
+        # that solve was for real (confirmed: this crashed identically on
+        # both the F100 and a completely different civil engine deck,
+        # ruling out an engine-specific cause). Only climb needs this fixed
+        # explicitly — cruise/descent inherit their starting mass from the
+        # previous phase via Aviary's own phase linking, not from this
+        # option. (simple_mission already set the equivalent mass_initial
+        # on cruise itself, above, since cruise is that mission's only/
+        # first phase.)
+        phase_info_local["climb"]["user_options"]["mass_initial"] = (seed_gross_mass_lbm, "lbm")
 
     # Dynamic Dymos initial guesses — computed from THIS run's actual
     # seed_gross_mass_lbm/design_range_nmi instead of phase_info.py's frozen
@@ -401,23 +441,32 @@ def run_aviary_mission(
     # collocation solve, not meant to be physically exact.
     guessed_total_burn_lbm = seed_gross_mass_lbm * 0.068   # ~7/103.59 lbm, from
                                                         # the validated test run
-    climb_burn = guessed_total_burn_lbm * (3 / 7)
-    cruise_burn = guessed_total_burn_lbm * (3 / 7)
-    descent_burn = guessed_total_burn_lbm * (1 / 7)
 
-    mass_after_climb = seed_gross_mass_lbm - climb_burn
-    mass_after_cruise = mass_after_climb - cruise_burn
-    mass_after_descent = mass_after_cruise - descent_burn
+    if simple_mission:
+        # No climb/descent to split fuel burn across — the whole guessed
+        # burn happens over the single cruise phase, which now spans the
+        # entire design range.
+        mass_after_cruise_only = seed_gross_mass_lbm - guessed_total_burn_lbm
+        phase_info_local["cruise"]["initial_guesses"]["distance"] = ([0.0, design_range_nmi], "nmi")
+        phase_info_local["cruise"]["initial_guesses"]["mass"] = ([seed_gross_mass_lbm, mass_after_cruise_only], "lbm")
+    else:
+        climb_burn = guessed_total_burn_lbm * (3 / 7)
+        cruise_burn = guessed_total_burn_lbm * (3 / 7)
+        descent_burn = guessed_total_burn_lbm * (1 / 7)
 
-    dist_climb_end = 0.25 * design_range_nmi
-    dist_cruise_end = 0.75 * design_range_nmi
+        mass_after_climb = seed_gross_mass_lbm - climb_burn
+        mass_after_cruise = mass_after_climb - cruise_burn
+        mass_after_descent = mass_after_cruise - descent_burn
 
-    phase_info["climb"]["initial_guesses"]["distance"] = ([0.0, dist_climb_end], "nmi")
-    phase_info["climb"]["initial_guesses"]["mass"] = ([seed_gross_mass_lbm, mass_after_climb], "lbm")
-    phase_info["cruise"]["initial_guesses"]["distance"] = ([dist_climb_end, dist_cruise_end], "nmi")
-    phase_info["cruise"]["initial_guesses"]["mass"] = ([mass_after_climb, mass_after_cruise], "lbm")
-    phase_info["descent"]["initial_guesses"]["distance"] = ([dist_cruise_end, design_range_nmi], "nmi")
-    phase_info["descent"]["initial_guesses"]["mass"] = ([mass_after_cruise, mass_after_descent], "lbm")
+        dist_climb_end = 0.25 * design_range_nmi
+        dist_cruise_end = 0.75 * design_range_nmi
+
+        phase_info_local["climb"]["initial_guesses"]["distance"] = ([0.0, dist_climb_end], "nmi")
+        phase_info_local["climb"]["initial_guesses"]["mass"] = ([seed_gross_mass_lbm, mass_after_climb], "lbm")
+        phase_info_local["cruise"]["initial_guesses"]["distance"] = ([dist_climb_end, dist_cruise_end], "nmi")
+        phase_info_local["cruise"]["initial_guesses"]["mass"] = ([mass_after_climb, mass_after_cruise], "lbm")
+        phase_info_local["descent"]["initial_guesses"]["distance"] = ([dist_cruise_end, design_range_nmi], "nmi")
+        phase_info_local["descent"]["initial_guesses"]["mass"] = ([mass_after_cruise, mass_after_descent], "lbm")
 
     # Run with AVIARY_FILES as the working directory so Aviary/OpenMDAO's own
     # native "<script>_out/" report folder lands there instead of cluttering
@@ -433,7 +482,7 @@ def run_aviary_mission(
                 wing_has_strut, wing_has_fold,
                 design_range_nmi, cruise_mach, cruise_altitude_ft,
             ),
-            phase_info,
+            phase_info_local,
         )
         prob.load_external_subsystems([external_aero])
 

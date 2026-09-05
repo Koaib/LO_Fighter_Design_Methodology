@@ -377,6 +377,15 @@ CRUISE_MACH        = 0.6
 CRUISE_ALTITUDE_FT = 35000.0
 DESIGN_RANGE_NMI   = 400.0
 
+# SIMPLE_MISSION — debugging toggle, not a normal-run setting. True
+# collapses the climb+cruise+descent mission below to a single cruise-only
+# phase spanning the full DESIGN_RANGE_NMI at fixed CRUISE_MACH/
+# CRUISE_ALTITUDE_FT (same aircraft/aero/engine data, ~3x fewer collocation
+# nodes, no phase-linking) — a cheap test for whether an SLSQP stall is
+# inherent to this problem's scale/formulation or specific to the climb/
+# descent phase machinery. Leave False for a real mission result.
+SIMPLE_MISSION = False
+
 # =========================
 # TRIGGER AERO PIPELINE
 # =========================
@@ -597,4 +606,5 @@ if RUN_AVIARY:
         mach_list=MACH_LIST,
         altitude_list=ALTITUDE_LIST,
         custom_engine_deck_path=CUSTOM_ENGINE_DECK_PATH,
+        simple_mission=SIMPLE_MISSION,
     )
