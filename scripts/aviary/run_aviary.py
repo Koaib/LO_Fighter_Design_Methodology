@@ -776,7 +776,28 @@ def run_aviary_mission(
         # trajectory is Mission.Constraints.MASS_RESIDUAL (= TOTAL_FUEL_MASS
         # - FUEL_MASS - RESERVE_FUEL_MASS, registered with equals=0.0), via
         # Mission.FUEL_MASS = Mission.GROSS_MASS - traj.<last
-        # phase>.timeseries.mass[-1]. Checking that one now instead/as well.
+        # phase>.timeseries.mass[-1].
+        #
+        # SECOND RESULT: MASS_RESIDUAL also came back analytic=fd=0 (both
+        # agree, so still not a broken partial). Confirmed solve_alpha
+        # itself is wired correctly too (aviary/subsystems/aerodynamics/
+        # solve_alpha_group.py promotes mass from Dynamic.Vehicle.MASS, the
+        # real per-node trajectory state, not a fixed/wrong reference).
+        # The likely mechanical reason: this is a Dymos COLLOCATION
+        # trajectory (no solve_segments), so every node's mass is ITSELF an
+        # independent design variable, not something recomputed by
+        # integrating forward from Mission.GROSS_MASS - its only direct
+        # graph edge is into states:mass[0] via the Mission.Takeoff.
+        # FINAL_MASS connection. The final trajectory mass that
+        # MASS_RESIDUAL actually depends on is a SEPARATE free variable,
+        # coupled to GROSS_MASS only through the joint web of defect
+        # constraints, not a direct partial - so d(MASS_RESIDUAL)/
+        # d(GROSS_MASS) alone is a legitimate zero even in a healthy model.
+        # Adding Mission.FUEL_MASS directly (one algebraic step upstream of
+        # MASS_RESIDUAL) to see empirically whether it's exactly 0, exactly
+        # 1 (a pure "vertical shift", final mass moving in lockstep with
+        # GROSS_MASS), or something else - settles which mechanism this
+        # actually is instead of hand-deriving it.
         try:
             print("\n--- check_totals: analytic vs. finite-difference derivative "
                   "w.r.t. Mission.GROSS_MASS ---")
@@ -785,6 +806,7 @@ def run_aviary_mission(
                     Mission.Objectives.FUEL,
                     Mission.Constraints.RANGE_RESIDUAL,
                     Mission.Constraints.MASS_RESIDUAL,
+                    Mission.FUEL_MASS,
                 ],
                 wrt=[Mission.GROSS_MASS],
                 method="fd",
