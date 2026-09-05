@@ -941,6 +941,68 @@ def run_aviary_mission(
                     f"<could not compute: {diag_err}>"
                 )
 
+            # scipy's SLSQP wrapper (_slsqp_py.py) confirms GNORM is
+            # literally scipy.linalg.norm(g) where g = sf.grad(x) is the
+            # FULL total-derivative gradient of the objective across all
+            # design variables (matching the 8.38 computed above exactly) -
+            # not a structural constant and not the Lagrangian gradient.
+            # Since g flows through Dymos's nonlinear collocation physics
+            # for every other design variable, it being bit-identical for
+            # 100 straight iterations really does prove x itself never
+            # moved - that part of the original diagnosis holds.
+            #
+            # But both KKT checks above only ever looked at
+            # prob.driver._cons - i.e. constraints registered via
+            # add_constraint(). They never examined the SIMPLE BOX BOUNDS
+            # every design variable carries (lower/upper, set via
+            # add_design_var()/set_design_var_options() - see
+            # Mission.GROSS_MASS's own lower=empty_mass_lbm,
+            # upper=gross_mass_lbm above). scipy's wrapper passes those
+            # bounds to the compiled solver as xl/xu, completely separate
+            # from the m/meq general constraints in C/d - so a design
+            # variable pinned exactly at its own box bound would produce
+            # precisely this signature (a real, non-negligible unconstrained
+            # KKT residual that no _cons-based check could ever explain) and
+            # neither check above would have caught it. This is a direct,
+            # numeric test of that specific gap, not a guess.
+            try:
+                dv_names = list(prob.driver._designvars.keys())
+                dv_vals_scaled = prob.driver.get_design_var_values(driver_scaling=True)
+                dv_vals_raw = prob.driver.get_design_var_values(driver_scaling=False)
+                bound_tol = 1e-4
+                any_at_bound = False
+                print("\n   design-variable box-bound proximity check (lower/upper set "
+                      "via add_design_var/set_design_var_options, never visible to the "
+                      "_cons-based KKT checks above):")
+                for name in dv_names:
+                    meta = prob.driver._designvars[name]
+                    val_s = np.atleast_1d(np.asarray(dv_vals_scaled[name], dtype=float))
+                    lower_s = np.atleast_1d(np.asarray(meta['lower'], dtype=float))
+                    upper_s = np.atleast_1d(np.asarray(meta['upper'], dtype=float))
+                    near_lower = (lower_s > -1e29) & (np.abs(val_s - lower_s) < bound_tol)
+                    near_upper = (upper_s < 1e29) & (np.abs(upper_s - val_s) < bound_tol)
+                    if np.any(near_lower) or np.any(near_upper):
+                        any_at_bound = True
+                        val_r = np.atleast_1d(np.asarray(dv_vals_raw[name], dtype=float))
+                        which = "lower" if np.any(near_lower) else "upper"
+                        print(
+                            f"   * {name}: AT its {which} bound (scaled value="
+                            f"{val_s}, scaled bound=[{lower_s}, {upper_s}], raw value="
+                            f"{val_r}) - this box bound, not any _cons entry, can "
+                            f"explain a real unconstrained KKT residual with zero "
+                            f"active _cons rows."
+                        )
+                if not any_at_bound:
+                    print(
+                        "   No design variable (including Mission.GROSS_MASS) is at "
+                        "its own box bound (checked with tolerance 1e-4 in scaled "
+                        "units) - this RULES OUT box-bound blocking as the "
+                        "explanation for the unexplained residual; the stall is not "
+                        "caused by any constraint or bound SLSQP is aware of."
+                    )
+            except Exception as diag_err:
+                print(f"   design-variable box-bound proximity check: <could not compute: {diag_err}>")
+
             print("--- end diagnostic dump ---\n")
             raise RuntimeError(
                 "Aviary mission solve did not converge (prob.result=True means "
