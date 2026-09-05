@@ -852,6 +852,95 @@ def run_aviary_mission(
             except Exception as diag_err:
                 print(f"   KKT-stationarity check: <could not compute: {diag_err}>")
 
+            # The equality-only KKT check above found a small but real
+            # residual (not negligible, but only ~2% of ||grad(objective)||
+            # on the run that motivated this). The equality-only test
+            # can't see inequality constraints (throttle path constraints,
+            # the excess-fuel-capacity bound) at all, and if one of them is
+            # sitting exactly at its bound, its gradient row belongs in the
+            # KKT system too - with the correct sign, its Lagrange
+            # multiplier would be non-negative, but this check doesn't
+            # enforce that (least squares only), so it's an approximate
+            # test: if adding these rows makes the residual collapse, that
+            # is strong evidence the earlier gap was exactly this missing
+            # term, not a genuine stall.
+            try:
+                eq_con_names = [
+                    name for name, meta in prob.driver._cons.items()
+                    if meta.get('equals') is not None
+                ]
+                ineq_meta = {
+                    name: meta for name, meta in prob.driver._cons.items()
+                    if meta.get('equals') is None
+                }
+                dv_names = list(prob.driver._designvars.keys())
+
+                ineq_vals = prob.driver.get_constraint_values(ctype='ineq', driver_scaling=True)
+                active_tol = 1e-4
+                active = {}
+                for name, meta in ineq_meta.items():
+                    val = np.asarray(ineq_vals[name])
+                    lower = np.asarray(meta['lower'])
+                    upper = np.asarray(meta['upper'])
+                    near_lower = (lower > -1e29) & (np.abs(val - lower) < active_tol)
+                    near_upper = (upper < 1e29) & (np.abs(upper - val) < active_tol)
+                    mask = near_lower | near_upper
+                    if np.any(mask):
+                        active[name] = mask
+
+                if active:
+                    totals_all = prob.compute_totals(
+                        of=eq_con_names + [Mission.Objectives.FUEL] + list(active.keys()),
+                        wrt=dv_names, driver_scaling=True,
+                    )
+                    jac_rows = [
+                        np.hstack([totals_all[c, d] for d in dv_names]) for c in eq_con_names
+                    ]
+                    for name, mask in active.items():
+                        full_rows = np.hstack([totals_all[name, d] for d in dv_names])
+                        jac_rows.append(full_rows[mask, :])
+                    jac_full = np.vstack(jac_rows)
+                    grad_obj = np.hstack(
+                        [totals_all[Mission.Objectives.FUEL, d] for d in dv_names]
+                    ).ravel()
+                    lam, _, _, _ = np.linalg.lstsq(jac_full.T, grad_obj, rcond=None)
+                    residual = grad_obj - jac_full.T @ lam
+                    grad_norm = np.linalg.norm(grad_obj)
+                    residual_norm = np.linalg.norm(residual)
+                    n_active_rows = sum(int(m.sum()) for m in active.values())
+                    print(
+                        f"\n   KKT-stationarity check, extended with active inequality "
+                        f"constraints ({n_active_rows} active row(s) found across "
+                        f"{list(active.keys())}): ||grad(objective)||={grad_norm:.6g}, "
+                        f"||residual||={residual_norm:.6g} "
+                        f"({100 * residual_norm / grad_norm:.4g}% of the gradient norm)."
+                    )
+                    if residual_norm < 1e-3 * grad_norm:
+                        print(
+                            "   Residual collapses once active inequalities are included "
+                            "- x IS effectively a full KKT point; the earlier equality-"
+                            "only residual was exactly the missing contribution from an "
+                            "active bound (e.g. a throttle path constraint or the fuel-"
+                            "capacity limit), not a real remaining descent direction."
+                        )
+                    else:
+                        print(
+                            "   Residual is still not negligible even with active "
+                            "inequalities included - the stall is real, not explained by "
+                            "a bound constraint sitting at its limit."
+                        )
+                else:
+                    print(
+                        "\n   No inequality constraints are at their bound at this point "
+                        "(checked with tolerance 1e-4 in scaled units) - the equality-"
+                        "only residual above is NOT explained by an active bound."
+                    )
+            except Exception as diag_err:
+                print(
+                    f"   extended KKT-stationarity check (active inequalities): "
+                    f"<could not compute: {diag_err}>"
+                )
+
             print("--- end diagnostic dump ---\n")
             raise RuntimeError(
                 "Aviary mission solve did not converge (prob.result=True means "
