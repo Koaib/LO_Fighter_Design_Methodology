@@ -751,6 +751,35 @@ def run_aviary_mission(
         prob.list_driver_vars(driver_scaling=True)
         print("--- end design-variable scaling check ---\n")
 
+        # check_totals(): cross-checks Aviary's ANALYTIC total derivative of
+        # the objective/range-residual w.r.t. Mission.GROSS_MASS against a
+        # finite-difference estimate computed straight from the nonlinear
+        # model - independent of SLSQP entirely, and cheap (a couple of
+        # run_model() calls, no optimization). Added after a run that
+        # stalled at "Positive directional derivative for linesearch" (Exit
+        # mode 8) with Mission.GROSS_MASS and GNORM frozen bit-identical for
+        # 70+ straight SLSQP iterations regardless of max_iter - a signature
+        # that points at a bad/inconsistent derivative somewhere in the
+        # model rather than a hard-but-honest optimization landscape.
+        # A large relative error below points at the custom subsystem chain
+        # (most likely candidate: ExternalAeroBuilder / the GASP
+        # tabular_cruise aero group differentiating through the solve_alpha
+        # Newton sub-solve) rather than SLSQP or its settings. A small
+        # relative error rules that out and means the stall is a genuine
+        # numerical/scaling issue in the problem itself.
+        try:
+            print("\n--- check_totals: analytic vs. finite-difference derivative "
+                  "w.r.t. Mission.GROSS_MASS ---")
+            prob.check_totals(
+                of=[Mission.Objectives.FUEL, Mission.Constraints.RANGE_RESIDUAL],
+                wrt=[Mission.GROSS_MASS],
+                method="fd",
+                compact_print=True,
+            )
+            print("--- end check_totals ---\n")
+        except Exception as diag_err:
+            print(f"   check_totals: <could not compute: {diag_err}>")
+
         # suppress_solver_print=False: this project's user explicitly wants
         # the Newton-iteration console output left as-is, not silenced.
         prob.run_aviary_problem(run_driver=True, suppress_solver_print=False, make_plots=False)
