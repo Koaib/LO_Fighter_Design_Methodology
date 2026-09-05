@@ -1,0 +1,98 @@
+# ENGINE DECK TEMPLATE - fill in real thrust/fuel-flow data and delete this comment block
+#
+# HOW TO USE THIS FILE:
+#  1. Copy this file somewhere (e.g. Aviary_Files/engines/my_real_engine.csv).
+#  2. Replace every 0.0 in the Net_Thrust(lbf) and Fuel_Flow_Rate(lbm/h) columns
+#     with your engine's real values at that Mach/Altitude/Throttle point.
+#  3. Point main.py's CUSTOM_ENGINE_DECK_PATH at your filled-in copy.
+#     Leave CUSTOM_ENGINE_DECK_PATH = None to keep using the auto-generated
+#     Mattingly & Heiser textbook deck instead (scripts/aviary/build_engine_deck.py).
+#
+# RULES Aviary itself enforces (aviary/subsystems/propulsion/engine_deck.py):
+#  - Column headers are matched case-insensitively with whitespace stripped, so
+#    the exact header text below is not sacred - 'Mach', 'mach_number', 'MACH' all
+#    work - but Mach, Altitude, Throttle, and Thrust columns are REQUIRED; Fuel Flow
+#    is required by this pipeline even though Aviary itself treats it as optional.
+#  - Mach=0, Altitude=0 (sea-level static) MUST be included - Aviary needs it as a
+#    reference point.
+#  - Throttle: 0.0=idle, 0.5=military/dry power, 1.0=full afterburner (this
+#    pipeline's convention - matches build_engine_deck.py's own generated decks).
+#  - Add or remove Mach/Altitude/Throttle rows as your real data allows - this grid
+#    (0-40,000 ft, Mach 0-0.6) is only sized to comfortably cover this project's
+#    current mission profile (see main.py's CRUISE_ALTITUDE_FT/CRUISE_MACH/
+#    MACH_LIST/ALTITUDE_LIST) - a real deck should cover whatever your own mission
+#    actually flies through.
+#
+Mach_Number,Altitude(ft),Throttle,Net_Thrust(lbf),Fuel_Flow_Rate(lbm/h)
+0.0,0,0.0,0.0,0.0
+0.0,0,0.5,0.0,0.0
+0.0,0,1.0,0.0,0.0
+0.2,0,0.0,0.0,0.0
+0.2,0,0.5,0.0,0.0
+0.2,0,1.0,0.0,0.0
+0.4,0,0.0,0.0,0.0
+0.4,0,0.5,0.0,0.0
+0.4,0,1.0,0.0,0.0
+0.6,0,0.0,0.0,0.0
+0.6,0,0.5,0.0,0.0
+0.6,0,1.0,0.0,0.0
+0.0,10000,0.0,0.0,0.0
+0.0,10000,0.5,0.0,0.0
+0.0,10000,1.0,0.0,0.0
+0.2,10000,0.0,0.0,0.0
+0.2,10000,0.5,0.0,0.0
+0.2,10000,1.0,0.0,0.0
+0.4,10000,0.0,0.0,0.0
+0.4,10000,0.5,0.0,0.0
+0.4,10000,1.0,0.0,0.0
+0.6,10000,0.0,0.0,0.0
+0.6,10000,0.5,0.0,0.0
+0.6,10000,1.0,0.0,0.0
+0.0,20000,0.0,0.0,0.0
+0.0,20000,0.5,0.0,0.0
+0.0,20000,1.0,0.0,0.0
+0.2,20000,0.0,0.0,0.0
+0.2,20000,0.5,0.0,0.0
+0.2,20000,1.0,0.0,0.0
+0.4,20000,0.0,0.0,0.0
+0.4,20000,0.5,0.0,0.0
+0.4,20000,1.0,0.0,0.0
+0.6,20000,0.0,0.0,0.0
+0.6,20000,0.5,0.0,0.0
+0.6,20000,1.0,0.0,0.0
+0.0,30000,0.0,0.0,0.0
+0.0,30000,0.5,0.0,0.0
+0.0,30000,1.0,0.0,0.0
+0.2,30000,0.0,0.0,0.0
+0.2,30000,0.5,0.0,0.0
+0.2,30000,1.0,0.0,0.0
+0.4,30000,0.0,0.0,0.0
+0.4,30000,0.5,0.0,0.0
+0.4,30000,1.0,0.0,0.0
+0.6,30000,0.0,0.0,0.0
+0.6,30000,0.5,0.0,0.0
+0.6,30000,1.0,0.0,0.0
+0.0,35000,0.0,0.0,0.0
+0.0,35000,0.5,0.0,0.0
+0.0,35000,1.0,0.0,0.0
+0.2,35000,0.0,0.0,0.0
+0.2,35000,0.5,0.0,0.0
+0.2,35000,1.0,0.0,0.0
+0.4,35000,0.0,0.0,0.0
+0.4,35000,0.5,0.0,0.0
+0.4,35000,1.0,0.0,0.0
+0.6,35000,0.0,0.0,0.0
+0.6,35000,0.5,0.0,0.0
+0.6,35000,1.0,0.0,0.0
+0.0,40000,0.0,0.0,0.0
+0.0,40000,0.5,0.0,0.0
+0.0,40000,1.0,0.0,0.0
+0.2,40000,0.0,0.0,0.0
+0.2,40000,0.5,0.0,0.0
+0.2,40000,1.0,0.0,0.0
+0.4,40000,0.0,0.0,0.0
+0.4,40000,0.5,0.0,0.0
+0.4,40000,1.0,0.0,0.0
+0.6,40000,0.0,0.0,0.0
+0.6,40000,0.5,0.0,0.0
+0.6,40000,1.0,0.0,0.0

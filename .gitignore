@@ -12,11 +12,15 @@ OpenVSP*/
 Octave*/
 POFACETS/
 
-# ── OpenRCS repo (clone separately into OpenRCS/open-rcs/) ───────────────────
-# The open-rcs folder itself is a git submodule / separate clone.
-# Only our bridge scripts (run_openrcs.py) are committed here.
-# Intermediate text files that OpenRCS writes during a run are excluded:
-OpenRCS/open-rcs/
+# ── OpenRCS repo (vendored, patched fork — code/docs only, not geometry/data) ─
+# Ignore everything under open-rcs by default...
+OpenRCS/open-rcs/**
+# ...but let git traverse into subfolders...
+!OpenRCS/open-rcs/**/
+# ...and keep source/doc file types only (no .stl models, no binaries/results):
+!OpenRCS/open-rcs/**/*.py
+!OpenRCS/open-rcs/**/*.m
+!OpenRCS/open-rcs/**/*.md
 
 # ── Virtual environment ───────────────────────────────────────────────────────
 .venv/
@@ -26,6 +30,9 @@ Results/
 STL_Files/
 VSP_Files/
 STP_Files/
+Aviary_Files/
+engines/
+scripts/aviary/run_aviary_out/
 
 # ── Input Geometry ─────────────────────────────────────────────────────────
 Geometry*/
