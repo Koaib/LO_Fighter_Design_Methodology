@@ -51,8 +51,14 @@ STL_FILES = os.path.join(ROOT_DIR, "STL_Files")
 RESULTS_DIR  = os.path.join(ROOT_DIR, "Results",  "RCS")
 OPENRCS_DIR  = os.path.join(ROOT_DIR, "OpenRCS",  "open-rcs")
 AERO_RESULTS_DIR = os.path.join(ROOT_DIR, "Results", "Aero")
+STABILITY_DIR     = os.path.join(ROOT_DIR, "Results", "Stability")
+AVIARY_FILES      = os.path.join(ROOT_DIR, "Aviary_Files")       # raw/working Aviary+OpenMDAO output (engine deck, native _out/reports/)
+AVIARY_PERF_DIR   = os.path.join(ROOT_DIR, "Results", "aviary_perf")  # our OWN plain-language mission summary lives directly here
+AVIARY_PERF_NATIVE_DIR = os.path.join(AVIARY_PERF_DIR, "native_aviary_files")  # curated copies of Aviary's OWN native reports
+                                                                                 # (mission_summary.md etc.) — kept in their own
+                                                                                 # subfolder so they're not mistaken for our
+                                                                                 # plain-language summary sitting one level up
 VSPAERO_EXE = os.path.join(VSP_INSTALL, "vspaero.exe")
-
 
 # Path to our bridge script (scripts/ folder, same folder as this file)
 RUN_OPENRCS_SCRIPT = os.path.join(ROOT_DIR, "scripts", "run_openrcs.py")
@@ -89,6 +95,10 @@ os.makedirs(STP_FILES,   exist_ok=True)
 os.makedirs(STL_FILES,   exist_ok=True)
 os.makedirs(RESULTS_DIR, exist_ok=True)
 os.makedirs(AERO_RESULTS_DIR, exist_ok=True)
+os.makedirs(STABILITY_DIR, exist_ok=True)
+os.makedirs(AVIARY_FILES, exist_ok=True)
+os.makedirs(AVIARY_PERF_DIR, exist_ok=True)
+os.makedirs(AVIARY_PERF_NATIVE_DIR, exist_ok=True)
 
 # =========================
 # OPENVSP INITIALIZATION
@@ -182,9 +192,12 @@ def export_stl_cfdmesh(
 def run_openrcs_rcs(
     stl_filename : str = "aircraft.stl",
     freq         : float = 12.0,
-    pol          : str = "both",   # "TE-z", "TM-z", or "both"
-    cuts         : str = "all",    # see options below
+    pol          : str = "both",
+    cuts         : str = "all",
+    az_range     : str = "full",   # "full" or "half" — pass through to solver
+    delp         : float = 1.0,
 ) -> None:
+
     """
     Launch the OpenRCS pipeline.
 
@@ -221,6 +234,8 @@ def run_openrcs_rcs(
             freq        = freq,
             pol         = pol,
             cuts        = cuts,
+            az_range    = az_range,
+            delp        = delp,
         )
         if result_dict:
             print("✅ OpenRCS finished.")
@@ -236,66 +251,90 @@ def run_openrcs_rcs(
         traceback.print_exc()
         
 def dump_geom_params(vsp3_path: str, out_json_path: str) -> dict:
-    """
-    Extract every geom's parameters from a vsp3 file into a JSON dict.
-    Reusable across any baseline geometry -- not specific to any one
-    aircraft.
-    """
     import openvsp as vsp
     import json
 
-    vsp.VSPCheckSetup()
-    vsp.ClearVSPModel()
-    vsp.ReadVSPFile(vsp3_path)
-    vsp.Update()
+    vsp.VSPCheckSetup(); vsp.ClearVSPModel()
+    vsp.ReadVSPFile(vsp3_path); vsp.Update()
 
     dump = {}
+    sweep_candidates = {}   # collects every section parm for the template
+
     for gid in vsp.FindGeoms():
         gname = vsp.GetGeomName(gid)
         gtype = vsp.GetGeomTypeName(gid) if hasattr(vsp, "GetGeomTypeName") else "?"
-        parms = {vsp.GetParmName(pid): vsp.GetParmVal(pid)
-                 for pid in vsp.GetGeomParmIDs(gid)}
-        dump[gname] = {"id": gid, "type": gtype, "parms": parms}
+        entry = {"id": gid, "type": gtype, "parms": {}, "sections": {}}
+
+        entry["parms"] = {vsp.GetParmName(pid): vsp.GetParmVal(pid)
+                           for pid in vsp.GetGeomParmIDs(gid)}
+
+        WING_SHAPE_PARMS = {"Sweep", "Sweep_Location", "Dihedral", "Twist", "Root_Chord", "Tip_Chord"}
+        FUSELAGE_SHAPE_PARMS = {
+            "Width", "Height", "MaxWidthLoc", "CornerRad",
+            "TopLAngle", "TopLStrength", "TopRAngle", "TopRStrength",
+            "BottomLAngle", "BottomLStrength", "BottomRAngle", "BottomRStrength",
+            "LeftLAngle", "LeftLStrength", "RightLAngle", "RightLStrength",
+        }
+        shape_filter = WING_SHAPE_PARMS if gtype == "Wing" else FUSELAGE_SHAPE_PARMS
+
+        n_surf = vsp.GetNumXSecSurfs(gid) if hasattr(vsp, "GetNumXSecSurfs") else 0
+        for si in range(n_surf):
+            xsec_surf_id = vsp.GetXSecSurf(gid, si)
+            n_xsec = vsp.GetNumXSec(xsec_surf_id)
+            for xi in range(n_xsec):
+                xsec_id = vsp.GetXSec(xsec_surf_id, xi)
+                sec_parms = {}
+                for pid in vsp.GetXSecParmIDs(xsec_id):
+                    pname = vsp.GetParmName(pid)
+                    pval  = vsp.GetParmVal(pid)
+                    sec_parms[pname] = pval
+                    if pname in shape_filter:
+                        key = f"{gname}_{pname}_surf{si}sec{xi}"
+                        sweep_candidates[key] = {
+                            "geom": gname, "surf": si, "section": xi,
+                            "parm": pname, "baseline": pval,
+                        }
+                entry["sections"][f"surf{si}_sec{xi}"] = sec_parms
+                
+
+        dump[gname] = entry
 
     with open(out_json_path, "w") as f:
         json.dump(dump, f, indent=2)
 
     geom_names = list(dump.keys())
-    print(f"Dumped {sum(len(v['parms']) for v in dump.values())} parms "
-          f"across {len(dump)} geoms -> {out_json_path}")
-    print(f"Geoms found ({len(geom_names)}): {', '.join(geom_names)}")
+    print(f"Dumped params for {len(geom_names)} geoms -> {out_json_path}")
 
-    # ── companion classification file, tied to the VSP3 filename ──────
-    # e.g. SSAM_final_geom_...scaled_by_19.vsp3
-    #      -> SSAM_final_geom_...scaled_by_19_sets.json  (same folder)
     vsp3_dir  = os.path.dirname(vsp3_path)
     vsp3_stem = os.path.splitext(os.path.basename(vsp3_path))[0]
-    sets_path = os.path.join(vsp3_dir, f"{vsp3_stem}_sets.json")
 
+    # ── existing _sets.json template logic — unchanged ──────────────────
+    sets_path = os.path.join(vsp3_dir, f"{vsp3_stem}_sets.json")
     if not os.path.exists(sets_path):
         with open(sets_path, "w") as f:
-            json.dump({
-                "lifting": [],
-                "non_lifting": [],
-                "_available_geoms": geom_names
-            }, f, indent=2)
+            json.dump({"lifting": [], "non_lifting": [], "_available_geoms": geom_names}, f, indent=2)
         print(f"📝 Classification template created -> {sets_path}")
-        print('   Edit it: move each name into "lifting" or "non_lifting".')
     else:
         with open(sets_path, "r") as f:
             existing = json.load(f)
-        old_names = set(existing.get("_available_geoms", []))
-        new_names = set(geom_names)
+        old_names, new_names = set(existing.get("_available_geoms", [])), set(geom_names)
         added, removed = new_names - old_names, old_names - new_names
         if added or removed:
-            print(f"⚠️  Geometry changed since {sets_path} was classified:")
-            if added:   print(f"     + added   : {sorted(added)}")
-            if removed: print(f"     - removed : {sorted(removed)}")
-            print("   File NOT overwritten (your classifications are preserved).")
-            print("   Update it by hand to match the current geometry.")
+            print(f"⚠️  Geometry changed since {sets_path} was classified — file NOT overwritten.")
         else:
             print(f"   Classification file up to date: {sets_path}")
-            
+
+    # ── NEW: _sweep_params.json template, same pattern ──────────────────
+    sweep_path = os.path.join(vsp3_dir, f"{vsp3_stem}_sweep_params.json")
+    if not os.path.exists(sweep_path):
+        with open(sweep_path, "w") as f:
+            json.dump(sweep_candidates, f, indent=2)
+        print(f"📝 Sweep-params template created -> {sweep_path}")
+        print("   Delete entries you don't need; rename keys to short, meaningful names.")
+        print("   Baseline values are pre-filled from the current geometry — verify, don't guess.")
+    else:
+        print(f"   Sweep-params file already exists, not overwritten: {sweep_path}")
+
     return dump
 
 def apply_geom_sets(sets_json_path: str) -> tuple:
@@ -368,8 +407,29 @@ def run_matlab_rcs():
 # VSPAERO AERO LAUNCHER
 # =============================================================================
 
+def isa_atmosphere(alt_ft):
+    """Two-layer ISA (troposphere + lower stratosphere), valid 0-65,000 ft.
+    Returns T (K), rho (kg/m^3), mu (Pa*s, Sutherland's law), a (m/s)."""
+    alt_m = alt_ft * 0.3048
+    GAMMA, R_AIR = 1.4, 287.05
+    T_SL, RHO_SL = 288.15, 1.225
+
+    if alt_m <= 11000.0:
+        T = T_SL - 0.0065 * alt_m
+        RHO = RHO_SL * (T / T_SL) ** 4.2561
+    else:
+        T_11 = T_SL - 0.0065 * 11000.0     # 216.65 K
+        RHO_11 = RHO_SL * (T_11 / T_SL) ** 4.2561
+        T = T_11                             # isothermal above 11 km
+        RHO = RHO_11 * np.exp(-9.80665 * (alt_m - 11000.0) / (R_AIR * T_11))
+
+    MU = 1.458e-6 * T**1.5 / (T + 110.4)
+    a_sound = (GAMMA * R_AIR * T) ** 0.5
+    return T, RHO, MU, a_sound
+
 def run_vspaero_aero(
     wing_id,
+    altitude_ft    = 0.0,   # NEW — drives Re calc via ISA atmosphere
     alpha_start    = -5.0,
     alpha_end      = 15.0,
     alpha_npts     = 21,
@@ -387,36 +447,39 @@ def run_vspaero_aero(
     thick_geom_set = 0,
     ref_mode       = "auto",
     sref = None, bref = None, cref = None,
+    x_cg = None, y_cg = None, z_cg = None,   
+    run_name       = "aircraft",
 ):
     
     import openvsp as vsp
-    
-    # DEBUGGING
-    print("   [DEBUG] function entered")          # ← add this
-    print("   [DEBUG] wing_id =", wing_id)        # ← add this
 
     print("\n🔄 Running VSPAero VLM analysis...")
+    print(f"   wing_id: {wing_id}")
     print(f"   Alpha : {alpha_start}° → {alpha_end}°  ({alpha_npts} points)")
     print(f"   Mach  : {mach_start}   Re: {re_cref_start:.2e}\n")
 
     # ── 1. SET REFERENCE WING ────────────────────────────────────────────────
-    
-    # DEBUGGING
-    print("   [DEBUG] calling SetVSPAERORefWingID...")
     if ref_mode == "auto":
         vsp.SetVSPAERORefWingID(wing_id)
-        print("   [DEBUG] Ref values from wing planform (auto)")
+        print("   Ref values from wing planform (auto)")
     elif ref_mode == "manual":
         if None in (sref, bref, cref):
             raise ValueError("ref_mode='manual' requires sref, bref, cref.")
-        print(f"   [DEBUG] Ref values manual: Sref={sref}, bref={bref}, cref={cref}")
+        print(f"   Ref values manual: Sref={sref}, bref={bref}, cref={cref}")
     else:
         raise ValueError("ref_mode must be 'auto' or 'manual'.")
-    vsp.PrintAnalysisInputs("VSPAERODegenGeom")
-    vsp.PrintAnalysisInputs("DegenGeom")
+
+    for axis_name, axis_val, parm_name in [("X", x_cg, "Xcg"), ("Y", y_cg, "Ycg"), ("Z", z_cg, "Zcg")]:
+        if axis_val is not None:
+            pid = vsp.FindParm(vsp.FindContainer("VSPAEROSettings", 0), parm_name, "VSPAERO")
+            if pid:
+                vsp.SetParmVal(pid, axis_val)
+                print(f"   {parm_name} set to {axis_val}")
+            else:
+                print(f"   ⚠️  Could not find {parm_name} parm — falling back to .vsp3's saved value")
 
     # ── 2. SAVE VSP3 ─────────────────────────────────────────────────────────
-    vsp_file = os.path.join(VSP_FILES, "aircraft.vsp3")
+    vsp_file = os.path.join(VSP_FILES, f"{run_name}.vsp3")
     vsp.WriteVSPFile(vsp_file)
     print(f"   VSP3 saved : {vsp_file}")
     
@@ -442,15 +505,39 @@ def run_vspaero_aero(
         
         if not geom_rid:
             print("❌ VSPAEROComputeGeometry failed — check model geometry.")
-            return None
+            return None, None, None, None
         print(f"   Geometry done. RID: {geom_rid}")
 
-        vspgeom_file = os.path.join(VSP_FILES, "aircraft.vspgeom")
+        vspgeom_file = os.path.join(VSP_FILES, f"{run_name}.vspgeom")
+        poll_timeout, poll_interval, waited = 30, 0.5, 0.0
+        while not os.path.exists(vspgeom_file) and waited < poll_timeout:
+            time.sleep(poll_interval)
+            waited += poll_interval
         if not os.path.exists(vspgeom_file):
-            print("❌ .vspgeom not created. Cannot proceed.")
+            print(f"❌ .vspgeom not created after waiting {waited}s. Cannot proceed.")
             print(f"   VSP_Files contents: {os.listdir(VSP_FILES)}")
-            return None
-        print("   .vspgeom exists ✅")
+            return None, None, None, None
+        print(f"   .vspgeom exists ✅ (waited {waited}s)")
+
+        
+        # ── Auto Re from actual wing planform cref (replaces fixed re_cref) ──
+        T, RHO, MU, a_sound = isa_atmosphere(altitude_ft)
+        print(f"   ISA @ {altitude_ft:.0f}ft: T={T:.2f}K, rho={RHO:.4f}, mu={MU:.3e}")
+
+        try:
+            cref_actual = vsp.GetParmVal(wing_id, "TotalChord", "WingGeom")
+        except Exception as e:
+            print(f"   ⚠️  Could not read TotalChord off wing_id: {e}")
+            cref_actual = None
+
+        if cref_actual:
+            V = mach_start * a_sound
+            re_cref_start = re_cref_end = (RHO * V * cref_actual) / MU
+            print(f"   auto Re: cref={cref_actual:.4f}m, V={V:.1f}m/s, "
+                  f"rho={RHO:.4f}, mu={MU:.3e} -> Re={re_cref_start:.3e}")
+        else:
+            print("   ⚠️  Falling back to passed-in re_cref_start")
+
         
         
         # ── 5. VSPAEROSweep — alpha sweep ─────────────────────────────────────
@@ -488,24 +575,36 @@ def run_vspaero_aero(
         vsp.Update()
         if not rid:
             print("❌ VSPAEROSweep failed.")
-            return None
+            return None, None, None, None
         print(f"   Sweep finished. RID: {rid}")
 
     finally:
         os.chdir(original_cwd)
 
     # ── 6. LOCATE .polar FILE ─────────────────────────────────────────────────
-    polar_files = glob.glob(os.path.join(VSP_FILES, "*.polar"))
+    # ExecAnalysis("VSPAEROSweep") appears to return before vspaero.exe has
+    # actually finished writing the .polar file (solve continues after RID
+    # comes back). Poll instead of checking once — a single immediate check
+    # randomly "fails" runs that are still solving, unrelated to sweep angle.
+    poll_timeout  = 1800   # sec, generous vs. the 13-20 min solves seen so far
+    poll_interval = 10
+    waited = 0
+    polar_files = glob.glob(os.path.join(VSP_FILES, f"{run_name}.polar"))
+    while not polar_files and waited < poll_timeout:
+        time.sleep(poll_interval)
+        waited += poll_interval
+        polar_files = glob.glob(os.path.join(VSP_FILES, f"{run_name}.polar"))
+
     if not polar_files:
-        print("⚠️  No .polar file found in VSP_Files/")
+        print(f"⚠️  No {run_name}.polar found in VSP_Files/ after waiting {waited}s")
         print(f"   Contents: {os.listdir(VSP_FILES)}")
-        return None
-    polar_src = max(polar_files, key=os.path.getmtime)
-    print(f"   Polar file found: {polar_src}")
+        return None, None, None, None
+    polar_src = polar_files[0]
+    print(f"   Polar file found: {polar_src} (waited {waited}s)")
 
     # ── 7. COPY TO RESULTS FOLDER ─────────────────────────────────────────────
     timestamp = time.strftime('%Y%m%d_%H%M%S')
-    polar_dst = os.path.join(AERO_RESULTS_DIR, f"aero_{timestamp}.polar")
+    polar_dst = os.path.join(AERO_RESULTS_DIR, f"aero_{run_name}_{timestamp}.polar")    
     shutil.copy2(polar_src, polar_dst)
     print(f"   Polar file saved : {polar_dst}")
 
@@ -519,7 +618,7 @@ def run_vspaero_aero(
     header_line = None
     data_start  = 0
     for i, line in enumerate(raw_lines):
-        if "AoA" in line or "Beta" in line and "Mach" in line:
+        if ("AoA" in line or "Beta" in line) and "Mach" in line:
             header_line = line.strip()
             data_start  = i + 1
             break
@@ -542,7 +641,8 @@ def run_vspaero_aero(
     CDtot  = data[:, col["CDtot"]]
     CDi    = data[:, col["CDi"]]
     CDo    = data[:, col["CDo"]]
-    LD     = data[:, col["L/D"]] if "L/D" in col else np.where(CDtot > 1e-9, CL/CDtot, 0.0)        
+    LD     = data[:, col["L/D"]] if "L/D" in col else np.where(CDtot > 1e-9, CL/CDtot, 0.0)
+    CMy    = data[:, col["CMytot"]] if "CMytot" in col else np.full_like(alpha, np.nan)        
 
     # interpolate NaNs in L/D only
     from scipy.interpolate import interp1d
@@ -557,9 +657,9 @@ def run_vspaero_aero(
     csv_path = polar_dst.replace(".polar", ".csv")
     with open(csv_path, "w", newline="") as f:
         writer = csv.writer(f)
-        writer.writerow(["Alpha", "CL", "CDtot", "CDi", "CDo", "L/D"])
+        writer.writerow(["Alpha", "CL", "CDtot", "CDi", "CDo", "L/D", "CMytot"])
         for i in range(len(alpha)):
-            writer.writerow([alpha[i], CL[i], CDtot[i], CDi[i], CDo[i], LD[i]])
+            writer.writerow([alpha[i], CL[i], CDtot[i], CDi[i], CDo[i], LD[i], CMy[i]])
     print(f"   ✅ CSV saved: {csv_path}")
     
     
@@ -579,7 +679,7 @@ def run_vspaero_aero(
     ax.axhline(0, color='k', linewidth=0.8)
     ax.axvline(0, color='k', linewidth=0.8)
     fig.tight_layout()
-    cl_path = os.path.join(AERO_RESULTS_DIR, f"cl_alpha_{timestamp}.png")
+    cl_path = os.path.join(AERO_RESULTS_DIR, f"cl_alpha_{run_name}_{timestamp}.png")
     fig.savefig(cl_path, dpi=150)
     plt.close(fig)
     print(f"\n   ✅ CL-alpha plot : {cl_path}")
@@ -595,10 +695,84 @@ def run_vspaero_aero(
     ax.legend(fontsize=10)
     ax.grid(True, linestyle='--', alpha=0.6)
     fig.tight_layout()
-    polar_path = os.path.join(AERO_RESULTS_DIR, f"drag_polar_{timestamp}.png")
+    polar_path = os.path.join(AERO_RESULTS_DIR, f"drag_polar_{run_name}_{timestamp}.png")
     fig.savefig(polar_path, dpi=150)
     plt.close(fig)
     print(f"   ✅ Drag polar    : {polar_path}")
 
     print("\n✅ VSPAero analysis complete.\n")
-    return polar_dst
+
+    # ── 12. L/D vs AoA PLOT ───────────────────────────────────────────────────
+    fig, ax = plt.subplots(figsize=(7, 5))
+    ax.plot(alpha, LD, 'g-o', markersize=4, linewidth=1.5)
+    ax.set_xlabel("Angle of Attack α (deg)", fontsize=12)
+    ax.set_ylabel("L/D", fontsize=12)
+    ax.set_title(f"L/D vs Alpha — VSPAero VLM (M={mach_start:.2f})", fontsize=13)
+    ax.grid(True, linestyle='--', alpha=0.6)
+    fig.tight_layout()
+    ld_path = os.path.join(AERO_RESULTS_DIR, f"ld_alpha_{run_name}_{timestamp}.png")
+    fig.savefig(ld_path, dpi=150)
+    plt.close(fig)
+    print(f"   ✅ L/D-alpha plot: {ld_path}")
+
+    # ── 13. CD0/K DRAG POLAR FIT (skip cleanly if data is NaN/degenerate) ────
+    CD0 = K = r2 = None
+    valid = ~(np.isnan(CL) | np.isnan(CDtot))
+    if valid.sum() >= 3:
+        cl2 = CL[valid]**2
+        K, CD0 = np.polyfit(cl2, CDtot[valid], 1)
+        fit = CD0 + K*cl2
+        ss_res = np.sum((CDtot[valid]-fit)**2)
+        ss_tot = np.sum((CDtot[valid]-CDtot[valid].mean())**2)
+        r2 = 1 - ss_res/ss_tot if ss_tot > 0 else np.nan
+        print(f"   Drag polar fit: CD0={CD0:.5f}  K={K:.4f}  R²={r2:.4f}  (M={mach_start:.2f})")
+    else:
+        print(f"   ⚠️  Not enough valid points to fit CD0/K (M={mach_start:.2f}) — likely diverged run.")
+
+    print("\n✅ VSPAero analysis complete.\n")
+    return polar_dst, CD0, K, r2   # now returning fit params too — update main.py's unpacking accordingly
+
+def local_slope_curve(aero_csv, window_pts=5, r2_threshold=0.98):
+    """Rolling local dCm/dCL (= -SM) across the swept CL range, plus the
+    alpha range where R2 stays above threshold (the 'linear region')."""
+    import pandas as pd
+    df = pd.read_csv(aero_csv)
+    cl, cm, alpha = df["CL"].to_numpy(), df["CMytot"].to_numpy(), df["Alpha"].to_numpy()
+    order = np.argsort(cl)
+    cl, cm, alpha = cl[order], cm[order], alpha[order]
+
+    n, half = len(cl), window_pts // 2
+    sm, r2s, cl_c, alpha_c = [], [], [], []
+    for i in range(n):
+        lo, hi = max(0, i-half), min(n, i+half+1)
+        if hi - lo < 3:
+            continue
+        cl_w, cm_w = cl[lo:hi], cm[lo:hi]
+        slope, intercept = np.polyfit(cl_w, cm_w, 1)
+        fit = intercept + slope*cl_w
+        ss_res = np.sum((cm_w-fit)**2)
+        ss_tot = np.sum((cm_w-cm_w.mean())**2)
+        r2 = 1 - ss_res/ss_tot if ss_tot > 0 else np.nan
+        sm.append(-slope); r2s.append(r2); cl_c.append(cl[i]); alpha_c.append(alpha[i])
+
+    sm, r2s, cl_c, alpha_c = map(np.array, (sm, r2s, cl_c, alpha_c))
+    good = r2s >= r2_threshold
+    linear_range = (alpha_c[good].min(), alpha_c[good].max()) if good.any() else (None, None)
+    return alpha_c, cl_c, sm, r2s, linear_range
+
+
+def compute_static_margin(aero_csv, cl_target, window_pts=5):
+    """Local windowed SM = -dCm/dCL at one target CL. Returns (SM, R2)."""
+    import pandas as pd
+    df = pd.read_csv(aero_csv)
+    cl, cm = df["CL"].to_numpy(), df["CMytot"].to_numpy()
+    order = np.argsort(cl)
+    cl, cm = cl[order], cm[order]
+    idx = np.sort(np.argsort(np.abs(cl - cl_target))[:window_pts])
+    cl_w, cm_w = cl[idx], cm[idx]
+    slope, intercept = np.polyfit(cl_w, cm_w, 1)
+    fit = intercept + slope*cl_w
+    ss_res = np.sum((cm_w-fit)**2)
+    ss_tot = np.sum((cm_w-cm_w.mean())**2)
+    r2 = 1 - ss_res/ss_tot if ss_tot > 0 else np.nan
+    return -slope, r2

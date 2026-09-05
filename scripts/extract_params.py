@@ -7,9 +7,12 @@ Created on Sun Aug  2 15:05:52 2026
 
 import vsp_setup
 from pathlib import Path
+from pipeline_config import GEOMETRY_DIR, IMPORT_FILE
 
-SCRIPT_DIR = Path(__file__).resolve().parent
-VSP3_FILE  = SCRIPT_DIR.parent / "Geometry" / "SSAM_final_geom_to_be_used_scaled_by_19_nozzle_mod.vsp3"
-OUT_FILE   = VSP3_FILE.parent / (VSP3_FILE.stem + "_params_dump.json")
+# IMPORT_FILE comes from pipeline_config.py — the same geometry main.py
+# actually runs. Edit it there, not here, so this dump always matches
+# what the pipeline is pointed at.
+VSP3_FILE = Path(GEOMETRY_DIR) / IMPORT_FILE
+OUT_FILE  = VSP3_FILE.parent / (VSP3_FILE.stem + "_params_dump.json")
 
 vsp_setup.dump_geom_params(str(VSP3_FILE), str(OUT_FILE))
