@@ -138,6 +138,10 @@ def _run_cut_checkpoint(cfg, tag, stl_out, rcs_dir, cut_flag, entry, manifest_pa
       (b) globs rcs_dir for the newly-written timestamped raw .dat
           file(s) and renames each to the clean name — that rename IS
           the checkpoint marker for next time.
+
+    Returns True if this cut is now done (checkpoint hit or fresh solve
+    both count), False on a soft rcs_failed (see below) — callers must
+    stop and NOT proceed to the next stage when this returns False.
     """
     prefix = {"azimuth": "AZ", "frontal": "FR"}[cut_flag]
     pol = cfg.get("pol", "TE-z")
@@ -163,7 +167,22 @@ def _run_cut_checkpoint(cfg, tag, stl_out, rcs_dir, cut_flag, entry, manifest_pa
             frontal_delt=cfg.get("frontal_delt", 1.0),
         )
         if not rcs_out:
-            raise RuntimeError(f"run_openrcs_pipeline returned nothing for the {cut_flag} cut on {tag}")
+            # Soft failure (e.g. a suspected file-lock race), not a Python
+            # exception — write status="rcs_failed" and return normally
+            # (exit code 0) instead of raising, so rcs_sweep_driver.py's
+            # run_one() actually gets a chance to see this status and do
+            # its one automatic retry. Raising here (as an earlier version
+            # of this function did) makes the worker subprocess exit
+            # non-zero, which run_one()'s `except subprocess.
+            # CalledProcessError` branch catches and returns False from
+            # BEFORE ever reading the manifest — silently disabling that
+            # retry entirely. This was a real regression from the
+            # checkpointing rewrite; restoring the old worker's plain-return
+            # behaviour for this specific case fixes it.
+            print(f"  {cut_flag} cut returned no output for {tag} (rcs_failed)")
+            entry["status"] = "rcs_failed"
+            _write(manifest_path, entry)
+            return False
 
         # Plot images: rename tag-wise as before. "mean_table" is produced
         # by BOTH the azimuth and frontal calls (same key) -- give it a
@@ -197,6 +216,7 @@ def _run_cut_checkpoint(cfg, tag, stl_out, rcs_dir, cut_flag, entry, manifest_pa
 
     entry.setdefault("checkpoints", {})[cut_flag] = True
     _write(manifest_path, entry)
+    return True
 
 
 def main():
@@ -252,8 +272,15 @@ def main():
         os.makedirs(rcs_dir, exist_ok=True)
 
         stl_out = _export_mesh_checkpoint(cfg, tag, stl_dir, entry, manifest_path)
-        _run_cut_checkpoint(cfg, tag, stl_out, rcs_dir, "azimuth", entry, manifest_path)
-        _run_cut_checkpoint(cfg, tag, stl_out, rcs_dir, "frontal", entry, manifest_path)
+        # A False return means a soft rcs_failed was already written to the
+        # manifest by _run_cut_checkpoint (see its docstring) — stop here,
+        # WITHOUT raising, so this process exits 0 and
+        # rcs_sweep_driver.py's run_one() gets to see status="rcs_failed"
+        # and do its one automatic retry.
+        if not _run_cut_checkpoint(cfg, tag, stl_out, rcs_dir, "azimuth", entry, manifest_path):
+            return
+        if not _run_cut_checkpoint(cfg, tag, stl_out, rcs_dir, "frontal", entry, manifest_path):
+            return
 
         entry["status"] = "done"
         entry.pop("error", None)   # clear any stale error from an earlier interrupted attempt
