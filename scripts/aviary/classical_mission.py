@@ -77,10 +77,20 @@ performance guarantee.
 """
 
 import os
+import sys
 
 import numpy as np
 import pandas as pd
 from scipy.interpolate import RegularGridInterpolator
+
+# Same bootstrapping run_aviary.py uses: this file's own directory (for
+# build_aero_polar/build_engine_deck, its sibling modules) plus the parent
+# scripts/ directory (for vsp_setup, which lives one level up) - needed
+# because running this file directly (Spyder's %runfile, or `python
+# classical_mission.py`) only puts THIS file's own directory on sys.path
+# by default, not its parent.
+sys.path.insert(0, os.path.dirname(__file__))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 import vsp_setup
 from build_aero_polar import build_polar_arrays, reshape_to_grid
