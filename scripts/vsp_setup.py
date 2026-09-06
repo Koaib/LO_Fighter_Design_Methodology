@@ -248,7 +248,7 @@ def run_openrcs_rcs(
         if result_dict:
             print("✅ OpenRCS finished.")
             for k, v in result_dict.items():
-                if v and k != "results_dir":
+                if v and k not in ("results_dir", "means"):
                     print(f"   {k:<18}: {os.path.basename(v)}")
         else:
             print("❌ OpenRCS returned no results.")

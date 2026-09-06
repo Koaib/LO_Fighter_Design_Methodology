@@ -136,7 +136,7 @@ def main():
 
             rcs_tagged = {}
             for k, path in rcs_out.items():
-                if not path or k == "results_dir": continue
+                if not path or k in ("results_dir", "means"): continue
                 ext = os.path.splitext(path)[1]
                 new_path = os.path.join(os.path.dirname(path), f"{tag}_{k}{ext}")
                 os.replace(path, new_path)
