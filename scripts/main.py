@@ -17,8 +17,12 @@ edited in one place):
                   Results/Aero/
   4. Stability  — static margin / Cm-alpha analysis on each aero run →
                   Results/Stability/
-  5. Aviary     — fixed-mission fuel/range analysis, built from this run's
-                  aero CSVs → Results/aviary_perf/           [RUN_AVIARY toggle]
+
+Mission/fuel-burn analysis is a separate step, run directly:
+    python scripts/classical_mission.py
+(a classical climb/cruise/descent integration - no optimizer - see that
+module's own docstring for why; this project's earlier Aviary/Dymos/
+SLSQP-based pipeline has been retired and removed from this branch).
 
 Usage:
     python scripts/main.py
@@ -26,10 +30,10 @@ Usage:
 To change design parameters, edit the geometry section below.
 To change RCS settings (frequency, angles, polarisation), edit the
 RCS SETTINGS section at the bottom or pass them into run_openrcs_rcs().
-To change Aviary/mission settings (mass basis, engine specs, cruise
-profile), edit the AVIARY / MISSION CONFIG section below — everything
-Aviary-related is configured from this one file, nothing to edit in
-scripts/aviary/run_aviary.py for a normal run.
+To change mission settings (mass basis, engine specs, cruise profile)
+for scripts/classical_mission.py, edit the ENGINE & MISSION CONFIG
+section below - it stays the single place these are defined even though
+main.py doesn't call classical_mission.py itself (yet).
 """
 
 import vsp_setup
@@ -78,9 +82,6 @@ REF_MODE      = "auto"      # use "manual" for box_template — it has no wing
 # PIPELINE STAGE TOGGLES — edit this
 # =========================
 RUN_RCS    = True    # OpenRCS monostatic RCS pass (Results/RCS/)
-RUN_AVIARY = True   # Aviary mission analysis, runs AFTER the aero+stability
-                     # loop below finishes — needs this run's full 9-file
-                     # Mach x Altitude aero-CSV grid to build its polar table
 
 # =========================
 # STL MESH SETTINGS — edit this
@@ -270,11 +271,12 @@ Y_CG = 0.0      # m
 Z_CG = 0.0      # m
 
 # =========================
-# AVIARY / MISSION CONFIG — edit this to change any Aviary-related input
+# ENGINE & MISSION CONFIG — edit this to change any mission-analysis input
 # =========================
-# Same Mach/altitude grid drives both VSPAero (above) and Aviary — MACH_LIST
-# / ALTITUDE_LIST from AERO SETTINGS are reused directly below, so there's
-# no separate list here that could silently fall out of sync.
+# Same Mach/altitude grid drives VSPAero (above) and (once wired in) the
+# mission analysis — MACH_LIST / ALTITUDE_LIST from AERO SETTINGS are
+# reused directly below, so there's no separate list here that could
+# silently fall out of sync.
 
 # "scaled_by_19" wing planform (confirmed via both .vsp3 dumps to be
 # this project's own "NOT_scaled_by_19" geometry scaled up by an exact
@@ -285,7 +287,7 @@ Z_CG = 0.0      # m
 # number — see pipeline_config.py's IMPORT_FILE note) — NOT a scaled-down
 # F-16C value (see mass basis note below for why that distinction
 # matters). Read directly off the actual .vsp3 (TotalArea/TotalSpan/
-# TotalAR parms, via scripts/aviary/print_wing_ref_params.py's method)
+# TotalAR parms, via scripts/print_wing_ref_params.py's method)
 # and unit-converted:
 # TotalArea=78.319 m^2 -> 843.018 ft^2, TotalSpan=13.5565 m -> 44.477 ft,
 # TotalAR=2.3465 (dimensionless, low-AR delta planform per Giannelis,
@@ -324,16 +326,15 @@ F22_FUEL_MASS_LBM  = 18000.0   # published F-22A internal fuel capacity
 F22_WING_AREA_FT2  = 840.0     # published F-22A wing area
 
 # ── Engine specs (simplified F100-PW-229-class deck — NOT real engine test
-# data, see scripts/aviary/build_engine_deck.py) ───────────────────────────
+# data, see scripts/build_engine_deck.py) ───────────────────────────────────
 # These are PER-ENGINE published values. This aircraft is a confirmed
-# TWIN-engine design (see scripts/aviary/classical_mission.py's
-# num_engines docstring for the derivation - a single engine at this
-# gross mass gives T/W~0.35, nowhere near a real fighter's ~0.9-1.2, and
-# was the dominant reason an early climb-feasibility check found this
-# aircraft couldn't sustain even a modest climb rate). Pass
-# num_engines=2 to classical_mission.run_classical_mission() (and
-# run_aviary.py's Aircraft.Engine.NUM_ENGINES is set to 2 to match) -
-# these two constants stay as per-engine values either way.
+# TWIN-engine design (see scripts/classical_mission.py's num_engines
+# docstring for the derivation - a single engine at this gross mass gives
+# T/W~0.35, nowhere near a real fighter's ~0.9-1.2, and was the dominant
+# reason an early climb-feasibility check found this aircraft couldn't
+# sustain even a modest climb rate). Pass num_engines=2 to
+# classical_mission.run_classical_mission() - these two constants stay as
+# per-engine values either way.
 ENGINE_T_SL_DRY_LBF = 17800.0   # published F100-PW-229 dry static thrust
 ENGINE_T_SL_AB_LBF  = 29100.0   # published F100-PW-229 afterburner static thrust
 # TSFC is no longer a constant here — build_engine_deck.py computes it
@@ -372,37 +373,23 @@ ENGINE_THROTTLE_RATIO = 1.07
 # performance data instead of the Mattingly & Heiser textbook-correlation
 # deck above (ENGINE_T_SL_DRY_LBF/ENGINE_T_SL_AB_LBF/ENGINE_TYPE/
 # ENGINE_THROTTLE_RATIO are all ignored when this is set). See
-# scripts/aviary/engine_deck_template.csv for the required column format
-# and a starting skeleton to fill in — Aviary itself has never shipped a
-# fighter-class (afterburning) engine deck (checked: none of its bundled
-# example decks in aviary/models/engines/ are anything but civil transport
-# turbofans/turboshafts), and no public F100-PW-229 performance deck
-# exists to substitute in, so this stays None (auto-generated deck) for
-# real use until real engine data becomes available for this project.
-#
-# Was pointed at Aviary's own bundled turbofan_22k.csv for one diagnostic
-# run, to test whether the OFF_DESIGN_MAX_RANGE stall was specific to the
-# auto-generated Mattingly & Heiser deck (it wasn't - see
-# scripts/aviary/classical_mission.py's module docstring for how that
-# investigation concluded). Reverted back to None now that test has
-# served its purpose; a civil turbofan is not this aircraft's real engine
-# class (no afterburner, different thrust-lapse/SFC curve) and would make
-# any fuel-burn/range numbers physically meaningless for this aircraft.
+# scripts/engine_deck_template.csv for the required column format and a
+# starting skeleton to fill in — no public F100-PW-229 performance deck
+# exists to substitute in, and a civil-transport turbofan deck (no
+# afterburner, different thrust-lapse/SFC curve) would make any fuel-
+# burn/range numbers physically meaningless for this aircraft class, so
+# this stays None (auto-generated deck) for real use until real engine
+# data becomes available for this project. This is not hypothetical
+# caution: an earlier, now-retired Aviary-based pipeline was pointed at
+# Aviary's own bundled civil turbofan deck for one diagnostic run, purely
+# to check whether a numerical stall was specific to the auto-generated
+# deck (it wasn't) - never for a real fuel-burn/range result.
 CUSTOM_ENGINE_DECK_PATH = None
 
 # ── Mission profile ────────────────────────────────────────────────────────
 CRUISE_MACH        = 0.6
 CRUISE_ALTITUDE_FT = 35000.0
 DESIGN_RANGE_NMI   = 400.0
-
-# SIMPLE_MISSION — debugging toggle, not a normal-run setting. True
-# collapses the climb+cruise+descent mission below to a single cruise-only
-# phase spanning the full DESIGN_RANGE_NMI at fixed CRUISE_MACH/
-# CRUISE_ALTITUDE_FT (same aircraft/aero/engine data, ~3x fewer collocation
-# nodes, no phase-linking) — a cheap test for whether an SLSQP stall is
-# inherent to this problem's scale/formulation or specific to the climb/
-# descent phase machinery. Leave False for a real mission result.
-SIMPLE_MISSION = False
 
 # =========================
 # TRIGGER AERO PIPELINE
@@ -514,11 +501,11 @@ print(f"   ✅ CD0/K summary: {summary_path}")
 # drops) — a single fixed CL_TARGET would report SM at a CL most of the
 # 9 sweep points don't actually fly at.
 #
-# Weight reuses the SAME wing-loading-scaled placeholder mass
-# run_aviary.py computes downstream (gross_mass_lbm = F-22A wing loading
-# x this geometry's TEST_WING_AREA_FT2, see AVIARY/MISSION CONFIG above)
-# — kept consistent here rather than introducing a second, independent
-# mass assumption just for this plot. Still inherits that mass basis's
+# Weight reuses the SAME wing-loading-scaled placeholder mass basis
+# defined above (gross_mass_lbm = F-22A wing loading x this geometry's
+# TEST_WING_AREA_FT2, see ENGINE & MISSION CONFIG above) — kept
+# consistent here rather than introducing a second, independent mass
+# assumption just for this plot. Still inherits that mass basis's
 # placeholder status (real F-22A wing loading, not this airframe's own
 # mass) until the real full-scale mass buildup replaces it.
 _wing_loading_lbm_ft2 = F22_GROSS_MASS_LBM / F22_WING_AREA_FT2
@@ -591,38 +578,5 @@ for M, ALT, polar_dst, CD0, K, r2 in mach_results:
             w.writerow(["Mach", "Altitude_ft", "X_cg", "CL_target", "SM", "SM_R2", "linear_alpha_min", "linear_alpha_max"])
         w.writerow([M, ALT, X_CG, CL_TARGET, sm, sm_r2, linear_range[0], linear_range[1]])
 
-# =========================
-# AVIARY MISSION ANALYSIS
-# =========================
-# Runs last — needs the full 9-file Mach x Altitude aero-CSV grid this
-# script just produced (above) for this same geom_stem. Every Aviary input
-# comes from the AVIARY / MISSION CONFIG section above and is passed in
-# explicitly below — run_aviary.py has nothing left to edit for a normal run.
-
-if RUN_AVIARY:
-    import sys
-    sys.path.insert(0, os.path.join(ROOT_DIR, "scripts", "aviary"))
-    from run_aviary import run_aviary_mission
-    run_aviary_mission(
-        geom_stem=geom_stem,
-        wing_area_ft2=TEST_WING_AREA_FT2,
-        wing_span_ft=TEST_WING_SPAN_FT,
-        wing_aspect_ratio=TEST_WING_ASPECT_RATIO,
-        wing_has_strut=TEST_WING_HAS_STRUT,
-        wing_has_fold=TEST_WING_HAS_FOLD,
-        f22_empty_mass_lbm=F22_EMPTY_MASS_LBM,
-        f22_gross_mass_lbm=F22_GROSS_MASS_LBM,
-        f22_fuel_mass_lbm=F22_FUEL_MASS_LBM,
-        f22_wing_area_ft2=F22_WING_AREA_FT2,
-        engine_t_sl_dry_lbf=ENGINE_T_SL_DRY_LBF,
-        engine_t_sl_ab_lbf=ENGINE_T_SL_AB_LBF,
-        engine_throttle_ratio=ENGINE_THROTTLE_RATIO,
-        engine_type=ENGINE_TYPE,
-        cruise_mach=CRUISE_MACH,
-        cruise_altitude_ft=CRUISE_ALTITUDE_FT,
-        design_range_nmi=DESIGN_RANGE_NMI,
-        mach_list=MACH_LIST,
-        altitude_list=ALTITUDE_LIST,
-        custom_engine_deck_path=CUSTOM_ENGINE_DECK_PATH,
-        simple_mission=SIMPLE_MISSION,
-    )
+# Mission/fuel-burn analysis is a separate step - run scripts/classical_mission.py
+# directly (see this file's module docstring and that module's own docstring).
