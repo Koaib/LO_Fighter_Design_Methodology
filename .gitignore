@@ -8,7 +8,6 @@ desktop.ini
 .DS_Store
 
 # ── Tool installations (large binaries — extract locally, do not commit) ──────
-OpenVSP*/
 Octave*/
 POFACETS/
 
