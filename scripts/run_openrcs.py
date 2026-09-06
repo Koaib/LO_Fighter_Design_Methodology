@@ -57,12 +57,31 @@ rcs_monostatic.py  →  rcs_monostatic(param_list, coord_list)
       globalAngles()              direction cosines u,v,w; unit vectors uu,vv,ww
       incidentFieldCartesian()    cartesian E-field components e0
       -- inner loop over ntria facets --
-        ndot = N[m] dot R  (illumination: skip facet if ndot < 1e-5)
+        ndot = N[m] dot R  (illumination test: process facet m only if
+          ilum[m]==1 and ndot>=1e-5, or if ilum[m]==0. ilum comes from
+          stl_module.stl_converter()'s facets.txt column, which — verified
+          against the actual source — is ALWAYS 1 for every facet: the
+          upstream open-rcs "is_closed_structure" check it was meant to
+          come from is unconditionally True by construction (it tests
+          each face's vertices against a coordinate list built FROM those
+          same faces), so the ilum==0 branch is dead code for any
+          geometry this pipeline processes. In practice this just means
+          every facet always gets the standard backface-culling test
+          (ndot>=1e-5) — which is the physically correct behavior for our
+          closed aircraft/sphere geometries and the front-face-filtered
+          flat plate anyway, so this dead branch is currently harmless,
+          not a live bug.)
         diretionCosines()         rotation matrices T1, T2  global to local
         sphericalAngles()         local spherical angles th2, phi2
         phaseVerticeTriangle()    Dp=2bk*v1*k, Dq=2bk*v2*k, Do=2bk*v3*k
         incidentFieldSphericalCoordinates()  local Et2, Ep2
-        reflectionCoefficients()  Fresnel perp/para (= 1 and -1 for PEC)
+        reflectionCoefficients()  Fresnel perp/para for PEC (rs=0): BOTH
+          equal exactly -1 for any incidence angle (verified numerically
+          against the actual source — perp=-1/(2*rs*cos(th2)+1) and
+          para=-cos(th2)/(2*rs+cos(th2)) both reduce to -1 at rs=0). This
+          corrects an earlier, pre-source-verification note in this same
+          docstring that guessed "1 and -1" from general PEC Fresnel
+          theory instead of reading the actual code.
         surface currents Jx2, Jy2
         areaIntegral()            DD, expDo, expDp, expDq (exponential terms)
         calculate_Ic()            Taylor-series area integral Ic, 4 special
@@ -525,7 +544,12 @@ def run_openrcs_pipeline(
     corr        : float = 0.0,
     delstd      : float = 0.0,
     rs          : int   = 0,
+    az_range    : str   = "full",   # "full" (0-360) or "half" (0-180, symmetric aircraft)
+    delp        : float = 1.0,      # azimuth-cut phi step, deg — frontal has its own steps below
+    frontal_delp: float = 1.0,      # frontal-sector phi (azimuth-direction) step, deg
+    frontal_delt: float = 1.0,      # frontal-sector theta (elevation-direction) step, deg
 ) -> dict:
+
     """
     End-to-end OpenRCS monostatic RCS pipeline.
 
@@ -538,6 +562,24 @@ def run_openrcs_pipeline(
     corr        : surface roughness correlation length m (0 = smooth PEC)
     delstd      : surface roughness std deviation m     (0 = smooth PEC)
     rs          : 0 = Perfect Electric Conductor
+    delp        : azimuth-cut (θ=90° sweep) phi step, degrees. Does NOT
+                  affect the frontal 2-D grid — that has its own
+                  frontal_delp/frontal_delt below, since coarsening the
+                  frontal sector's elevation resolution (which is what
+                  Touzopoulos 2017 itself uses — 1° azimuth, 5° elevation)
+                  is a much bigger, better-justified compute saving than
+                  coarsening the azimuth cut, which is cheap already and
+                  is the one cut actually visualised (polar plots/overlays)
+                  where narrow specular flashes matter most.
+    frontal_delp: frontal-sector phi (azimuth-direction) step, degrees.
+                  Kept fine by default (1°) — same "specular flashes are
+                  only a few degrees wide" reasoning as the azimuth cut.
+    frontal_delt: frontal-sector theta (elevation-direction) step, degrees.
+                  The default (1°) is finer than Touzopoulos 2017's own 5°;
+                  pass 5.0 to match the paper's resolution exactly and cut
+                  the frontal run's point count by ~4.4x (31 theta rows ->
+                  7), since RCS varies more smoothly across the narrow
+                  +-15° elevation band than across azimuth.
 
     Returns
     -------
@@ -549,6 +591,8 @@ def run_openrcs_pipeline(
     print(f"  STL        : {stl_path}")
     print(f"  Frequency  : {freq} GHz    Polarisation: {pol}")
     print(f"  Cuts       : Azimuth θ=90°  |  Elevation φ=0°  |  Frontal 2-D")
+    print(f"  Azimuth    : range={az_range}  delp={delp}°")
+    print(f"  Frontal    : delp={frontal_delp}°  delt={frontal_delt}°")
     print("=" * 60 + "\n")
 
     if not os.path.isfile(stl_path):
@@ -576,6 +620,7 @@ def run_openrcs_pipeline(
         "mean_table":  None,
         "fig_3d":      None,
         "results_dir": results_dir,
+        "means":       {},
     }
     
     try:
@@ -632,8 +677,9 @@ def run_openrcs_pipeline(
 
         # Azimuth cut: full phi sweep at fixed theta=90° (radar at same altitude).
         # ip = (360-0)/1 + 1 = 361,  it = 1
+        _az_pstop = 180.0 if az_range == "half" else 360.0
         params_az = _make_params(
-            pstart=0.0, pstop=360.0, delp=1.0,
+            pstart=0.0, pstop=_az_pstop, delp=delp,
             tstart=90.0, tstop=90.0, delt=1.0,
         )
 
@@ -646,10 +692,15 @@ def run_openrcs_pipeline(
 
         # Frontal 2-D: az ±30° and el ±15° (theta 75°→105°).
         # Used only for mean frontal sector RCS — no plot generated.
-        # ip = (-30 to 30)/1 + 1 = 61,  it = (75 to 105)/1 + 1 = 31
+        # Step sizes are independent of the azimuth cut's delp — see
+        # frontal_delp/frontal_delt in this function's signature.
+        # ip = (-30 to 30)/frontal_delp + 1,  it = (75 to 105)/frontal_delt + 1
+        # e.g. frontal_delp=1.0, frontal_delt=1.0 -> ip=61, it=31 (default)
+        #      frontal_delp=1.0, frontal_delt=5.0 -> ip=61, it=7  (matches
+        #      Touzopoulos 2017's own resolution, ~4.4x fewer points)
         params_fr = _make_params(
-            pstart=-30.0, pstop=30.0, delp=1.0,
-            tstart=75.0, tstop=105.0, delt=1.0,
+            pstart=-30.0, pstop=30.0, delp=frontal_delp,
+            tstart=75.0, tstop=105.0, delt=frontal_delt,
         )
 
         pol_upper  = pol.upper()
@@ -707,7 +758,7 @@ def run_openrcs_pipeline(
         # ── save 3-D figure once (from the first available run) ───────────────
         for tag in ("AZ_TE", "AZ_TM", "EL_TE", "EL_TM"):
             if tag in raw and raw[tag] and raw[tag][1] and os.path.isfile(raw[tag][1]):
-                dst = os.path.join(results_dir, f"aircraft_3D_{ts}.jpg")
+                dst = os.path.join(results_dir, f"{stem}_{ts}.jpg")                
                 out["fig_3d"] = _cp(raw[tag][1], dst)
                 break
 
@@ -747,7 +798,7 @@ def run_openrcs_pipeline(
             if d_tm is None: d_tm = d_te
             x_te, idx_te = _phi_to_display(d_te["phi_vals"])
             x_tm, idx_tm = _phi_to_display(d_tm["phi_vals"])
-            fname = f"Linear_Azimuth_Cut_90deg_{ts}.png"
+            fname = f"Linear_Azimuth_Cut_90deg_{stem}_{ts}.png"
             fpath = os.path.join(results_dir, fname)
             _plot_dual_linear(
                 x_te, d_te["sph"][idx_te], d_te["sth"][idx_te],
@@ -765,46 +816,39 @@ def run_openrcs_pipeline(
             
             
         # ── AZIMUTH POLAR MAPS ────────────────────────────────────────────────
-        # Co-pol only.  Cross-pol is not plotted here (near zero → blank map).
+        def _azimuth_to_full_circle(phi_deg, rcs_dBsm):
+            phi = phi_deg.copy()
+            if len(phi) > 1 and np.isclose(phi[-1], phi[0] + 360.0):
+                phi = phi[:-1]
+                return phi, rcs_dBsm[:len(phi)]
+            phi_left = 360.0 - phi[-2:0:-1]
+            rcs_left = rcs_dBsm[-2:0:-1]
+            return np.concatenate([phi, phi_left]), np.concatenate([rcs_dBsm[:len(phi)], rcs_left])
+
         if "AZ_TE" in parsed and len(parsed["AZ_TE"]["sph"]):
             d = parsed["AZ_TE"]
-            phi_arr = d["phi_vals"].copy()
-            # remove duplicate 360° endpoint if present
-            if len(phi_arr) > 1 and np.isclose(phi_arr[-1], phi_arr[0] + 360.0):
-                phi_arr = phi_arr[:-1]
-            sph_arr = d["sph"][:len(phi_arr)]
-            fname = f"Polar_TE-z_Azimuth_Cut_90deg_{ts}.png"
+            phi_full, sph_full = _azimuth_to_full_circle(d["phi_vals"], d["sph"])
+            _,        sth_full = _azimuth_to_full_circle(d["phi_vals"], d["sth"])
+            fname = f"Polar_TE-z_Azimuth_Cut_90deg_{stem}_{ts}.png"
             fpath = os.path.join(results_dir, fname)
-            _plot_polar(
-                phi_arr, sph_arr, d["sth"][:len(phi_arr)], fpath,
-                title   = "Polar RCS Map — TE-z polarisation",
-                subtitle= (f"Azimuth cut  θ = 90°    "
-                           f"f = {freq:.1f} GHz    λ = {wl:.4f} m\n"
-                           f"scale: {gmin:.0f} dBsm (centre) → {gmax:.0f} dBsm (rim)"),
-                color   = "steelblue",
-                rcs_min = gmin,
-                rcs_max = gmax,
-            )
+            _plot_polar(phi_full, sph_full, sth_full, fpath,
+                title="Polar RCS Map — TE-z polarisation",
+                subtitle=(f"Azimuth cut  θ = 90°    f = {freq:.1f} GHz    λ = {wl:.4f} m\n"
+                          f"scale: {gmin:.0f} dBsm (centre) → {gmax:.0f} dBsm (rim)"),
+                color="steelblue", rcs_min=gmin, rcs_max=gmax)
             out["polar_az_te"] = fpath
 
         if "AZ_TM" in parsed and len(parsed["AZ_TM"]["sth"]):
             d = parsed["AZ_TM"]
-            phi_arr = d["phi_vals"].copy()
-            if len(phi_arr) > 1 and np.isclose(phi_arr[-1], phi_arr[0] + 360.0):
-                phi_arr = phi_arr[:-1]
-            sth_arr = d["sth"][:len(phi_arr)]
-            fname = f"Polar_TM-z_Azimuth_Cut_90deg_{ts}.png"
+            phi_full, sth_full = _azimuth_to_full_circle(d["phi_vals"], d["sth"])
+            _,        sph_full = _azimuth_to_full_circle(d["phi_vals"], d["sph"])
+            fname = f"Polar_TM-z_Azimuth_Cut_90deg_{stem}_{ts}.png"
             fpath = os.path.join(results_dir, fname)
-            _plot_polar(
-                phi_arr, sth_arr, d["sph"][:len(phi_arr)], fpath,
-                title   = "Polar RCS Map — TM-z polarisation",
-                subtitle= (f"Azimuth cut  θ = 90°    "
-                           f"f = {freq:.1f} GHz    λ = {wl:.4f} m\n"
-                           f"scale: {gmin:.0f} dBsm (centre) → {gmax:.0f} dBsm (rim)"),
-                color   = "crimson",
-                rcs_min = gmin,
-                rcs_max = gmax,
-            )
+            _plot_polar(phi_full, sth_full, sph_full, fpath,
+                title="Polar RCS Map — TM-z polarisation",
+                subtitle=(f"Azimuth cut  θ = 90°    f = {freq:.1f} GHz    λ = {wl:.4f} m\n"
+                          f"scale: {gmin:.0f} dBsm (centre) → {gmax:.0f} dBsm (rim)"),
+                color="crimson", rcs_min=gmin, rcs_max=gmax)
             out["polar_az_tm"] = fpath
 
         # ── ELEVATION LINEAR PLOT (both polarisations, one figure) ────────────
@@ -823,7 +867,7 @@ def run_openrcs_pipeline(
             el_tm = 90.0 - d_tm["theta_vals"]
             idx_te = np.argsort(el_te)
             idx_tm = np.argsort(el_tm)
-            fname = f"Linear_Elevation_Cut_0deg_{ts}.png"
+            fname = f"Linear_Elevation_Cut_0deg_{stem}_{ts}.png"
             fpath = os.path.join(results_dir, fname)
             _plot_dual_linear(
                 el_te[idx_te], d_te["sph"][idx_te], d_te["sth"][idx_te],
@@ -888,7 +932,7 @@ def run_openrcs_pipeline(
             d    = parsed["EL_TE"]
             el   = 90.0 - d["theta_vals"]
             ph_c, rc_c = _elevation_to_polar_circle(el, d["sph"])
-            fname = f"Polar_TE-z_Elevation_Cut_0deg_{ts}.png"
+            fname = f"Polar_TE-z_Elevation_Cut_0deg_{stem}_{ts}.png"
             fpath = os.path.join(results_dir, fname)
             ph_xp_te, rx_xp_te = _elevation_to_polar_circle(el, d["sth"])
             _plot_polar(
@@ -909,7 +953,7 @@ def run_openrcs_pipeline(
             d    = parsed["EL_TM"]
             el   = 90.0 - d["theta_vals"]
             ph_c, rc_c = _elevation_to_polar_circle(el, d["sth"])
-            fname = f"Polar_TM-z_Elevation_Cut_0deg_{ts}.png"
+            fname = f"Polar_TM-z_Elevation_Cut_0deg_{stem}_{ts}.png"
             fpath = os.path.join(results_dir, fname)
             ph_xp_tm, rx_xp_tm = _elevation_to_polar_circle(el, d["sph"])
             _plot_polar(
@@ -930,6 +974,7 @@ def run_openrcs_pipeline(
         # Frontal sector rows (FR_TE, FR_TM) use the 2-D grid
         # az ±30° / el ±15° — the most important stealth metric.
         mean_rows = []
+        means_by_tag = {}
         for tag, label in [
             ("AZ_TE", "Azimuth Cut  θ=90°           TE-z"),
             ("AZ_TM", "Azimuth Cut  θ=90°           TM-z"),
@@ -940,12 +985,21 @@ def run_openrcs_pipeline(
         ]:
             if tag in parsed and len(parsed[tag]["sth"]):
                 d = parsed[tag]
-                mean_rows.append((label, _mean_total(d["sth"], d["sph"])))
+                mean_val = _mean_total(d["sth"], d["sph"])
+                mean_rows.append((label, mean_val))
+                means_by_tag[tag] = mean_val
             else:
                 mean_rows.append((label, float("nan")))
 
+        # Numeric means, keyed by run tag (AZ_TE, FR_TM, ...) — callers that
+        # need the actual dBsm values (e.g. a sensitivity sweep plotting mean
+        # RCS vs. a shaping-parameter delta) would otherwise have to re-parse
+        # the .dat files themselves, duplicating _parse_dat/_mean_total.
+        # Only holds tags that actually ran (see means_by_tag above).
+        out["means"] = means_by_tag
+
         if any(np.isfinite(v) for _, v in mean_rows):
-            fname = f"MeanRCS_Table_{ts}.png"
+            fname = f"MeanRCS_Table_{stem}_{ts}.png"
             fpath = os.path.join(results_dir, fname)
             _save_mean_table(mean_rows, fpath, freq, stl_filename)
             out["mean_table"] = fpath
@@ -969,7 +1023,7 @@ def run_openrcs_pipeline(
         # ── summary ───────────────────────────────────────────────────────────
         print(f"\n  All results saved to: {results_dir}")
         for k, v in out.items():
-            if v and k != "results_dir":
+            if v and k not in ("results_dir", "means"):
                 print(f"    {k:<18}: {os.path.basename(v)}")
 
     finally:
