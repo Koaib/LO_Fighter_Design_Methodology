@@ -371,18 +371,15 @@ ENGINE_THROTTLE_RATIO = 1.07
 # exists to substitute in, so this stays None (auto-generated deck) for
 # real use until real engine data becomes available for this project.
 #
-# vvv TEMPORARY DIAGNOSTIC — REVERT TO None AFTER THIS ONE TEST RUN vvv
-# Points at Aviary's own bundled turbofan_22k.csv purely to test whether
-# the OFF_DESIGN_MAX_RANGE stall is specific to the auto-generated
-# Mattingly & Heiser deck. This is a civil turbofan, NOT this aircraft's
-# real engine class (no afterburner, different thrust-lapse/SFC curve) -
-# any fuel-burn/range NUMBERS from a run using this are not physically
-# meaningful for this aircraft. Only "does it converge or not" is the
-# useful result from this specific test. Set back to None once you've
-# captured that run's console output.
-from aviary.api import get_path as _get_path_for_engine_deck_test
-CUSTOM_ENGINE_DECK_PATH = _get_path_for_engine_deck_test("models/engines/turbofan_22k.csv")
-# ^^^ TEMPORARY DIAGNOSTIC — REVERT TO None AFTER THIS ONE TEST RUN ^^^
+# Was pointed at Aviary's own bundled turbofan_22k.csv for one diagnostic
+# run, to test whether the OFF_DESIGN_MAX_RANGE stall was specific to the
+# auto-generated Mattingly & Heiser deck (it wasn't - see
+# scripts/aviary/classical_mission.py's module docstring for how that
+# investigation concluded). Reverted back to None now that test has
+# served its purpose; a civil turbofan is not this aircraft's real engine
+# class (no afterburner, different thrust-lapse/SFC curve) and would make
+# any fuel-burn/range numbers physically meaningless for this aircraft.
+CUSTOM_ENGINE_DECK_PATH = None
 
 # ── Mission profile ────────────────────────────────────────────────────────
 CRUISE_MACH        = 0.6

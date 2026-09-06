@@ -242,18 +242,58 @@ def _drag_lbf(cd, q_pa, wing_area_ft2):
     return drag_n / 4.4482216153  # N -> lbf
 
 
+def _flight_condition(aero, engine, wing_area_ft2, mass_lbm, alt_ft, mach, throttle):
+    """Required CL/CD/drag/thrust/fuel-flow at one (altitude, Mach, mass,
+    throttle) point - the level-flight lift=weight approximation shared by
+    every phase and by the climb-Mach search below, so there is exactly
+    one place computing this instead of several copies that could drift
+    apart. Returns (cl_req, v_mps, q_pa, cd, drag_lbf, thrust_lbf,
+    fuel_flow_lbm_hr)."""
+    cl_req, v_mps, q_pa = _required_cl(mass_lbm, mach, alt_ft, wing_area_ft2)
+    cd, _alpha_deg = aero.cd_for_required_cl(alt_ft, mach, cl_req)
+    drag_lbf = _drag_lbf(cd, q_pa, wing_area_ft2)
+    thrust_lbf, fuel_flow_lbm_hr = engine.thrust_and_fuel_flow(mach, alt_ft, throttle)
+    return cl_req, v_mps, q_pa, cd, drag_lbf, thrust_lbf, fuel_flow_lbm_hr
+
+
+def _climb_rate_fpm(mass_lbm, thrust_lbf, drag_lbf, v_mps):
+    """Excess-power rate of climb: ROC = (Thrust-Drag)*V/Weight, floored
+    at zero (negative excess power means climb can't be sustained here,
+    not that the aircraft is modeled as sinking - the caller's own
+    min_climb_rate_fpm floor catches an inadequate climb well before this
+    would ever reach zero). Returns (roc_mps, roc_fpm)."""
+    weight_n = mass_lbm * LBM_TO_KG * G
+    excess_power_w = (thrust_lbf - drag_lbf) * 4.4482216153 * v_mps
+    roc_mps = excess_power_w / weight_n if excess_power_w > 0 else 0.0
+    return roc_mps, roc_mps * 196.850394
+
+
+def _raise_if_cl_exceeds_margin(direction, alt_ft, mach, mass_lbm, cl_req, cl_margin, max_cl):
+    if cl_req > cl_margin * max_cl:
+        raise RuntimeError(
+            f"{direction} at altitude={alt_ft:.0f} ft, Mach={mach:.3f}: "
+            f"required CL={cl_req:.3f} exceeds {cl_margin:.0%} of this aero "
+            f"table's tested max CL ({max_cl:.3f}) at mass={mass_lbm:.0f} lbm "
+            f"- this aircraft cannot sustain level flight here at this weight; "
+            f"not a numerical artifact, a real lift-margin shortfall."
+        )
+
+
 def fly_climb_or_descent(
     aero, engine, wing_area_ft2, mass_lbm,
     alt_start_ft, alt_end_ft, mach_start, mach_end,
     throttle, cl_margin, direction,
-    alt_step_ft=500.0, min_climb_rate_fpm=300.0,
+    alt_step_ft=500.0, min_climb_rate_fpm=300.0, mach_accel_step=0.01,
 ):
     """Integrates altitude from alt_start_ft to alt_end_ft in alt_step_ft
-    increments at a FIXED throttle setting, Mach ramped linearly between
-    mach_start/mach_end over the altitude range. direction: 'climb' uses
-    excess-power rate of climb; 'descent' uses an assumed flight-path
-    angle (an idle/low-throttle engine can't be relied on for positive
-    excess power at every point the way a climbing engine can).
+    increments at a FIXED throttle setting. Mach is ramped linearly
+    between mach_start/mach_end over the altitude range as the NOMINAL
+    schedule. direction: 'climb' uses excess-power rate of climb, and can
+    accelerate FASTER than that nominal ramp when needed (see
+    min_climb_rate_fpm below); 'descent' uses an assumed flight-path
+    angle at the nominal ramp's Mach directly (an idle/low-throttle
+    engine can't be relied on for positive excess power the way a
+    climbing engine can, so there is no margin to search for there).
 
     min_climb_rate_fpm: as thrust lapses with altitude, excess power at a
     FIXED (military) throttle setting can taper toward zero well before
@@ -266,19 +306,41 @@ def fly_climb_or_descent(
     to 35,000 ft in single-digit minutes instead reported 199 minutes and
     more fuel burned in climb alone than the whole mission should need,
     because the last few thousand feet were being climbed at a few tens
-    of feet per minute). 300 fpm is a conventional practical/service-
-    ceiling-adjacent floor - once climb rate drops below it, further
-    altitude gain at this throttle setting is not a realistic part of a
-    cross-country climb schedule, so this is treated as this throttle
-    setting's practical ceiling and reported as such, not silently
-    integrated through.
+    of feet per minute).
+
+    Before treating a shortfall against min_climb_rate_fpm as this
+    throttle setting's practical ceiling, the climb branch first tries
+    ACCELERATING at that same altitude - scanning Mach upward in
+    mach_accel_step increments, bounded by mach_end (this phase's own
+    target Mach, e.g. the cruise Mach for the climb phase) - before
+    giving up. This matters for a low-aspect-ratio wing: found on this
+    project's real aircraft data that a comfortable-looking CL (well
+    under the aero table's tested max) can still mean induced drag has
+    eaten nearly all of military thrust at the nominal schedule's Mach,
+    while a faster Mach at the SAME altitude (moving toward the wing's
+    min-drag speed - a low-AR wing well below that speed trades a little
+    parasite drag for a lot less induced drag) restores real margin. A
+    fixed linear Mach-vs-altitude ramp alone can under-predict what this
+    aircraft can actually do, and can also under-predict a shortfall that
+    only appears PARTWAY up the climb even after the start of climb has
+    already been fixed (e.g. via find_min_climb_start_mach), because
+    thrust keeps lapsing with altitude faster than a slow linear ramp's
+    Mach increase compensates for. Once a step accelerates, later steps
+    never fall back below that Mach even if the nominal ramp would - nothing
+    here calls for slowing back down, only for speeding up when margin
+    runs thin. 300 fpm is a conventional practical/service-ceiling-
+    adjacent floor - once climb rate drops below it even at mach_end,
+    further altitude gain at this throttle setting is not a realistic
+    part of a cross-country climb schedule, so THAT is treated as this
+    throttle setting's practical ceiling and reported as such, not
+    silently integrated through.
 
     Returns (time_s, distance_nmi, fuel_burned_lbm, final_mass_lbm), or
     raises RuntimeError with the exact altitude/condition if the aero
     table's tested CL range can't support level flight there, or if climb
-    rate collapses below min_climb_rate_fpm before reaching alt_end_ft (a
-    real finding either way - not enough lift or thrust margin - not a
-    numerical failure)."""
+    rate collapses below min_climb_rate_fpm - even after accelerating to
+    mach_end - before reaching alt_end_ft (a real finding either way -
+    not enough lift or thrust margin - not a numerical failure)."""
     n_steps = max(1, int(round(abs(alt_end_ft - alt_start_ft) / alt_step_ft)))
     alts = np.linspace(alt_start_ft, alt_end_ft, n_steps + 1)
     machs = np.linspace(mach_start, mach_end, n_steps + 1)
@@ -287,46 +349,57 @@ def fly_climb_or_descent(
     total_dist_nmi = 0.0
     total_fuel_lbm = 0.0
     mass = mass_lbm
+    mach_floor = mach_start  # climb only: an acceleration is never undone later
 
     for i in range(n_steps):
         alt_mid = 0.5 * (alts[i] + alts[i + 1])
         mach_mid = 0.5 * (machs[i] + machs[i + 1])
-        cl_req, v_mps, q_pa = _required_cl(mass, mach_mid, alt_mid, wing_area_ft2)
-        if cl_req > cl_margin * aero.max_cl:
-            raise RuntimeError(
-                f"{direction} at altitude={alt_mid:.0f} ft, Mach={mach_mid:.3f}: "
-                f"required CL={cl_req:.3f} exceeds {cl_margin:.0%} of this aero "
-                f"table's tested max CL ({aero.max_cl:.3f}) at mass={mass:.0f} lbm "
-                f"- this aircraft cannot sustain level flight here at this weight; "
-                f"not a numerical artifact, a real lift-margin shortfall."
+
+        if direction == "climb":
+            mach_mid = max(mach_mid, mach_floor)
+            cl_req, v_mps, q_pa, cd, drag_lbf, thrust_lbf, fuel_flow_lbm_hr = _flight_condition(
+                aero, engine, wing_area_ft2, mass, alt_mid, mach_mid, throttle
             )
-        cd, _alpha_deg = aero.cd_for_required_cl(alt_mid, mach_mid, cl_req)
-        drag_lbf = _drag_lbf(cd, q_pa, wing_area_ft2)
-        thrust_lbf, fuel_flow_lbm_hr = engine.thrust_and_fuel_flow(mach_mid, alt_mid, throttle)
+            roc_mps, roc_fpm = _climb_rate_fpm(mass, thrust_lbf, drag_lbf, v_mps)
+
+            mach_try = mach_mid
+            while roc_fpm < min_climb_rate_fpm and mach_try < mach_end - 1e-9:
+                mach_try = min(mach_try + mach_accel_step, mach_end)
+                cl_req, v_mps, q_pa, cd, drag_lbf, thrust_lbf, fuel_flow_lbm_hr = _flight_condition(
+                    aero, engine, wing_area_ft2, mass, alt_mid, mach_try, throttle
+                )
+                roc_mps, roc_fpm = _climb_rate_fpm(mass, thrust_lbf, drag_lbf, v_mps)
+            mach_mid = mach_try
+
+            if roc_fpm < min_climb_rate_fpm:
+                raise RuntimeError(
+                    f"climb at altitude={alt_mid:.0f} ft, mass={mass:.0f} lbm: climb "
+                    f"rate has dropped to {roc_fpm:.0f} ft/min (thrust={thrust_lbf:.0f} "
+                    f"lbf, drag={drag_lbf:.0f} lbf at Mach={mach_mid:.3f}) even after "
+                    f"accelerating to this phase's target Mach ({mach_end:.3f}) looking "
+                    f"for more thrust margin - still below the {min_climb_rate_fpm:.0f} "
+                    f"ft/min practical floor. This throttle setting's real ceiling is "
+                    f"below the requested cruise altitude ({alt_end_ft:.0f} ft); it "
+                    f"cannot be fixed by flying faster within this phase's Mach range. "
+                    f"This is a real thrust-margin finding, not a numerical failure: "
+                    f"either the requested cruise altitude is too high for a non-"
+                    f"afterburning climb at this weight, or reaching it needs a higher "
+                    f"climb throttle than modeled here."
+                )
+            _raise_if_cl_exceeds_margin(direction, alt_mid, mach_mid, mass, cl_req, cl_margin, aero.max_cl)
+            mach_floor = mach_mid
+        else:  # descent: assumed flight-path angle, not excess power
+            cl_req, v_mps, q_pa, cd, drag_lbf, thrust_lbf, fuel_flow_lbm_hr = _flight_condition(
+                aero, engine, wing_area_ft2, mass, alt_mid, mach_mid, throttle
+            )
+            _raise_if_cl_exceeds_margin(direction, alt_mid, mach_mid, mass, cl_req, cl_margin, aero.max_cl)
 
         d_alt_ft = alts[i + 1] - alts[i]
         d_alt_m = d_alt_ft * FT_TO_M
-        weight_n = mass * LBM_TO_KG * G
 
         if direction == "climb":
-            excess_power_w = (thrust_lbf - drag_lbf) * 4.4482216153 * v_mps
-            roc_mps = excess_power_w / weight_n if excess_power_w > 0 else 0.0
-            roc_fpm = roc_mps * 196.850394
-            if roc_fpm < min_climb_rate_fpm:
-                raise RuntimeError(
-                    f"climb at altitude={alt_mid:.0f} ft, Mach={mach_mid:.3f}, "
-                    f"mass={mass:.0f} lbm: climb rate at this throttle setting has "
-                    f"dropped to {roc_fpm:.0f} ft/min (thrust={thrust_lbf:.0f} lbf, "
-                    f"drag={drag_lbf:.0f} lbf), below the {min_climb_rate_fpm:.0f} "
-                    f"ft/min practical floor - this throttle setting's effective "
-                    f"ceiling is below the requested cruise altitude "
-                    f"({alt_end_ft:.0f} ft). This is a real thrust-margin finding, "
-                    f"not a numerical failure: either the requested cruise altitude "
-                    f"is too high for a non-afterburning climb at this weight, or "
-                    f"reaching it needs a higher climb throttle than modeled here."
-                )
             dt_s = abs(d_alt_m) / roc_mps
-        else:  # descent: assumed flight-path angle, not excess power
+        else:
             descent_angle_rad = np.radians(3.0)  # standard ~3 deg descent
             roc_mps = v_mps * np.sin(descent_angle_rad)
             dt_s = abs(d_alt_m) / roc_mps
@@ -383,10 +456,66 @@ def fly_cruise(aero, engine, wing_area_ft2, mass_lbm, cruise_alt_ft, cruise_mach
     return total_time_s, distance_nmi, total_fuel_lbm, mass
 
 
+def find_min_climb_start_mach(
+    aero, engine, wing_area_ft2, gross_mass_lbm, climb_throttle,
+    min_climb_rate_fpm=300.0, safety_margin_fpm=200.0, cl_margin=0.9,
+    mach_scan=np.arange(0.20, 0.95, 0.01),
+):
+    """Scans Mach at SEA LEVEL and the aircraft's full gross mass (the
+    worst case for weight-driven induced drag - heaviest, and lowest
+    altitude so highest required CL for a given Mach) to find the lowest
+    Mach where excess thrust at climb_throttle clears min_climb_rate_fpm
+    plus a safety margin.
+
+    A low-aspect-ratio wing (this project's own wing-loading-scaled
+    configs are typically AR ~2-3) has a LARGE induced-drag penalty at
+    low speed/high CL - simply picking a slow, comfortable-sounding climb
+    Mach (or even the CL-margin-based Mach run_aviary.py computes, which
+    targets stall margin, a DIFFERENT constraint) can leave inadequate
+    THRUST margin even though there is plenty of LIFT margin. Caught
+    exactly this running the real aircraft data for the first time: CL
+    was a comfortable 0.71 (well under this table's ~1.0 max), but
+    induced drag at that CL nearly equaled available military thrust at
+    Mach 0.3 near sea level. A single Mach scan at the worst-case
+    condition (no iterative solver, so it can't fail to converge) finds a
+    starting Mach with real thrust margin instead of guessing one.
+
+    cl_margin: must match the SAME value passed to fly_climb_or_descent
+    (run_classical_mission ensures this). Skipping candidates with a
+    looser threshold here was a real bug caught in testing: at
+    climb_throttle=1.0 this scan could return a Mach clearing the THRUST
+    check while still exceeding fly_climb_or_descent's own (stricter)
+    LIFT-margin check, so the climb it "found a start for" immediately
+    raised a lift-margin RuntimeError on its very first step - a starting
+    Mach is only real if it satisfies the same constraint the climb
+    itself will be judged against.
+
+    Returns the found Mach, or raises RuntimeError if nothing in
+    mach_scan clears the margin (a real finding - this aircraft may need
+    afterburner to get established in a climb at all, at this weight)."""
+    for mach in mach_scan:
+        cl_req, v_mps, _q_pa = _required_cl(gross_mass_lbm, mach, 0.0, wing_area_ft2)
+        if cl_req > cl_margin * aero.max_cl:
+            continue  # fails the SAME lift-margin test fly_climb_or_descent enforces
+        _, v_mps, _, _, drag_lbf, thrust_lbf, _ = _flight_condition(
+            aero, engine, wing_area_ft2, gross_mass_lbm, 0.0, mach, climb_throttle
+        )
+        _, roc_fpm = _climb_rate_fpm(gross_mass_lbm, thrust_lbf, drag_lbf, v_mps)
+        if roc_fpm >= min_climb_rate_fpm + safety_margin_fpm:
+            return round(float(mach), 2)
+    raise RuntimeError(
+        f"No Mach in the scanned range [{mach_scan[0]:.2f}, {mach_scan[-1]:.2f}] gives "
+        f"adequate climb-rate margin at sea level, mass={gross_mass_lbm:.0f} lbm, "
+        f"throttle={climb_throttle} - this aircraft may need a higher climb throttle "
+        f"(afterburner) to get established in a climb at all at this weight. Try "
+        f"climb_throttle=1.0."
+    )
+
+
 def run_classical_mission(
     geom_stem, wing_area_ft2, gross_mass_lbm, design_range_nmi,
     cruise_mach, cruise_altitude_ft,
-    climb_mach_initial=0.3, climb_mach_final=None,
+    climb_mach_initial=None, climb_mach_final=None,
     descent_mach_final=0.3,
     mach_list=None, altitude_list=None,
     custom_engine_deck_path=None,
@@ -397,7 +526,12 @@ def run_classical_mission(
     """Runs the full climb/cruise/descent mission and returns a dict of
     results. Raises RuntimeError (with a specific altitude/Mach/mass
     condition, not a stack of optimizer internals) if the aircraft
-    genuinely cannot complete the mission as specified."""
+    genuinely cannot complete the mission as specified.
+
+    climb_mach_initial: if None (the default), computed automatically via
+    find_min_climb_start_mach() - a real, non-guessed starting speed with
+    adequate climb-THRUST margin for THIS aircraft's own aero/mass/engine,
+    not a flat placeholder. Pass an explicit value to override."""
     climb_mach_final = climb_mach_final if climb_mach_final is not None else cruise_mach
 
     aero = AeroTable(geom_stem, expected_machs=set(mach_list) if mach_list else None,
@@ -413,6 +547,14 @@ def run_classical_mission(
             throttle_ratio=engine_throttle_ratio, engine_type=engine_type,
         )
     engine = EngineTable(engine_deck_path)
+
+    if climb_mach_initial is None:
+        climb_mach_initial = find_min_climb_start_mach(
+            aero, engine, wing_area_ft2, gross_mass_lbm, climb_throttle, cl_margin=cl_margin,
+        )
+        print(f"   [climb] computed start-of-climb Mach={climb_mach_initial:.2f} "
+              f"(minimum Mach with adequate climb-rate margin at sea level/full "
+              f"gross mass/throttle={climb_throttle})")
 
     t_climb, d_climb, fuel_climb, mass_after_climb = fly_climb_or_descent(
         aero, engine, wing_area_ft2, gross_mass_lbm,
