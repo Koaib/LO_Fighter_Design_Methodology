@@ -56,7 +56,7 @@ import time
 
 # IMPORT_FILE/GEOMETRY_DIR/REF_WING_NAME live in pipeline_config.py — the
 # single place that names the geometry file, shared with extract_params.py
-# and print_wing_ref_params.py so they can never silently disagree.
+# so they can never silently disagree.
 from pipeline_config import ROOT_DIR, GEOMETRY_DIR, IMPORT_FILE, REF_WING_NAME
 
 """
@@ -72,8 +72,8 @@ INPUT_MODE options:
 # INPUT MODE — edit this
 # =========================
 # IMPORT_FILE/REF_WING_NAME come from pipeline_config.py (see import above)
-# — edit them there, not here, so extract_params.py and
-# print_wing_ref_params.py automatically stay pointed at the same geometry.
+# — edit them there, not here, so extract_params.py automatically stays
+# pointed at the same geometry.
 
 INPUT_MODE    = "import_vsp3"       # "generate" | "import_stl" | "import_vsp3"
 REF_MODE      = "auto"      # use "manual" for box_template — it has no wing
@@ -287,8 +287,7 @@ Z_CG = 0.0      # m
 # number — see pipeline_config.py's IMPORT_FILE note) — NOT a scaled-down
 # F-16C value (see mass basis note below for why that distinction
 # matters). Read directly off the actual .vsp3 (TotalArea/TotalSpan/
-# TotalAR parms, via scripts/print_wing_ref_params.py's method)
-# and unit-converted:
+# TotalAR parms) and unit-converted:
 # TotalArea=78.319 m^2 -> 843.018 ft^2, TotalSpan=13.5565 m -> 44.477 ft,
 # TotalAR=2.3465 (dimensionless, low-AR delta planform per Giannelis,
 # Bykerk & Vio, Aerospace 2023, 10, 746 — the SSAM-Gen5 source paper).
