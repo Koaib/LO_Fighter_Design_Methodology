@@ -537,11 +537,24 @@ def run_aviary_mission(
         # real cruise Mach.
         prob.aviary_inputs.set_val(Mission.Constraints.MAX_MACH, cruise_mach, units="unitless")
 
+        # NUM_ENGINES=2 (twin, both fuselage-mounted): confirmed this
+        # session that this project's real aircraft is twin-engine - a
+        # single F100-PW-229-class engine (REFERENCE_SLS_THRUST below)
+        # gives gross_mass_lbm=83,800 a T/W~0.35 at full afterburner,
+        # nowhere near a real fighter's ~0.9-1.2, and was the dominant
+        # reason a classical (non-Aviary) climb-feasibility check on this
+        # same aircraft found it couldn't sustain even a modest climb
+        # rate past a few thousand feet - see scripts/aviary/
+        # classical_mission.py's num_engines docstring for the full
+        # derivation. This module is no longer the active mission-
+        # analysis path (see classical_mission.py's module docstring),
+        # but left at NUM_ENGINES=1 this would be a stale, misleading
+        # assumption for anyone who revisits it later.
         engine_options = av.AviaryValues()
         engine_options.set_val(Aircraft.Engine.DATA_FILE, engine_deck_path)
-        engine_options.set_val(Aircraft.Engine.NUM_ENGINES, 1)
+        engine_options.set_val(Aircraft.Engine.NUM_ENGINES, 2)
         engine_options.set_val(Aircraft.Engine.NUM_WING_ENGINES, 0)
-        engine_options.set_val(Aircraft.Engine.NUM_FUSELAGE_ENGINES, 1)
+        engine_options.set_val(Aircraft.Engine.NUM_FUSELAGE_ENGINES, 2)
         # Left at its default (True, unset) this crashes FLOPS's EngineMass
         # component: np.where(scale_mass) on a 0-d array. We don't need
         # FLOPS's thrust-scaled engine-mass equation anyway, since EMPTY_MASS

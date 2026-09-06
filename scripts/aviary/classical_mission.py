@@ -190,9 +190,24 @@ class EngineTable:
     """(Mach, altitude, throttle) -> (thrust_lbf, fuel_flow_lbm_per_hr),
     from the same engine deck run_aviary.py uses (either the
     auto-generated Mattingly & Heiser deck or a real custom_engine_deck_path
-    CSV) - read directly rather than through Aviary's EngineDeck class."""
+    CSV) - read directly rather than through Aviary's EngineDeck class.
 
-    def __init__(self, deck_path):
+    The deck (and build_engine_deck.py's t_sl_dry/t_sl_ab inputs) model
+    ONE ENGINE's performance curve - published, per-engine F100-PW-229
+    spec values, same convention run_aviary.py uses for
+    Aircraft.Engine.REFERENCE_SLS_THRUST (a per-engine value Aviary
+    itself scales by Aircraft.Engine.NUM_ENGINES internally). num_engines
+    here does the same scaling explicitly: confirmed this session that
+    this aircraft is a TWIN-engine design (gross_mass_lbm=83,800 with a
+    single F100-PW-229-class engine gives T/W~0.35 at full afterburner -
+    3-5x below any real fighter's, and was the dominant reason an earlier
+    climb-feasibility check found this aircraft couldn't sustain even a
+    modest climb rate past a few thousand feet); num_engines=1 remains
+    the default since this class has no way to know the real engine
+    count on its own."""
+
+    def __init__(self, deck_path, num_engines=1):
+        self.num_engines = num_engines
         df = pd.read_csv(deck_path, comment="#")
         df.columns = [c.strip() for c in df.columns]
         col_map = {c.lower().replace(" ", "").replace("_", ""): c for c in df.columns}
@@ -243,8 +258,15 @@ class EngineTable:
         )
 
     def thrust_and_fuel_flow(self, mach, alt_ft, throttle):
+        """Returns (thrust_lbf, fuel_flow_lbm_per_hr) for the WHOLE
+        aircraft (per-engine deck values x num_engines), not one engine -
+        every other method on this class (throttle_for_required_thrust
+        included, since it's built from repeated calls to this one)
+        inherits the scaling automatically."""
         pt = np.array([[mach, alt_ft, throttle]])
-        return float(self._thrust_interp(pt)[0]), float(self._fuel_interp(pt)[0])
+        thrust_lbf = float(self._thrust_interp(pt)[0]) * self.num_engines
+        fuel_flow_lbm_hr = float(self._fuel_interp(pt)[0]) * self.num_engines
+        return thrust_lbf, fuel_flow_lbm_hr
 
     def throttle_for_required_thrust(self, mach, alt_ft, thrust_required_lbf):
         """Solves for the throttle giving exactly thrust_required_lbf at
@@ -594,6 +616,7 @@ def run_classical_mission(
     custom_engine_deck_path=None,
     engine_t_sl_dry_lbf=17800.0, engine_t_sl_ab_lbf=29100.0,
     engine_throttle_ratio=1.07, engine_type="low_bypass_mixed_flow_turbofan",
+    num_engines=1,
     climb_throttle=0.5, climb_throttle_fallback=1.0,
     descent_throttle=0.15, cl_margin=0.9,
     climb_schedule_reference_altitude_ft=None,
@@ -615,6 +638,21 @@ def run_classical_mission(
     phase, a cruise/descent thrust shortfall, climb+descent distance
     alone exceeding the design range) still raises - only this one,
     demonstrated failure mode has been made to degrade gracefully so far.
+
+    num_engines: engine_t_sl_dry_lbf/engine_t_sl_ab_lbf are PER-ENGINE
+    published F100-PW-229 spec values (same convention run_aviary.py
+    uses for Aircraft.Engine.REFERENCE_SLS_THRUST) - num_engines scales
+    the deck's thrust AND fuel flow up to the whole aircraft's installed
+    total. Defaults to 1 because this function has no way to know the
+    real engine count on its own, but confirmed this session that this
+    project's actual aircraft is a TWIN-engine design: at num_engines=1,
+    gross_mass_lbm=83,800 against a single F100-PW-229-class engine gives
+    T/W~0.35 at full afterburner (a modern fighter's is typically
+    ~0.9-1.2), which was the dominant reason an earlier feasibility
+    check found this aircraft couldn't sustain climb past a few thousand
+    feet - re-running with num_engines=2 (same aero, same mass, only
+    thrust and fuel flow doubled) confirmed the fix: achieved altitude
+    went from 23,000 ft to 34,500 ft against the same 35,000 ft target.
 
     climb_mach_initial: if None (the default), computed automatically via
     find_min_climb_start_mach() - a real, non-guessed starting speed with
@@ -683,7 +721,7 @@ def run_classical_mission(
             t_sl_dry=engine_t_sl_dry_lbf, t_sl_ab=engine_t_sl_ab_lbf,
             throttle_ratio=engine_throttle_ratio, engine_type=engine_type,
         )
-    engine = EngineTable(engine_deck_path)
+    engine = EngineTable(engine_deck_path, num_engines=num_engines)
 
     if climb_mach_initial is None:
         climb_mach_initial = find_min_climb_start_mach(
@@ -857,6 +895,9 @@ def print_results(results, fuel_capacity_lbm):
 if __name__ == "__main__":
     # Standalone smoke test — mirrors run_aviary.py's own standalone
     # defaults so it finds the same aero CSVs when run directly.
+    # num_engines=2: confirmed this session that this project's real
+    # aircraft is twin-engine - see run_classical_mission's num_engines
+    # docstring for why single-engine gave an unrealistically low T/W.
     results = run_classical_mission(
         geom_stem="SSAM_final_geom_to_be_used_scaled_by_19_simplified",
         wing_area_ft2=843.018026816014,
@@ -866,5 +907,6 @@ if __name__ == "__main__":
         cruise_altitude_ft=35000.0,
         mach_list=[0.2, 0.4, 0.6],
         altitude_list=[0.0, 15000.0, 35000.0],
+        num_engines=2,
     )
     print_results(results, fuel_capacity_lbm=24590.81)

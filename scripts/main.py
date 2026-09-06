@@ -325,6 +325,15 @@ F22_WING_AREA_FT2  = 840.0     # published F-22A wing area
 
 # ── Engine specs (simplified F100-PW-229-class deck — NOT real engine test
 # data, see scripts/aviary/build_engine_deck.py) ───────────────────────────
+# These are PER-ENGINE published values. This aircraft is a confirmed
+# TWIN-engine design (see scripts/aviary/classical_mission.py's
+# num_engines docstring for the derivation - a single engine at this
+# gross mass gives T/W~0.35, nowhere near a real fighter's ~0.9-1.2, and
+# was the dominant reason an early climb-feasibility check found this
+# aircraft couldn't sustain even a modest climb rate). Pass
+# num_engines=2 to classical_mission.run_classical_mission() (and
+# run_aviary.py's Aircraft.Engine.NUM_ENGINES is set to 2 to match) -
+# these two constants stay as per-engine values either way.
 ENGINE_T_SL_DRY_LBF = 17800.0   # published F100-PW-229 dry static thrust
 ENGINE_T_SL_AB_LBF  = 29100.0   # published F100-PW-229 afterburner static thrust
 # TSFC is no longer a constant here — build_engine_deck.py computes it
