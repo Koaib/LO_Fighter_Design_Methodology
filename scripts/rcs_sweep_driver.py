@@ -354,7 +354,7 @@ if __name__ == "__main__":
     #   "WingThickChord_sec1": {"geom":"Main_Wing","surf":0,"section":1,"parm":"ThickChord","baseline":0.04}
     #   "WingThickChord_sec2": {"geom":"Main_Wing","surf":0,"section":2,"parm":"ThickChord","baseline":0.04}
     run_parameter("WingThickChord_sec0", DELTAS_TC,
-                  extra_param_keys=["WingThickChord_sec1", "WingThickChord_sec2"])
+                  extra_param_keys=["WingThickChord_sec1", "WingThickChord_sec2", "HT_ThickChord_surf0sec0", "HT_ThickChord_surf0sec1", "HT_ThickChord_surf0sec2", "VT_ThickChord_surf0sec0","VT_ThickChord_surf0sec1"])
 
     print("\nAll studies dispatched. Run `python rcs_compare_family.py` "
           "(no args) to build/refresh plots for every study found under "
