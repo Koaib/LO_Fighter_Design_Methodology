@@ -328,6 +328,7 @@ def fly_climb_or_descent(
     alt_start_ft, alt_end_ft, mach_start, mach_end,
     throttle, cl_margin, direction,
     alt_step_ft=500.0, min_climb_rate_fpm=300.0, mach_accel_step=0.01,
+    mach_schedule_alt_end_ft=None,
 ):
     """Integrates altitude from alt_start_ft to alt_end_ft in alt_step_ft
     increments at a FIXED throttle setting. Mach is ramped linearly
@@ -338,6 +339,28 @@ def fly_climb_or_descent(
     angle at the nominal ramp's Mach directly (an idle/low-throttle
     engine can't be relied on for positive excess power the way a
     climbing engine can, so there is no margin to search for there).
+
+    mach_schedule_alt_end_ft: the altitude at which the nominal Mach ramp
+    is defined to reach mach_end, if different from alt_end_ft (default
+    None uses alt_end_ft - today's behavior, unchanged for every existing
+    caller). This matters whenever THIS call is only checking feasibility
+    up to some altitude SHORT of the real, intended final altitude (e.g.
+    probing "can it at least reach 23,000 ft" while the actual mission
+    target is 35,000 ft): without this, the nominal ramp rate (Mach
+    gained per foot of altitude) is silently RECOMPUTED to fit whatever
+    alt_end_ft this particular call happens to use - a shorter alt_end_ft
+    doesn't just truncate the same climb, it computes a genuinely
+    DIFFERENT one (reaching a given Mach at a lower altitude for a
+    shorter target). Demonstrated for real, not hypothetical: re-running
+    this project's own smoke test with cruise_altitude_ft lowered in
+    steps (35000 -> 25000 -> 23500 -> 23000, each time using the PREVIOUS
+    run's achieved altitude as the next target) reported a DIFFERENT
+    "how far did it get" each time and never converged, because each run
+    silently asked a different question. Pass the real, intended final
+    altitude here (independent of how far this call actually needs to
+    check) to keep the schedule fixed and get a true, comparable
+    truncation instead - see run_classical_mission's
+    climb_schedule_reference_altitude_ft, which does exactly this.
 
     min_climb_rate_fpm: as thrust lapses with altitude, excess power at a
     FIXED (military) throttle setting can taper toward zero well before
@@ -387,7 +410,8 @@ def fly_climb_or_descent(
     not enough lift or thrust margin - not a numerical failure)."""
     n_steps = max(1, int(round(abs(alt_end_ft - alt_start_ft) / alt_step_ft)))
     alts = np.linspace(alt_start_ft, alt_end_ft, n_steps + 1)
-    machs = np.linspace(mach_start, mach_end, n_steps + 1)
+    mach_ref_end_ft = alt_end_ft if mach_schedule_alt_end_ft is None else mach_schedule_alt_end_ft
+    machs = mach_start + (mach_end - mach_start) * (alts - alt_start_ft) / (mach_ref_end_ft - alt_start_ft)
 
     total_time_s = 0.0
     total_dist_nmi = 0.0
@@ -572,6 +596,7 @@ def run_classical_mission(
     engine_throttle_ratio=1.07, engine_type="low_bypass_mixed_flow_turbofan",
     climb_throttle=0.5, climb_throttle_fallback=1.0,
     descent_throttle=0.15, cl_margin=0.9,
+    climb_schedule_reference_altitude_ft=None,
 ):
     """Runs the full climb/cruise/descent mission and returns a dict of
     results. Raises RuntimeError (with a specific altitude/Mach/mass
@@ -609,12 +634,42 @@ def run_classical_mission(
     design cruise altitude. A LiftMarginError is never retried this way -
     more throttle cannot produce more lift, so a lift shortfall is always
     a real, final failure. Set to None (or <= climb_throttle) to disable
-    the fallback and let a military-power shortfall fail outright.
+    the fallback and try only climb_throttle - a shortfall then still
+    degrades gracefully per the class docstring above, just without a
+    retry at a different throttle first.
     results['climb_throttle_used'] records which throttle the reported
     climb numbers actually came from, since a fallback climb burns
     substantially more fuel than a military-power one and that must stay
-    visible in the report, not silently absorbed into "the fuel burn"."""
+    visible in the report, not silently absorbed into "the fuel burn".
+
+    climb_schedule_reference_altitude_ft: the altitude the climb's Mach
+    ramp is defined to reach climb_mach_final at, if different from
+    cruise_altitude_ft (default None uses cruise_altitude_ft, matching
+    every call before this parameter existed). Only matters when
+    cruise_altitude_ft here is a SHORTER checkpoint than the aircraft's
+    real, intended cruise altitude - e.g. probing "does it at least clear
+    23,000 ft" while the real mission target is 35,000 ft. Demonstrated
+    as a real point of confusion, not hypothetical: without this,
+    lowering cruise_altitude_ft doesn't just check a shorter climb, it
+    silently recomputes a DIFFERENT, faster-accelerating Mach schedule
+    (reaching climb_mach_final in fewer feet) - re-running this project's
+    own smoke test with cruise_altitude_ft stepped down (35000 -> 25000
+    -> 23500 -> 23000, each time using the previous run's
+    achieved_altitude_ft as the next target) reported a DIFFERENT "how
+    far did it get" every time and never converged, because each run was
+    silently answering a different question. Pass the aircraft's real,
+    intended cruise altitude here (independent of the shorter
+    cruise_altitude_ft being checked) to make repeated, shorter probes
+    genuine truncations of the SAME schedule, so they finally agree with
+    each other - or better, just run once at the real cruise_altitude_ft
+    and trust results['achieved_altitude_ft'] directly; no probing
+    required, since the integration already stops exactly where the
+    real shortfall is."""
     climb_mach_final = climb_mach_final if climb_mach_final is not None else cruise_mach
+    climb_schedule_reference_altitude_ft = (
+        cruise_altitude_ft if climb_schedule_reference_altitude_ft is None
+        else climb_schedule_reference_altitude_ft
+    )
 
     aero = AeroTable(geom_stem, expected_machs=set(mach_list) if mach_list else None,
                       expected_altitudes=set(altitude_list) if altitude_list else None)
@@ -646,6 +701,7 @@ def run_classical_mission(
             alt_start_ft=0.0, alt_end_ft=cruise_altitude_ft,
             mach_start=climb_mach_initial, mach_end=climb_mach_final,
             throttle=climb_throttle, cl_margin=cl_margin, direction="climb",
+            mach_schedule_alt_end_ft=climb_schedule_reference_altitude_ft,
         )
     except ThrustMarginError as e:
         if climb_throttle_fallback is None or climb_throttle_fallback <= climb_throttle:
@@ -664,6 +720,7 @@ def run_classical_mission(
                     alt_start_ft=0.0, alt_end_ft=cruise_altitude_ft,
                     mach_start=climb_mach_initial, mach_end=climb_mach_final,
                     throttle=climb_throttle_fallback, cl_margin=cl_margin, direction="climb",
+                    mach_schedule_alt_end_ft=climb_schedule_reference_altitude_ft,
                 )
             except ThrustMarginError as e2:
                 unrecoverable = (e2, climb_throttle_fallback)
