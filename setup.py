@@ -21,7 +21,7 @@ print("  LO Fighter Design Methodology - Setup")
 print("=" * 55)
 
 # ─── Step 1: Check Python version ───────────────────────
-print("\n[1/7] Checking Python version...")
+print("\n[1/6] Checking Python version...")
 major, minor = sys.version_info.major, sys.version_info.minor
 if major != 3 or minor < 10:
     print(f"❌ Python 3.10+ required. You have {major}.{minor}")
@@ -29,7 +29,7 @@ if major != 3 or minor < 10:
 print(f"✅ Python {major}.{minor} OK")
 
 # ─── Step 2: Create venv ────────────────────────────────
-print("\n[2/7] Creating virtual environment (.venv)...")
+print("\n[2/6] Creating virtual environment (.venv)...")
 venv_path = os.path.join(ROOT_DIR, ".venv")
 if os.path.exists(venv_path):
     print("⚠️  .venv already exists — skipping creation")
@@ -38,7 +38,7 @@ else:
     print("✅ Virtual environment created")
 
 # ─── Step 3: Install requirements ───────────────────────
-print("\n[3/7] Installing requirements...")
+print("\n[3/6] Installing requirements...")
 if os.name == "nt":
     venv_python = os.path.join(ROOT_DIR, ".venv", "Scripts", "python.exe")
 else:
@@ -49,7 +49,7 @@ subprocess.run([venv_python, "-m", "pip", "install", "-r", "requirements.txt"], 
 print("✅ Requirements installed")
 
 # ─── Step 4: Install OpenVSP Python packages ────────────
-print("\n[4/7] Installing OpenVSP Python packages...")
+print("\n[4/6] Installing OpenVSP Python packages...")
 
 python_dir = os.path.join(ROOT_DIR, "OpenVSP", "OpenVSP-3.49.0-win64", "python")
 req_dev = os.path.join(python_dir, "requirements-dev.txt")
@@ -67,7 +67,7 @@ else:
     print("✅ OpenVSP packages installed")
 
 # ─── Step 5: Patch OpenVSP __init__.py ──────────────────
-print("\n[5/7] Patching OpenVSP imports...")
+print("\n[5/6] Patching OpenVSP imports...")
 
 init_file = os.path.join(
     ROOT_DIR, "OpenVSP", "OpenVSP-3.49.0-win64",
@@ -103,27 +103,8 @@ else:
     else:
         print("⚠️  Already patched — skipping")
         
-# ─── Step 6: Install & verify Aviary ────────────────────
-print("\n[6/7] Installing Aviary (baseline validation)...")
-if os.name == "nt":
-    aviary_exe = os.path.join(ROOT_DIR, ".venv", "Scripts", "aviary.exe")
-else:
-    aviary_exe = os.path.join(ROOT_DIR, ".venv", "bin", "aviary")
-
-result = subprocess.run(
-    [aviary_exe, "check"],
-    capture_output=True, text=True
-)
-print(result.stdout)
-print(result.stderr)
-combined_output = result.stdout + result.stderr
-if result.returncode != 0 or "Aviary run successful" not in combined_output:
-    print("⚠️  Aviary check did not report success — review output above")
-else:
-    print("✅ Aviary installed and verified")
-    
-# ─── Step 7: Verify OpenRCS is present ──────────────────
-print("\n[7/7] Checking OpenRCS installation...")
+# ─── Step 6: Verify OpenRCS is present ──────────────────
+print("\n[6/6] Checking OpenRCS installation...")
  
 openrcs_dir = os.path.join(ROOT_DIR, "OpenRCS", "open-rcs")
 required_files = [
