@@ -1023,7 +1023,7 @@ def run_openrcs_pipeline(
         # ── summary ───────────────────────────────────────────────────────────
         print(f"\n  All results saved to: {results_dir}")
         for k, v in out.items():
-            if v and k != "results_dir":
+            if v and k not in ("results_dir", "means"):
                 print(f"    {k:<18}: {os.path.basename(v)}")
 
     finally:

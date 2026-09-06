@@ -82,8 +82,17 @@ def _find_section_parm(gid, surf_idx, section_idx, parm_name):
 
 
 def _write(path, entry):
-    with open(path, "w") as f:
+    # Checkpointing calls this after every stage, so a power cut can land
+    # mid-write far more often now than in the old single-shot-at-the-end
+    # worker. Write to a temp file and atomically rename over the real
+    # path (same os.replace pattern as _export_mesh_checkpoint's STL
+    # write) so a manifest is always either the previous complete version
+    # or the new complete version — never a truncated/corrupt one that
+    # would permanently break json.load() on every future resume attempt.
+    tmp_path = path + ".tmp"
+    with open(tmp_path, "w") as f:
         json.dump(entry, f, indent=2)
+    os.replace(tmp_path, path)
 
 
 def _export_mesh_checkpoint(cfg, tag, stl_dir, entry, manifest_path):
