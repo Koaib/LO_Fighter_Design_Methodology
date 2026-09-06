@@ -44,16 +44,29 @@ Only the trajectory SOLVE differs.
 
 METHOD (per phase):
   Climb:   integrate altitude upward in small steps from sea level to
-           cruise altitude, at MILITARY (non-afterburning, throttle=0.5)
-           power - the standard economical climb setting, afterburner
-           being reserved for combat rather than a cross-country climb.
-           At each altitude: current mass -> required CL (level-flight
-           lift = weight approximation) -> alpha and CD from the aero
-           table -> drag; thrust/fuel-flow from the engine deck at that
-           Mach/altitude/throttle. Climb (vertical) rate from excess
-           power: ROC = (Thrust-Drag)*V/Weight. Mach is ramped linearly
-           between phase_info.py's climb mach_initial/mach_final over the
-           altitude range, matching the existing mission's own schedule.
+           cruise altitude, starting at MILITARY (non-afterburning,
+           throttle=0.5) power - the standard economical climb setting,
+           afterburner being reserved for combat rather than a cross-
+           country climb. If that genuinely can't sustain a minimum climb
+           rate (a real thrust shortfall, ThrustMarginError - found on
+           this project's own real aircraft, not a hypothetical: low-
+           aspect-ratio-wing induced drag can eat military thrust well
+           below cruise altitude), the whole climb is retried at a higher
+           throttle instead of failing the mission outright - exactly
+           what a real fighter does when military power isn't enough
+           to climb (see run_classical_mission's climb_throttle_fallback
+           for details; results['climb_throttle_used'] always records
+           which one the reported numbers came from). At each altitude:
+           current mass -> required CL (level-flight lift = weight
+           approximation) -> alpha and CD from the aero table -> drag;
+           thrust/fuel-flow from the engine deck at that Mach/altitude/
+           throttle. Climb (vertical) rate from excess power:
+           ROC = (Thrust-Drag)*V/Weight. Mach is ramped linearly between
+           phase_info.py's climb mach_initial/mach_final over the
+           altitude range as a nominal schedule, matching the existing
+           mission's own schedule, but can accelerate past that nominal
+           ramp (bounded by mach_final) when needed to keep the climb-
+           rate margin above the floor - see fly_climb_or_descent.
   Cruise:  step-cruise at the fixed design Mach/altitude: at each
            distance step, required CL/drag as above, but throttle is
            SOLVED (by direct linear interpolation of the engine deck's
@@ -100,6 +113,25 @@ LBM_TO_KG = 0.45359237
 FT_TO_M = 0.3048
 NMI_TO_FT = 6076.11549
 G = 9.80665
+
+
+class ThrustMarginError(RuntimeError):
+    """Raised when available thrust can't clear the required margin at a
+    flight condition - a real THRUST shortfall (drag, or drag plus a
+    climb-rate requirement, exceeds what's available at the throttle
+    tried). Still a RuntimeError (any existing `except RuntimeError`
+    keeps working), but a distinct subclass so run_classical_mission can
+    catch specifically this - and only this - to retry a climb at a
+    higher throttle: more thrust is a real fix for this kind of
+    shortfall in a way it can never be for a LiftMarginError below."""
+
+
+class LiftMarginError(RuntimeError):
+    """Raised when required CL exceeds the aero table's tested max CL
+    times cl_margin - a real LIFT/stall-margin shortfall. Deliberately a
+    different type from ThrustMarginError: more throttle does not
+    generate more lift, so this is never worth retrying at a higher
+    throttle the way a thrust shortfall is."""
 
 
 class AeroTable:
@@ -270,7 +302,7 @@ def _climb_rate_fpm(mass_lbm, thrust_lbf, drag_lbf, v_mps):
 
 def _raise_if_cl_exceeds_margin(direction, alt_ft, mach, mass_lbm, cl_req, cl_margin, max_cl):
     if cl_req > cl_margin * max_cl:
-        raise RuntimeError(
+        raise LiftMarginError(
             f"{direction} at altitude={alt_ft:.0f} ft, Mach={mach:.3f}: "
             f"required CL={cl_req:.3f} exceeds {cl_margin:.0%} of this aero "
             f"table's tested max CL ({max_cl:.3f}) at mass={mass_lbm:.0f} lbm "
@@ -372,7 +404,7 @@ def fly_climb_or_descent(
             mach_mid = mach_try
 
             if roc_fpm < min_climb_rate_fpm:
-                raise RuntimeError(
+                raise ThrustMarginError(
                     f"climb at altitude={alt_mid:.0f} ft, mass={mass:.0f} lbm: climb "
                     f"rate has dropped to {roc_fpm:.0f} ft/min (thrust={thrust_lbf:.0f} "
                     f"lbf, drag={drag_lbf:.0f} lbf at Mach={mach_mid:.3f}) even after "
@@ -428,7 +460,7 @@ def fly_cruise(aero, engine, wing_area_ft2, mass_lbm, cruise_alt_ft, cruise_mach
     for _ in range(n_steps):
         cl_req, v_mps, q_pa = _required_cl(mass, cruise_mach, cruise_alt_ft, wing_area_ft2)
         if cl_req > cl_margin * aero.max_cl:
-            raise RuntimeError(
+            raise LiftMarginError(
                 f"cruise at altitude={cruise_alt_ft:.0f} ft, Mach={cruise_mach:.3f}: "
                 f"required CL={cl_req:.3f} exceeds {cl_margin:.0%} of this aero "
                 f"table's tested max CL ({aero.max_cl:.3f}) at mass={mass:.0f} lbm "
@@ -441,7 +473,7 @@ def fly_cruise(aero, engine, wing_area_ft2, mass_lbm, cruise_alt_ft, cruise_mach
             cruise_mach, cruise_alt_ft, drag_lbf
         )
         if not achievable:
-            raise RuntimeError(
+            raise ThrustMarginError(
                 f"cruise at altitude={cruise_alt_ft:.0f} ft, Mach={cruise_mach:.3f}: "
                 f"required thrust ({drag_lbf:.0f} lbf) exceeds this engine's full-"
                 f"throttle thrust at mass={mass:.0f} lbm - a real thrust shortfall, "
@@ -503,7 +535,7 @@ def find_min_climb_start_mach(
         _, roc_fpm = _climb_rate_fpm(gross_mass_lbm, thrust_lbf, drag_lbf, v_mps)
         if roc_fpm >= min_climb_rate_fpm + safety_margin_fpm:
             return round(float(mach), 2)
-    raise RuntimeError(
+    raise ThrustMarginError(
         f"No Mach in the scanned range [{mach_scan[0]:.2f}, {mach_scan[-1]:.2f}] gives "
         f"adequate climb-rate margin at sea level, mass={gross_mass_lbm:.0f} lbm, "
         f"throttle={climb_throttle} - this aircraft may need a higher climb throttle "
@@ -521,7 +553,8 @@ def run_classical_mission(
     custom_engine_deck_path=None,
     engine_t_sl_dry_lbf=17800.0, engine_t_sl_ab_lbf=29100.0,
     engine_throttle_ratio=1.07, engine_type="low_bypass_mixed_flow_turbofan",
-    climb_throttle=0.5, descent_throttle=0.15, cl_margin=0.9,
+    climb_throttle=0.5, climb_throttle_fallback=1.0,
+    descent_throttle=0.15, cl_margin=0.9,
 ):
     """Runs the full climb/cruise/descent mission and returns a dict of
     results. Raises RuntimeError (with a specific altitude/Mach/mass
@@ -531,7 +564,26 @@ def run_classical_mission(
     climb_mach_initial: if None (the default), computed automatically via
     find_min_climb_start_mach() - a real, non-guessed starting speed with
     adequate climb-THRUST margin for THIS aircraft's own aero/mass/engine,
-    not a flat placeholder. Pass an explicit value to override."""
+    not a flat placeholder. Pass an explicit value to override.
+
+    climb_throttle_fallback: if the climb at climb_throttle (military
+    power by default) hits a genuine THRUST shortfall (ThrustMarginError
+    - not enough thrust to sustain min_climb_rate_fpm even after
+    accelerating within the phase's own Mach range), the climb is retried
+    in full from sea level at this higher throttle instead of failing the
+    whole mission outright - this is exactly what a real fighter does
+    when military power can't get it to altitude: it uses afterburner.
+    Found on this project's own real aircraft data, not a hypothetical:
+    at military power, drag can exceed available thrust outright (climb
+    rate pinned at 0, not just below the practical floor) well below the
+    design cruise altitude. A LiftMarginError is never retried this way -
+    more throttle cannot produce more lift, so a lift shortfall is always
+    a real, final failure. Set to None (or <= climb_throttle) to disable
+    the fallback and let a military-power shortfall fail outright.
+    results['climb_throttle_used'] records which throttle the reported
+    climb numbers actually came from, since a fallback climb burns
+    substantially more fuel than a military-power one and that must stay
+    visible in the report, not silently absorbed into "the fuel burn"."""
     climb_mach_final = climb_mach_final if climb_mach_final is not None else cruise_mach
 
     aero = AeroTable(geom_stem, expected_machs=set(mach_list) if mach_list else None,
@@ -556,12 +608,30 @@ def run_classical_mission(
               f"(minimum Mach with adequate climb-rate margin at sea level/full "
               f"gross mass/throttle={climb_throttle})")
 
-    t_climb, d_climb, fuel_climb, mass_after_climb = fly_climb_or_descent(
-        aero, engine, wing_area_ft2, gross_mass_lbm,
-        alt_start_ft=0.0, alt_end_ft=cruise_altitude_ft,
-        mach_start=climb_mach_initial, mach_end=climb_mach_final,
-        throttle=climb_throttle, cl_margin=cl_margin, direction="climb",
-    )
+    climb_throttle_used = climb_throttle
+    try:
+        t_climb, d_climb, fuel_climb, mass_after_climb = fly_climb_or_descent(
+            aero, engine, wing_area_ft2, gross_mass_lbm,
+            alt_start_ft=0.0, alt_end_ft=cruise_altitude_ft,
+            mach_start=climb_mach_initial, mach_end=climb_mach_final,
+            throttle=climb_throttle, cl_margin=cl_margin, direction="climb",
+        )
+    except ThrustMarginError as e:
+        if climb_throttle_fallback is None or climb_throttle_fallback <= climb_throttle:
+            raise
+        print(f"   [climb] military power (throttle={climb_throttle}) hit a real "
+              f"thrust shortfall - {e}\n"
+              f"   [climb] retrying the full climb at climb_throttle_fallback="
+              f"{climb_throttle_fallback} (this WILL burn substantially more fuel "
+              f"in climb - a real cost of needing more power to reach this cruise "
+              f"altitude at this weight, not a numerical artifact).")
+        climb_throttle_used = climb_throttle_fallback
+        t_climb, d_climb, fuel_climb, mass_after_climb = fly_climb_or_descent(
+            aero, engine, wing_area_ft2, gross_mass_lbm,
+            alt_start_ft=0.0, alt_end_ft=cruise_altitude_ft,
+            mach_start=climb_mach_initial, mach_end=climb_mach_final,
+            throttle=climb_throttle_fallback, cl_margin=cl_margin, direction="climb",
+        )
 
     t_descent_est, d_descent_est, fuel_descent_est, _ = fly_climb_or_descent(
         aero, engine, wing_area_ft2, mass_after_climb * 0.97,  # rough pre-estimate for distance budgeting
@@ -604,6 +674,7 @@ def run_classical_mission(
         "gross_mass_lbm": gross_mass_lbm,
         "final_mass_lbm": mass_after_descent,
         "design_range_nmi": design_range_nmi,
+        "climb_throttle_used": climb_throttle_used,
     }
 
 
@@ -613,6 +684,9 @@ def print_results(results, fuel_capacity_lbm):
     print("\n" + "=" * 62)
     print("CLASSICAL MISSION RESULTS (no optimizer - direct integration)")
     print("=" * 62)
+    if results.get("climb_throttle_used") is not None:
+        print(f"  Climb throttle used   : {results['climb_throttle_used']:.2f} "
+              f"{'(military power)' if results['climb_throttle_used'] <= 0.5 else '(FALLBACK - higher than military power, see [climb] notes above)'}")
     for phase in ("climb", "cruise", "descent"):
         p = results[phase]
         print(f"  {phase.capitalize():8s}  {p['distance_nmi']:8.1f} nmi  "
