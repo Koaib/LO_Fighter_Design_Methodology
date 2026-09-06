@@ -123,7 +123,19 @@ class ThrustMarginError(RuntimeError):
     keeps working), but a distinct subclass so run_classical_mission can
     catch specifically this - and only this - to retry a climb at a
     higher throttle: more thrust is a real fix for this kind of
-    shortfall in a way it can never be for a LiftMarginError below."""
+    shortfall in a way it can never be for a LiftMarginError below.
+
+    partial: when raised from a climb/descent integration that had
+    already made real progress, a dict of {time_s, distance_nmi,
+    fuel_lbm, mass_lbm, altitude_ft} for how far it got before the
+    shortfall - lets a caller report "reached X ft, burned Y lbm getting
+    there" as a real, comparable result instead of only a stack trace.
+    None when there is no such partial progress to report (e.g. raised
+    by find_min_climb_start_mach, which never starts an integration)."""
+
+    def __init__(self, message, partial=None):
+        super().__init__(message)
+        self.partial = partial
 
 
 class LiftMarginError(RuntimeError):
@@ -416,7 +428,12 @@ def fly_climb_or_descent(
                     f"This is a real thrust-margin finding, not a numerical failure: "
                     f"either the requested cruise altitude is too high for a non-"
                     f"afterburning climb at this weight, or reaching it needs a higher "
-                    f"climb throttle than modeled here."
+                    f"climb throttle than modeled here.",
+                    partial={
+                        "time_s": total_time_s, "distance_nmi": total_dist_nmi,
+                        "fuel_lbm": total_fuel_lbm, "mass_lbm": mass,
+                        "altitude_ft": alts[i],
+                    },
                 )
             _raise_if_cl_exceeds_margin(direction, alt_mid, mach_mid, mass, cl_req, cl_margin, aero.max_cl)
             mach_floor = mach_mid
@@ -559,7 +576,20 @@ def run_classical_mission(
     """Runs the full climb/cruise/descent mission and returns a dict of
     results. Raises RuntimeError (with a specific altitude/Mach/mass
     condition, not a stack of optimizer internals) if the aircraft
-    genuinely cannot complete the mission as specified.
+    genuinely cannot complete the mission as specified - EXCEPT for one
+    case: if the climb itself cannot reach cruise_altitude_ft at any
+    throttle tried (climb_throttle, then climb_throttle_fallback), that
+    is reported as a normal return value instead
+    (results['climb_completed'] = False, results['cruise'] and
+    ['descent'] = None, results['failure_reason'] holds the same message
+    the exception would have carried) rather than raised - a baseline-
+    vs-RCS-shaped-config comparison needs "this config can't complete
+    the climb" to be an ordinary, comparable outcome (how far did it
+    get?), not a crash, since some configs are EXPECTED to fail this
+    check. Every other failure mode (a lift-margin shortfall in any
+    phase, a cruise/descent thrust shortfall, climb+descent distance
+    alone exceeding the design range) still raises - only this one,
+    demonstrated failure mode has been made to degrade gracefully so far.
 
     climb_mach_initial: if None (the default), computed automatically via
     find_min_climb_start_mach() - a real, non-guessed starting speed with
@@ -609,6 +639,7 @@ def run_classical_mission(
               f"gross mass/throttle={climb_throttle})")
 
     climb_throttle_used = climb_throttle
+    unrecoverable = None  # (ThrustMarginError, throttle_it_was_tried_at), or None
     try:
         t_climb, d_climb, fuel_climb, mass_after_climb = fly_climb_or_descent(
             aero, engine, wing_area_ft2, gross_mass_lbm,
@@ -618,20 +649,61 @@ def run_classical_mission(
         )
     except ThrustMarginError as e:
         if climb_throttle_fallback is None or climb_throttle_fallback <= climb_throttle:
-            raise
-        print(f"   [climb] military power (throttle={climb_throttle}) hit a real "
-              f"thrust shortfall - {e}\n"
-              f"   [climb] retrying the full climb at climb_throttle_fallback="
-              f"{climb_throttle_fallback} (this WILL burn substantially more fuel "
-              f"in climb - a real cost of needing more power to reach this cruise "
-              f"altitude at this weight, not a numerical artifact).")
-        climb_throttle_used = climb_throttle_fallback
-        t_climb, d_climb, fuel_climb, mass_after_climb = fly_climb_or_descent(
-            aero, engine, wing_area_ft2, gross_mass_lbm,
-            alt_start_ft=0.0, alt_end_ft=cruise_altitude_ft,
-            mach_start=climb_mach_initial, mach_end=climb_mach_final,
-            throttle=climb_throttle_fallback, cl_margin=cl_margin, direction="climb",
-        )
+            unrecoverable = (e, climb_throttle)
+        else:
+            print(f"   [climb] military power (throttle={climb_throttle}) hit a real "
+                  f"thrust shortfall - {e}\n"
+                  f"   [climb] retrying the full climb at climb_throttle_fallback="
+                  f"{climb_throttle_fallback} (this WILL burn substantially more fuel "
+                  f"in climb - a real cost of needing more power to reach this cruise "
+                  f"altitude at this weight, not a numerical artifact).")
+            climb_throttle_used = climb_throttle_fallback
+            try:
+                t_climb, d_climb, fuel_climb, mass_after_climb = fly_climb_or_descent(
+                    aero, engine, wing_area_ft2, gross_mass_lbm,
+                    alt_start_ft=0.0, alt_end_ft=cruise_altitude_ft,
+                    mach_start=climb_mach_initial, mach_end=climb_mach_final,
+                    throttle=climb_throttle_fallback, cl_margin=cl_margin, direction="climb",
+                )
+            except ThrustMarginError as e2:
+                unrecoverable = (e2, climb_throttle_fallback)
+
+    if unrecoverable is not None:
+        # A real, final finding - not enough thrust to reach the requested
+        # cruise altitude at ANY throttle this function is willing to try -
+        # not something more retrying can fix. Reported as a normal
+        # "not feasible" result (with however far the climb DID get, so
+        # different configs can still be compared by how close they came)
+        # rather than as a crash, since this is an expected, meaningful
+        # outcome for a baseline-vs-RCS-shaped-config comparison: some
+        # configs are supposed to fail this check. Every OTHER failure
+        # mode in this module (a lift-margin shortfall, a cruise/descent
+        # shortfall, climb+descent alone exceeding the design range) still
+        # raises - only this specific, now-recovery-exhausted climb
+        # failure degrades to a return value.
+        exc, throttle_tried = unrecoverable
+        p = exc.partial or {"time_s": 0.0, "distance_nmi": 0.0, "fuel_lbm": 0.0,
+                             "mass_lbm": gross_mass_lbm, "altitude_ft": 0.0}
+        print(f"   [climb] MISSION NOT FEASIBLE: could not reach {cruise_altitude_ft:.0f} "
+              f"ft even at throttle={throttle_tried} - reached {p['altitude_ft']:.0f} ft "
+              f"before the climb-rate floor was violated with no more throttle to try.")
+        return {
+            "engine_deck_path": engine_deck_path,
+            "climb_completed": False,
+            "failure_phase": "climb",
+            "failure_reason": str(exc),
+            "climb_throttle_used": throttle_tried,
+            "target_cruise_altitude_ft": cruise_altitude_ft,
+            "achieved_altitude_ft": p["altitude_ft"],
+            "climb": {"time_s": p["time_s"], "distance_nmi": p["distance_nmi"], "fuel_lbm": p["fuel_lbm"]},
+            "cruise": None,
+            "descent": None,
+            "total_range_nmi": p["distance_nmi"],
+            "total_fuel_lbm": p["fuel_lbm"],
+            "gross_mass_lbm": gross_mass_lbm,
+            "final_mass_lbm": p["mass_lbm"],
+            "design_range_nmi": design_range_nmi,
+        }
 
     t_descent_est, d_descent_est, fuel_descent_est, _ = fly_climb_or_descent(
         aero, engine, wing_area_ft2, mass_after_climb * 0.97,  # rough pre-estimate for distance budgeting
@@ -666,6 +738,7 @@ def run_classical_mission(
 
     return {
         "engine_deck_path": engine_deck_path,
+        "climb_completed": True,
         "climb": {"time_s": t_climb, "distance_nmi": d_climb, "fuel_lbm": fuel_climb},
         "cruise": {"time_s": t_cruise, "distance_nmi": d_cruise, "fuel_lbm": fuel_cruise},
         "descent": {"time_s": t_descent, "distance_nmi": d_descent, "fuel_lbm": fuel_descent},
@@ -679,11 +752,32 @@ def run_classical_mission(
 
 
 def print_results(results, fuel_capacity_lbm):
-    range_margin = results["total_range_nmi"] - results["design_range_nmi"]
-    fuel_margin = fuel_capacity_lbm - results["total_fuel_lbm"]
     print("\n" + "=" * 62)
     print("CLASSICAL MISSION RESULTS (no optimizer - direct integration)")
     print("=" * 62)
+    if results.get("climb_completed") is False:
+        # Cruise/descent never ran - the climb itself couldn't reach the
+        # requested cruise altitude at any throttle tried. A real, final
+        # result (see run_classical_mission's climb_throttle_fallback
+        # docs), not a partial/broken run - reported in full so a
+        # baseline-vs-RCS-shaped-config comparison still has a number to
+        # compare (how far each config's climb actually got).
+        c = results["climb"]
+        print(f"  VERDICT: MISSION NOT FEASIBLE (could not complete the climb)")
+        print(f"  Climb throttle tried  : {results['climb_throttle_used']:.2f}")
+        print(f"  Target cruise altitude: {results['target_cruise_altitude_ft']:.0f} ft")
+        print(f"  Altitude achieved     : {results['achieved_altitude_ft']:.0f} ft")
+        print(f"  Distance covered      : {c['distance_nmi']:.1f} nmi (of "
+              f"{results['design_range_nmi']:.0f} nmi design range)")
+        print(f"  Time elapsed          : {c['time_s'] / 60.0:.1f} min")
+        print(f"  Fuel burned           : {c['fuel_lbm']:.1f} lbm")
+        print("-" * 62)
+        print(f"  Reason: {results['failure_reason']}")
+        print("=" * 62)
+        return
+
+    range_margin = results["total_range_nmi"] - results["design_range_nmi"]
+    fuel_margin = fuel_capacity_lbm - results["total_fuel_lbm"]
     if results.get("climb_throttle_used") is not None:
         print(f"  Climb throttle used   : {results['climb_throttle_used']:.2f} "
               f"{'(military power)' if results['climb_throttle_used'] <= 0.5 else '(FALLBACK - higher than military power, see [climb] notes above)'}")
