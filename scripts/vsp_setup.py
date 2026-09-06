@@ -44,7 +44,10 @@ ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 # PATH DEFINITIONS
 # =========================
 
-VSP_INSTALL = os.path.join(ROOT_DIR, "OpenVSP", "OpenVSP-3.49.0-win64")
+if sys.platform == "win32":
+    VSP_INSTALL = os.path.join(ROOT_DIR, "OpenVSP", "OpenVSP-3.49.0-win64")
+else:
+    VSP_INSTALL = "./OpenVSP"
 VSP_FILES   = os.path.join(ROOT_DIR, "VSP_Files")
 STP_FILES   = os.path.join(ROOT_DIR, "STP_Files")
 STL_FILES = os.path.join(ROOT_DIR, "STL_Files")
@@ -52,8 +55,13 @@ RESULTS_DIR  = os.path.join(ROOT_DIR, "Results",  "RCS")
 OPENRCS_DIR  = os.path.join(ROOT_DIR, "OpenRCS",  "open-rcs")
 AERO_RESULTS_DIR = os.path.join(ROOT_DIR, "Results", "Aero")
 STABILITY_DIR     = os.path.join(ROOT_DIR, "Results", "Stability")
-GENERATED_FILES   = os.path.join(ROOT_DIR, "Generated_Files")     # raw/working generated output (engine decks, etc.)
-VSPAERO_EXE = os.path.join(VSP_INSTALL, "vspaero.exe")
+AVIARY_FILES      = os.path.join(ROOT_DIR, "Aviary_Files")       # raw/working Aviary+OpenMDAO output (engine deck, native _out/reports/)
+AVIARY_PERF_DIR   = os.path.join(ROOT_DIR, "Results", "aviary_perf")  # our OWN plain-language mission summary lives directly here
+AVIARY_PERF_NATIVE_DIR = os.path.join(AVIARY_PERF_DIR, "native_aviary_files")  # curated copies of Aviary's OWN native reports
+                                                                                 # (mission_summary.md etc.) — kept in their own
+                                                                                 # subfolder so they're not mistaken for our
+                                                                                 # plain-language summary sitting one level up
+VSPAERO_EXE = os.path.join(VSP_INSTALL, "vspaero.exe" if sys.platform == "win32" else "vspaero")
 
 # Path to our bridge script (scripts/ folder, same folder as this file)
 RUN_OPENRCS_SCRIPT = os.path.join(ROOT_DIR, "scripts", "run_openrcs.py")
@@ -91,13 +99,20 @@ os.makedirs(STL_FILES,   exist_ok=True)
 os.makedirs(RESULTS_DIR, exist_ok=True)
 os.makedirs(AERO_RESULTS_DIR, exist_ok=True)
 os.makedirs(STABILITY_DIR, exist_ok=True)
-os.makedirs(GENERATED_FILES, exist_ok=True)
+os.makedirs(AVIARY_FILES, exist_ok=True)
+os.makedirs(AVIARY_PERF_DIR, exist_ok=True)
+os.makedirs(AVIARY_PERF_NATIVE_DIR, exist_ok=True)
 
 # =========================
 # OPENVSP INITIALIZATION
 # =========================
 
-os.add_dll_directory(VSP_INSTALL)
+if sys.platform == "win32":
+    os.add_dll_directory(VSP_INSTALL)
+else:
+    os.environ["LD_LIBRARY_PATH"] = (
+        VSP_INSTALL + os.pathsep + os.environ.get("LD_LIBRARY_PATH", "")
+    )
 
 OPENVSP_CONFIG = os.path.join(VSP_INSTALL, "python", "openvsp_config")
 OPENVSP_PYTHON = os.path.join(VSP_INSTALL, "python", "openvsp")
@@ -261,7 +276,12 @@ def dump_geom_params(vsp3_path: str, out_json_path: str) -> dict:
         entry["parms"] = {vsp.GetParmName(pid): vsp.GetParmVal(pid)
                            for pid in vsp.GetGeomParmIDs(gid)}
 
-        WING_SHAPE_PARMS = {"Sweep", "Sweep_Location", "Dihedral", "Twist", "Root_Chord", "Tip_Chord"}
+        # ThickChord added after the RCS sensitivity study needed t/c as a
+        # sweep parameter — it's a real per-XSec parm (confirmed present on
+        # every wing section, e.g. 0.04 uniformly across Main_Wing's three
+        # sections) that this whitelist had simply never included before.
+        WING_SHAPE_PARMS = {"Sweep", "Sweep_Location", "Dihedral", "Twist",
+                             "Root_Chord", "Tip_Chord", "ThickChord"}
         FUSELAGE_SHAPE_PARMS = {
             "Width", "Height", "MaxWidthLoc", "CornerRad",
             "TopLAngle", "TopLStrength", "TopRAngle", "TopRStrength",

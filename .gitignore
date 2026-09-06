@@ -58,3 +58,7 @@ RCS_Validation/**/facets.txt
 
 # ── dump parameter extraction files ───────────────────────────────────
 *.json
+
+# HPC
+logs/
+script.sh
