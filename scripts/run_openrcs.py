@@ -545,9 +545,11 @@ def run_openrcs_pipeline(
     delstd      : float = 0.0,
     rs          : int   = 0,
     az_range    : str   = "full",   # "full" (0-360) or "half" (0-180, symmetric aircraft)
-    delp        : float = 1.0,      # phi step, deg
+    delp        : float = 1.0,      # azimuth-cut phi step, deg — frontal has its own steps below
+    frontal_delp: float = 1.0,      # frontal-sector phi (azimuth-direction) step, deg
+    frontal_delt: float = 1.0,      # frontal-sector theta (elevation-direction) step, deg
 ) -> dict:
-    
+
     """
     End-to-end OpenRCS monostatic RCS pipeline.
 
@@ -560,6 +562,14 @@ def run_openrcs_pipeline(
     corr        : surface roughness correlation length m (0 = smooth PEC)
     delstd      : surface roughness std deviation m     (0 = smooth PEC)
     rs          : 0 = Perfect Electric Conductor
+    delp        : azimuth-cut (θ=90° sweep) phi step, degrees. Does NOT
+                  affect the frontal 2-D grid — that has its own
+                  frontal_delp/frontal_delt below.
+    frontal_delp: frontal-sector phi (azimuth-direction) step, degrees.
+    frontal_delt: frontal-sector theta (elevation-direction) step, degrees.
+                  Pass 5.0 to match Touzopoulos 2017's own resolution and
+                  cut the frontal run's point count by ~4.4x (31 theta
+                  rows -> 7).
 
     Returns
     -------
@@ -572,6 +582,7 @@ def run_openrcs_pipeline(
     print(f"  Frequency  : {freq} GHz    Polarisation: {pol}")
     print(f"  Cuts       : Azimuth θ=90°  |  Elevation φ=0°  |  Frontal 2-D")
     print(f"  Azimuth    : range={az_range}  delp={delp}°")
+    print(f"  Frontal    : delp={frontal_delp}°  delt={frontal_delt}°")
     print("=" * 60 + "\n")
 
     if not os.path.isfile(stl_path):
@@ -599,6 +610,7 @@ def run_openrcs_pipeline(
         "mean_table":  None,
         "fig_3d":      None,
         "results_dir": results_dir,
+        "means":       {},
     }
     
     try:
@@ -670,10 +682,12 @@ def run_openrcs_pipeline(
 
         # Frontal 2-D: az ±30° and el ±15° (theta 75°→105°).
         # Used only for mean frontal sector RCS — no plot generated.
-        # ip = (-30 to 30)/1 + 1 = 61,  it = (75 to 105)/1 + 1 = 31
+        # Step sizes are independent of the azimuth cut's delp — see
+        # frontal_delp/frontal_delt in this function's signature.
+        # ip = (-30 to 30)/frontal_delp + 1,  it = (75 to 105)/frontal_delt + 1
         params_fr = _make_params(
-            pstart=-30.0, pstop=30.0, delp=1.0,
-            tstart=75.0, tstop=105.0, delt=1.0,
+            pstart=-30.0, pstop=30.0, delp=frontal_delp,
+            tstart=75.0, tstop=105.0, delt=frontal_delt,
         )
 
         pol_upper  = pol.upper()
@@ -947,6 +961,7 @@ def run_openrcs_pipeline(
         # Frontal sector rows (FR_TE, FR_TM) use the 2-D grid
         # az ±30° / el ±15° — the most important stealth metric.
         mean_rows = []
+        means_by_tag = {}
         for tag, label in [
             ("AZ_TE", "Azimuth Cut  θ=90°           TE-z"),
             ("AZ_TM", "Azimuth Cut  θ=90°           TM-z"),
@@ -957,9 +972,17 @@ def run_openrcs_pipeline(
         ]:
             if tag in parsed and len(parsed[tag]["sth"]):
                 d = parsed[tag]
-                mean_rows.append((label, _mean_total(d["sth"], d["sph"])))
+                mean_val = _mean_total(d["sth"], d["sph"])
+                mean_rows.append((label, mean_val))
+                means_by_tag[tag] = mean_val
             else:
                 mean_rows.append((label, float("nan")))
+
+        # Numeric means, keyed by run tag (AZ_TE, FR_TM, ...) — callers that
+        # need the actual dBsm values (e.g. a sensitivity sweep plotting mean
+        # RCS vs. a shaping-parameter delta) would otherwise have to re-parse
+        # the .dat files themselves, duplicating _parse_dat/_mean_total.
+        out["means"] = means_by_tag
 
         if any(np.isfinite(v) for _, v in mean_rows):
             fname = f"MeanRCS_Table_{stem}_{ts}.png"
@@ -986,7 +1009,7 @@ def run_openrcs_pipeline(
         # ── summary ───────────────────────────────────────────────────────────
         print(f"\n  All results saved to: {results_dir}")
         for k, v in out.items():
-            if v and k != "results_dir":
+            if v and k not in ("results_dir", "means"):
                 print(f"    {k:<18}: {os.path.basename(v)}")
 
     finally:
