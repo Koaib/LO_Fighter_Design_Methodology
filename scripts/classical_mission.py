@@ -716,7 +716,7 @@ def run_classical_mission(
         engine_deck_path = custom_engine_deck_path
     else:
         engine_deck_path = build_deck(
-            out_dir=os.path.join(vsp_setup.GENERATED_FILES, "engines"),
+            out_dir=os.path.join(vsp_setup.AVIARY_FILES, "engines"),
             deck_name="classical_mission_f100_pw229_simplified.deck",
             t_sl_dry=engine_t_sl_dry_lbf, t_sl_ab=engine_t_sl_ab_lbf,
             throttle_ratio=engine_throttle_ratio, engine_type=engine_type,
@@ -909,4 +909,9 @@ if __name__ == "__main__":
         altitude_list=[0.0, 15000.0, 35000.0],
         num_engines=2,
     )
-    print_results(results, fuel_capacity_lbm=24590.81)
+    # 18064.672003 lbm: F22_FUEL_MASS_LBM/F22_WING_AREA_FT2 * wing_area_ft2
+    # above (same F-22A wing-loading scaling main.py's GROSS_MASS_LBM/
+    # FUEL_CAPACITY_LBM use) - matches main.py's own FUEL_CAPACITY_LBM and
+    # Raymer_sizing_based_mission_check.py's smoke test exactly; replaces
+    # a prior 24590.81 placeholder of unestablished provenance.
+    print_results(results, fuel_capacity_lbm=18064.672003)
