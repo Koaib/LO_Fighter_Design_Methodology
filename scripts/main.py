@@ -531,61 +531,44 @@ if RUN_VSPAERO:
     print(f"   ✅ CD0/K summary: {summary_path}")
       
         
-# # ── OVERLAY PLOTS — all Mach points on same axes, one per metric ────────
-
-# # L/D vs Alpha
-# fig, ax = plt.subplots(figsize=(7, 5))
-# for M, polar_dst, CD0, K, r2 in mach_results:
-#     df = pd.read_csv(polar_dst.replace(".polar", ".csv"))
-#     if df["CL"].isna().all():
-#         print(f"   Skipping M={M:.2f} in L/D overlay — all-NaN (diverged)")
-#         continue
-#     ax.plot(df["Alpha"], df["L/D"], "-o", ms=4, label=f"M={M:.2f}")
-# ax.set_xlabel("Alpha (deg)")
-# ax.set_ylabel("L/D")
-# ax.set_title(f"L/D vs Alpha — {geom_stem}, Mach comparison")
-# ax.legend()
-# ax.grid(True, ls="--", alpha=0.6)
-# fig.tight_layout()
-# fig.savefig(os.path.join(vsp_setup.AERO_RESULTS_DIR, f"ld_alpha_overlay_{geom_stem}.png"), dpi=150)
-# plt.close(fig)
-# print(f"   ✅ L/D overlay saved for {geom_stem}")
-
-# # CL vs Alpha
-# fig, ax = plt.subplots(figsize=(7, 5))
-# for M, polar_dst, CD0, K, r2 in mach_results:
-#     df = pd.read_csv(polar_dst.replace(".polar", ".csv"))
-#     if df["CL"].isna().all():
-#         print(f"   Skipping M={M:.2f} in CL-alpha overlay — all-NaN (diverged)")
-#         continue
-#     ax.plot(df["Alpha"], df["CL"], "-o", ms=4, label=f"M={M:.2f}")
-# ax.set_xlabel("Alpha (deg)")
-# ax.set_ylabel("CL")
-# ax.set_title(f"CL vs Alpha — {geom_stem}, Mach comparison")
-# ax.legend()
-# ax.grid(True, ls="--", alpha=0.6)
-# fig.tight_layout()
-# fig.savefig(os.path.join(vsp_setup.AERO_RESULTS_DIR, f"cl_alpha_overlay_{geom_stem}.png"), dpi=150)
-# plt.close(fig)
-# print(f"   ✅ CL-alpha overlay saved for {geom_stem}")
-
-# # CL vs CD (drag polar)
-# fig, ax = plt.subplots(figsize=(7, 5))
-# for M, polar_dst, CD0, K, r2 in mach_results:
-#     df = pd.read_csv(polar_dst.replace(".polar", ".csv"))
-#     if df["CL"].isna().all():
-#         print(f"   Skipping M={M:.2f} in drag-polar overlay — all-NaN (diverged)")
-#         continue
-#     ax.plot(df["CDtot"], df["CL"], "-o", ms=4, label=f"M={M:.2f}")
-# ax.set_xlabel("CD")
-# ax.set_ylabel("CL")
-# ax.set_title(f"Drag Polar — {geom_stem}, Mach comparison")
-# ax.legend()
-# ax.grid(True, ls="--", alpha=0.6)
-# fig.tight_layout()
-# fig.savefig(os.path.join(vsp_setup.AERO_RESULTS_DIR, f"drag_polar_overlay_{geom_stem}.png"), dpi=150)
-# plt.close(fig)
-# print(f"   ✅ Drag polar overlay saved for {geom_stem}")
+# ── OVERLAY PLOTS — faceted by altitude (one panel per altitude, Mach
+# curves within each panel), only if the sweep actually produced anything
+# to plot (mach_results stays [] when RUN_VSPAERO=False and no prior sweep
+# ran, per that toggle's own comment above). A single 9-line plot (3 Mach
+# x 3 Altitude) was the original approach here, but mach_results grew a
+# second axis (Altitude) after this was first written and the old code
+# never accounted for it - faceting by altitude keeps each panel to 3
+# legible Mach curves, and leaves room to add a baseline-vs-shaped-config
+# comparison later without overloading a single plot's color channel.
+if mach_results:
+    altitudes_sorted = sorted({alt for _, alt, *_ in mach_results})
+    for metric_name, x_col, y_col, x_label, y_label, title in [
+        ("ld_alpha",   "Alpha", "L/D", "Alpha (deg)", "L/D", "L/D vs Alpha"),
+        ("cl_alpha",   "Alpha", "CL",  "Alpha (deg)", "CL",  "CL vs Alpha"),
+        ("drag_polar", "CDtot", "CL",  "CD",          "CL",  "Drag Polar"),
+    ]:
+        fig, axes = plt.subplots(1, len(altitudes_sorted), figsize=(5 * len(altitudes_sorted), 5), sharey=True)
+        if len(altitudes_sorted) == 1:
+            axes = [axes]
+        for ax, ALT in zip(axes, altitudes_sorted):
+            for M, alt_pt, polar_dst, CD0, K, r2 in mach_results:
+                if alt_pt != ALT:
+                    continue
+                df = pd.read_csv(polar_dst.replace(".polar", ".csv"))
+                if df[y_col].isna().all():
+                    print(f"   Skipping M={M:.2f}, {int(ALT)}ft in {title} overlay — all-NaN (diverged)")
+                    continue
+                ax.plot(df[x_col], df[y_col], "-o", ms=4, label=f"M={M:.2f}")
+            ax.set_xlabel(x_label)
+            ax.set_title(f"{int(ALT)} ft")
+            ax.legend()
+            ax.grid(True, ls="--", alpha=0.6)
+        axes[0].set_ylabel(y_label)
+        fig.suptitle(f"{title} — {geom_stem}")
+        fig.tight_layout()
+        fig.savefig(os.path.join(vsp_setup.AERO_RESULTS_DIR, f"{metric_name}_overlay_{geom_stem}.png"), dpi=150)
+        plt.close(fig)
+        print(f"   ✅ {title} overlay saved for {geom_stem}")
 
 # ── STABILITY ────────────────────────────────────────────────────────
 # CL_TARGET is computed PER (Mach, Altitude) point rather than one fixed
