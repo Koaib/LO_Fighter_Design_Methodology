@@ -44,19 +44,20 @@ FOLDER LAYOUT (mirrors RCS's Results/RCS_SensitivityStudy/ layout):
     Results/AeroStabMissionStudy/
         _logs/<tag>.log                  one log per config, incl. baseline
         _baseline/manifest/baseline.json the one shared Delta=0 run
+        _baseline/aero/                  its own raw VSPAero .polar/.csv/3 PNGs
         <study_name>/manifest/<tag>.json one manifest per non-zero-delta config, per study
+        <study_name>/aero/               that study's own raw VSPAero .polar/.csv/3 PNGs x 9 points x N deltas
         Comparisons/*.png                 combined plots, built by compare_family.py
         summary_aero_stab_mission.csv     combined summary, built by compare_family.py
-One real asymmetry vs. RCS worth knowing: RCS's worker controls exactly
-where its own STL/`.dat` outputs land (results_root passed all the way
-down), so those are ALSO per-study/per-baseline. This study's raw
-VSPAero CSV/.polar files are instead written by vsp_setup.
-run_vspaero_aero() straight into the single project-wide Results/Aero/
-folder - the same shared location main.py's own runs and the separate
-aero-only sweep_worker.py already use - since that function has no
-per-caller output-directory argument to redirect. Each file is still
-uniquely identifiable (run_name embeds the full tag), just not
-folder-isolated the way the manifests/logs above are.
+The raw VSPAero output is isolated per study/baseline too now (not just
+manifests/logs): aero_stab_mission_worker.py passes vsp_setup.
+run_vspaero_aero()'s new output_dir=<this config's own aero/ folder>
+(a sibling of its manifest_dir), and Raymer_sizing_based_mission_
+check.py's run_raymer_mission_check() takes a matching aero_search_dir
+so its AeroLookup still finds those files afterward - both default to
+None, preserving the original shared Results/Aero/ behavior exactly
+for every caller that doesn't pass them (main.py, the separate aero-
+only sweep_worker.py).
 """
 import subprocess, json, sys
 from pathlib import Path

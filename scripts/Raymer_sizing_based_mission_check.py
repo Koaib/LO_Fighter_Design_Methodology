@@ -163,8 +163,8 @@ class AeroLookup:
     project's own VSPAero sweep via build_aero_polar.py - the same
     source classical_mission.py uses, wrapped independently here."""
 
-    def __init__(self, geom_stem, expected_machs=None, expected_altitudes=None):
-        arrays = build_polar_arrays(geom_stem, expected_machs, expected_altitudes)
+    def __init__(self, geom_stem, expected_machs=None, expected_altitudes=None, search_dir=None):
+        arrays = build_polar_arrays(geom_stem, expected_machs, expected_altitudes, search_dir)
         lift_grid, drag_grid = reshape_to_grid(arrays)
         alt_vals = np.sort(np.unique(np.round(arrays["altitude"], 3)))
         mach_vals = np.sort(np.unique(np.round(arrays["mach"], 3)))
@@ -489,6 +489,7 @@ def run_raymer_mission_check(
     start_taxi_takeoff_fraction=0.97, landing_fraction=0.995,
     descent_fuel_fraction=0.99, descent_angle_deg=3.0,
     reserve_trapped_fuel_factor=1.06,
+    aero_search_dir=None,
 ):
     """Runs the climb-cruise-descent mission via Raymer Ch 19's refined
     mission-segment method and checks it against this aircraft's KNOWN
@@ -527,8 +528,16 @@ def run_raymer_mission_check(
     distance alone exceeding the design range) still raises."""
     climb_mach_final = climb_mach_final if climb_mach_final is not None else cruise_mach
 
+    # aero_search_dir: None (default) makes AeroLookup search
+    # vsp_setup.AERO_RESULTS_DIR (Results/Aero/) exactly as before - the
+    # shared location main.py's own single-geometry runs use. Pass an
+    # explicit directory when geom_stem's own aero CSVs were written
+    # somewhere else (e.g. aero_stab_mission_worker.py redirects each
+    # config's run_vspaero_aero() output to its own per-study aero/
+    # subfolder via output_dir - see that file).
     aero = AeroLookup(geom_stem, expected_machs=set(mach_list) if mach_list else None,
-                       expected_altitudes=set(altitude_list) if altitude_list else None)
+                       expected_altitudes=set(altitude_list) if altitude_list else None,
+                       search_dir=aero_search_dir)
 
     if custom_engine_deck_path:
         engine_deck_path = custom_engine_deck_path

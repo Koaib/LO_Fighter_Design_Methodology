@@ -72,8 +72,17 @@ def main():
     tag = cfg["tag"]
     os.makedirs(cfg["manifest_dir"], exist_ok=True)
     manifest_path = os.path.join(cfg["manifest_dir"], f"{tag}.json")
+    # Sibling of manifest/, under this config's own study (or _baseline)
+    # root - e.g. .../VT_Cant/manifest -> .../VT_Cant/aero. Passed to
+    # both run_vspaero_aero() (so the raw .polar/.csv/3 PNGs land here
+    # instead of the shared, project-wide Results/Aero/ used by main.py's
+    # own runs) and run_raymer_mission_check()'s aero_search_dir (so the
+    # mission check's AeroLookup actually finds them again afterward -
+    # without threading this through too, the write-side redirect alone
+    # would make every config's mission check fail with FileNotFoundError).
+    aero_dir = os.path.join(os.path.dirname(cfg["manifest_dir"]), "aero")
     entry = {"tag": tag, "study": cfg["study"], "delta": cfg["delta"],
-              "parm_overrides": cfg["parm_overrides"], "status": "running"}
+              "parm_overrides": cfg["parm_overrides"], "aero_dir": aero_dir, "status": "running"}
 
     # Checkpoint/resume: the aero grid below is 9 VSPAero calls, the
     # expensive part of this whole config - a crash on point 7 of 9
@@ -152,6 +161,7 @@ def main():
                     thin_geom_set=thin_set, thick_geom_set=thick_set_this_run,
                     ref_mode="auto", x_cg=cfg["x_cg"], y_cg=cfg["y_cg"], z_cg=cfg["z_cg"],
                     run_name=f"{tag}_M{M:.2f}_ALT{int(ALT)}",
+                    output_dir=aero_dir,
                 )
                 if polar_dst is None:
                     entry["aero_points"] = aero_points
@@ -198,7 +208,9 @@ def main():
         # ── MISSION: real Raymer Ch 19 feasibility check on THIS config's
         # own aero data (geom_stem=tag -> AeroLookup finds exactly the 9
         # files just written above, nothing from the baseline run or any
-        # other config).
+        # other config - aero_search_dir=aero_dir points it at THIS
+        # config's own per-study aero/ folder, matching where the loop
+        # above actually wrote them).
         import Raymer_sizing_based_mission_check as raymer
         mission_results = raymer.run_raymer_mission_check(
             geom_stem=tag, wing_area_ft2=wing_area_ft2,
@@ -210,6 +222,7 @@ def main():
             engine_t_sl_dry_lbf=cfg["engine_t_sl_dry_lbf"], engine_t_sl_ab_lbf=cfg["engine_t_sl_ab_lbf"],
             engine_throttle_ratio=cfg["engine_throttle_ratio"], engine_type=cfg["engine_type"],
             num_engines=cfg["num_engines"],
+            aero_search_dir=aero_dir,
         )
         entry["mission_results"] = mission_results
 

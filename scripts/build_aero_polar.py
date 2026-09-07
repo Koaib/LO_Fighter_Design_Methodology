@@ -23,8 +23,9 @@ import pandas as pd
 import vsp_setup  # reuse existing path setup
 
 
-def build_polar_arrays(geom_stem, expected_machs=None, expected_altitudes=None):
-    pattern = os.path.join(vsp_setup.AERO_RESULTS_DIR, f"aero_{geom_stem}_M*.csv")
+def build_polar_arrays(geom_stem, expected_machs=None, expected_altitudes=None, search_dir=None):
+    search_dir = search_dir if search_dir is not None else vsp_setup.AERO_RESULTS_DIR
+    pattern = os.path.join(search_dir, f"aero_{geom_stem}_M*.csv")
     all_files = glob.glob(pattern)
     if not all_files:
         raise FileNotFoundError(f"No aero CSVs found matching {pattern}. Run main.py first.")
