@@ -131,6 +131,12 @@ os.makedirs(GEOMETRY_DIR, exist_ok=True)
 
 SETS_FILE = os.path.join(GEOMETRY_DIR, os.path.splitext(IMPORT_FILE)[0] + "_sets.json")
 
+# wing_id is only actually resolved below in the "import_vsp3" branch
+# (REF_MODE="auto") - initialized here so the ENGINE & MISSION CONFIG
+# section further down can safely check "if wing_id is not None" no
+# matter which INPUT_MODE/REF_MODE ran, instead of a NameError.
+wing_id = None
+
 # =========================
 # BRANCH ON INPUT MODE
 # =========================
@@ -303,16 +309,33 @@ Z_CG = 0.0      # m
 # vehicle" length, which is a different, unverified-against-this-project
 # number — see pipeline_config.py's IMPORT_FILE note) — NOT a scaled-down
 # F-16C value (see mass basis note below for why that distinction
-# matters). Read directly off the actual .vsp3 (TotalArea/TotalSpan/
-# TotalAR parms) and unit-converted:
-# TotalArea=78.319 m^2 -> 843.018 ft^2, TotalSpan=13.5565 m -> 44.477 ft,
-# TotalAR=2.3465 (dimensionless, low-AR delta planform per Giannelis,
-# Bykerk & Vio, Aerospace 2023, 10, 746 — the SSAM-Gen5 source paper).
-TEST_WING_AREA_FT2     = 843.018026816014
-TEST_WING_SPAN_FT      = 44.47670603674372
-TEST_WING_ASPECT_RATIO = 2.346542205448008
-TEST_WING_HAS_STRUT    = False
-TEST_WING_HAS_FOLD     = False
+# matters).
+#
+# Read LIVE off wing_id (vsp_setup.get_wing_reference_params(), the same
+# WingGeom-group parm read run_vspaero_aero() already uses for
+# TotalChord) whenever a real wing was resolved above - so this can never
+# silently disagree with whatever geometry main.py actually just loaded,
+# the way a hand-copied literal could (and did: this used to be a frozen
+# snapshot read once off the .vsp3 and pasted in here, the exact failure
+# mode that made FUEL_CAPACITY_LBM's old placeholder impossible to trust).
+# Only falls back to the last-known snapshot below when no live wing is
+# available this run (REF_MODE="manual", or an INPUT_MODE with no wing).
+if wing_id is not None:
+    TEST_WING_AREA_FT2, TEST_WING_SPAN_FT, TEST_WING_ASPECT_RATIO = \
+        vsp_setup.get_wing_reference_params(wing_id)
+    print(f"   Wing reference read live from model: area={TEST_WING_AREA_FT2:.3f} ft^2, "
+          f"span={TEST_WING_SPAN_FT:.3f} ft, AR={TEST_WING_ASPECT_RATIO:.4f}")
+else:
+    # Fallback snapshot only - last read directly off
+    # SSAM_final_geom_to_be_used_scaled_by_19_simplified.vsp3's Main_Wing
+    # (TotalArea=78.319 m^2 -> 843.018 ft^2, TotalSpan=13.5565 m ->
+    # 44.477 ft, TotalAR=2.3465 - low-AR delta planform per Giannelis,
+    # Bykerk & Vio, Aerospace 2023, 10, 746, the SSAM-Gen5 source paper).
+    print("   ⚠️  No wing_id resolved this run (REF_MODE='manual' or a "
+          "wing-less INPUT_MODE) - using last-known wing reference snapshot.")
+    TEST_WING_AREA_FT2     = 843.018026816014
+    TEST_WING_SPAN_FT      = 44.47670603674372
+    TEST_WING_ASPECT_RATIO = 2.346542205448008
 
 # ── Mass basis ───────────────────────────────────────────────────────────
 # Real F-22A Raptor published reference specs, used ONLY as a wing-loading
@@ -322,8 +345,9 @@ TEST_WING_HAS_FOLD     = False
 # full-scale geometry.
 #
 # Switched from F-16C to F-22A (was F16C_* before). Two reasons: (1) this
-# geometry's own wing area (TEST_WING_AREA_FT2 = 843.02 ft^2) is almost
-# exactly the real F-22A's (840 ft^2, 78.04 m^2) — scaling the F-22's
+# geometry's own wing area (MASS_BASIS_REFERENCE_WING_AREA_FT2 = 843.02
+# ft^2, see below) is almost exactly the real F-22A's (840 ft^2, 78.04
+# m^2) — scaling the F-22's
 # wing loading onto this geometry is ~1.004x, vs. ~2.81x scaling up from
 # the F-16C's much smaller 300 ft^2 wing, so far less of the resulting
 # mass is an artifact of the scale-up itself; (2) this project's source
@@ -341,33 +365,56 @@ F22_GROSS_MASS_LBM = 83500.0   # published F-22A max takeoff weight
 F22_FUEL_MASS_LBM  = 18000.0   # published F-22A internal fuel capacity
 F22_WING_AREA_FT2  = 840.0     # published F-22A wing area
 
+# MASS_BASIS_REFERENCE_WING_AREA_FT2: intentionally PINNED, NOT the same
+# thing as the live TEST_WING_AREA_FT2 above. TEST_WING_AREA_FT2 now
+# tracks whatever geometry main.py actually loads this run (see above) -
+# correct for the aero sweep and Stability's CL_TARGET, which MUST always
+# reflect the real current planform (CL = W/(q*S) is a real physical
+# relationship - q*S has to be this run's actual S).
+#
+# But this project's real comparison is baseline vs. RCS-shaped variant -
+# the SAME aircraft's structure/systems/fuel/payload, with only the
+# external mold-line (and therefore drag/RCS, not mass) changed. If
+# GROSS_MASS_LBM/FUEL_CAPACITY_LBM below scaled off the LIVE
+# TEST_WING_AREA_FT2 instead, a shaping-only planform-area change (edge
+# alignment, a faceted wingtip, etc.) would silently shift the assumed
+# aircraft WEIGHT too between the two runs being compared - an
+# uncontrolled variable in exactly the comparison this project exists to
+# make, and a coupling Stability's own CL = W/(q*S) never assumes either
+# (there, S is free to be whatever the current geometry is, but nothing
+# forces W to move with it). Pinning mass basis to one frozen reference
+# area - the baseline geometry's own, captured once below - keeps it
+# identical across every shape variant tested.
+MASS_BASIS_REFERENCE_WING_AREA_FT2 = 843.018026816014   # baseline geometry's own wing area (frozen, not live)
+
 # GROSS_MASS_LBM: this geometry's own placeholder gross mass, derived by
-# scaling the F-22A's wing loading (W/S) onto TEST_WING_AREA_FT2 - the
-# single source of truth both the Stability section below and the
-# Mission step (Raymer_sizing_based_mission_check.py) use, so they can
-# never silently disagree the way two separately-computed copies could.
-GROSS_MASS_LBM = (F22_GROSS_MASS_LBM / F22_WING_AREA_FT2) * TEST_WING_AREA_FT2
+# scaling the F-22A's wing loading (W/S) onto MASS_BASIS_REFERENCE_
+# WING_AREA_FT2 - the single source of truth both the Stability section
+# below and the Mission step (Raymer_sizing_based_mission_check.py) use,
+# so they can never silently disagree the way two separately-computed
+# copies could.
+GROSS_MASS_LBM = (F22_GROSS_MASS_LBM / F22_WING_AREA_FT2) * MASS_BASIS_REFERENCE_WING_AREA_FT2
 
 # FUEL_CAPACITY_LBM: this aircraft's internal fuel tank capacity, scaled
-# from the F-22A the SAME way GROSS_MASS_LBM is above - the W/S scaling
-# logic is still live in the formula below, not a one-off number computed
-# by hand and pasted in: F22_FUEL_MASS_LBM/F22_WING_AREA_FT2 (F-22A fuel
-# loading, lbm per ft^2 of wing) times this geometry's own
-# TEST_WING_AREA_FT2, exactly mirroring GROSS_MASS_LBM's own line above
-# with F22_FUEL_MASS_LBM in place of F22_GROSS_MASS_LBM. This stays
-# correct automatically if TEST_WING_AREA_FT2 or the F-22 reference
-# constants above ever change - it is algebraically identical to scaling
-# GROSS_MASS_LBM directly by the F-22's own fuel fraction
-# (F22_FUEL_MASS_LBM/F22_GROSS_MASS_LBM = 21.6%): both routes give the
-# exact same 18,064.67 lbm to full floating-point precision, preserving
-# the real F-22A's fuel-to-weight ratio on this airframe.
+# from the F-22A the SAME way GROSS_MASS_LBM is above (same pinned
+# MASS_BASIS_REFERENCE_WING_AREA_FT2, not the live TEST_WING_AREA_FT2) -
+# the W/S scaling logic is still live in the formula below, not a one-off
+# number computed by hand and pasted in: F22_FUEL_MASS_LBM/
+# F22_WING_AREA_FT2 (F-22A fuel loading, lbm per ft^2 of wing) times the
+# pinned reference area, exactly mirroring GROSS_MASS_LBM's own line
+# above with F22_FUEL_MASS_LBM in place of F22_GROSS_MASS_LBM. This is
+# algebraically identical to scaling GROSS_MASS_LBM directly by the
+# F-22's own fuel fraction (F22_FUEL_MASS_LBM/F22_GROSS_MASS_LBM =
+# 21.6%): both routes give the exact same 18,064.67 lbm to full
+# floating-point precision, preserving the real F-22A's fuel-to-weight
+# ratio on this airframe.
 #
 # Replaces a previous flat placeholder (24,590.81 lbm) whose provenance
 # was never established - that number predated this config section, was
 # not derived from any of the constants above, and implied a ~29.3% fuel
 # fraction of GROSS_MASS_LBM versus the F-22's own ~21.6%, with no cited
 # source for the difference.
-FUEL_CAPACITY_LBM = (F22_FUEL_MASS_LBM / F22_WING_AREA_FT2) * TEST_WING_AREA_FT2
+FUEL_CAPACITY_LBM = (F22_FUEL_MASS_LBM / F22_WING_AREA_FT2) * MASS_BASIS_REFERENCE_WING_AREA_FT2
 
 # ── Engine specs (simplified F100-PW-229-class deck — NOT real engine test
 # data, see scripts/build_engine_deck.py) ───────────────────────────────────

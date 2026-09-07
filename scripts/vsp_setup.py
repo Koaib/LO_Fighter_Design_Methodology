@@ -420,6 +420,26 @@ def isa_atmosphere(alt_ft):
     a_sound = (GAMMA * R_AIR * T) ** 0.5
     return T, RHO, MU, a_sound
 
+
+def get_wing_reference_params(wing_id):
+    """Reads TotalArea/TotalSpan/TotalAR straight off wing_id's own
+    "WingGeom" parm group - the model's actual current planform, not a
+    hand-copied snapshot from a previous run. Same container name/pattern
+    run_vspaero_aero() below already uses for "TotalChord" (its auto-Re
+    calculation), just two more sibling parms in that same group.
+
+    Model length unit is assumed to be meters, this project's convention
+    throughout (see main.py's X_CG note) - returns (area_ft2, span_ft,
+    aspect_ratio_dimensionless)."""
+    import openvsp as vsp
+    area_m2 = vsp.GetParmVal(wing_id, "TotalArea", "WingGeom")
+    span_m  = vsp.GetParmVal(wing_id, "TotalSpan", "WingGeom")
+    ar      = vsp.GetParmVal(wing_id, "TotalAR",   "WingGeom")
+    area_ft2 = area_m2 / (0.3048 ** 2)
+    span_ft  = span_m / 0.3048
+    return area_ft2, span_ft, ar
+
+
 def run_vspaero_aero(
     wing_id,
     altitude_ft    = 0.0,   # NEW — drives Re calc via ISA atmosphere
