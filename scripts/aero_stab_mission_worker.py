@@ -75,6 +75,31 @@ def main():
     entry = {"tag": tag, "study": cfg["study"], "delta": cfg["delta"],
               "parm_overrides": cfg["parm_overrides"], "status": "running"}
 
+    # Checkpoint/resume: the aero grid below is 9 VSPAero calls, the
+    # expensive part of this whole config - a crash on point 7 of 9
+    # shouldn't force points 1-6 to be redone. If a manifest already
+    # exists for this tag (status "running" or "error" from a prior
+    # crashed attempt - a "done" one would already have been skipped by
+    # the driver before this process was even spawned), reuse whatever
+    # aero points it already recorded instead of re-running VSPAero for
+    # them. Unlike rcs_sweep_worker.py's own checkpointing (which keys
+    # off whether each stage's OUTPUT FILE already exists on disk, so it
+    # survives the driver deleting the manifest before a retry), this
+    # keys off the manifest itself - simpler to reason about, but it
+    # ONLY works if aero_stab_mission_driver.py's retry path leaves the
+    # manifest in place (it does - see that file's run_one()).
+    already_done_points = {}
+    if os.path.exists(manifest_path):
+        try:
+            with open(manifest_path) as f:
+                prior = json.load(f)
+            for pt in prior.get("aero_points", []):
+                already_done_points[(pt["mach"], pt["alt_ft"])] = pt
+        except (json.JSONDecodeError, KeyError):
+            pass   # corrupt/partial write from a crash mid-_write() - just start over
+        if already_done_points:
+            print(f"Resuming {tag}: {len(already_done_points)} aero point(s) already done")
+
     try:
         vsp.VSPCheckSetup()
         vsp.ClearVSPModel()
@@ -105,10 +130,19 @@ def main():
         # ── AERO: full Mach x Altitude grid, same run_name convention
         # main.py's own TRIGGER AERO PIPELINE uses, so build_polar_arrays/
         # AeroLookup can find all 9 points later using this config's tag
-        # as if it were a geom_stem.
+        # as if it were a geom_stem. Points already recorded by a prior
+        # crashed attempt (already_done_points, built above) are reused
+        # as-is rather than re-run; the manifest is written after EVERY
+        # new point (not just at the end) so a crash here never loses
+        # more than the one point in progress.
         aero_points = []
         for ALT in cfg["altitude_list"]:
             for M in cfg["mach_list"]:
+                prior_pt = already_done_points.get((M, ALT))
+                if prior_pt is not None:
+                    aero_points.append(prior_pt)
+                    continue
+
                 thick_set_this_run = thick_set if M < 1.0 else vsp.SET_NONE
                 polar_dst, CD0, K, r2 = vsp_setup.run_vspaero_aero(
                     wing_id=wing_id, altitude_ft=ALT,
@@ -120,6 +154,7 @@ def main():
                     run_name=f"{tag}_M{M:.2f}_ALT{int(ALT)}",
                 )
                 if polar_dst is None:
+                    entry["aero_points"] = aero_points
                     entry["status"] = "aero_failed"
                     entry["note"] = f"VSPAero failed at M={M}, ALT={ALT} ft"
                     _write(manifest_path, entry); return
@@ -127,6 +162,7 @@ def main():
                 aero_csv = polar_dst.replace(".polar", ".csv")
                 df_check = pd.read_csv(aero_csv)
                 if (df_check["CDtot"] < 0).any():
+                    entry["aero_points"] = aero_points
                     entry["status"] = "aero_diverged"
                     entry["note"] = f"Negative CDtot at M={M}, ALT={ALT} ft - wake iteration did not converge"
                     _write(manifest_path, entry); return
@@ -136,6 +172,8 @@ def main():
                     "mach": M, "alt_ft": ALT, "csv": aero_csv,
                     "CD0": CD0, "K": K, "R2": r2, "LD_max_theoretical": ld_max_theoretical,
                 })
+                entry["aero_points"] = aero_points
+                _write(manifest_path, entry)   # checkpoint - survives a crash on the NEXT point
         entry["aero_points"] = aero_points
 
         # ── STABILITY: static margin at each of the same 9 points -

@@ -110,7 +110,6 @@ BASE = dict(
     cruise_mach=CRUISE_MACH, cruise_altitude_ft=CRUISE_ALTITUDE_FT,
     design_range_nmi=DESIGN_RANGE_NMI,
     manifest_dir=str(RESULTS_ROOT / "manifest"),
-    results_dir=str(RESULTS_ROOT),
 )
 
 
@@ -169,7 +168,15 @@ def run_one(cfg, retry=True):
 
     if status in ("aero_failed", "aero_diverged", "error") and retry:
         print(f"RETRYING ({status}) — {cfg['tag']}")
-        manifest_file.unlink(missing_ok=True)
+        # Deliberately NOT unlinking the manifest here (unlike
+        # rcs_sweep_driver.py's own retry, whose worker checkpoints via
+        # per-stage output files on disk and so doesn't need the manifest
+        # to survive). aero_stab_mission_worker.py's checkpointing keys
+        # off THIS manifest's own "aero_points" list - deleting it before
+        # the retry would throw away every already-completed aero point
+        # (up to 9 VSPAero calls) and force a full redo. Leaving it in
+        # place lets the retried worker resume from whichever point it
+        # crashed/diverged on.
         return run_one(cfg, retry=False)   # one retry only, no infinite loop
 
     if crashed:

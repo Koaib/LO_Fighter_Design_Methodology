@@ -55,8 +55,17 @@ def build_summary_rows(entries, cruise_mach, cruise_altitude_ft):
         aero_pt = _point_at(e.get("aero_points", []), cruise_mach, cruise_altitude_ft)
         stab_pt = _point_at(e.get("stability_points", []), cruise_mach, cruise_altitude_ft)
         mr = e.get("mission_results", {})
+        # Absolute applied value of the PRIMARY swept parameter (index 4
+        # of its override tuple = spec["baseline"] + delta - see
+        # aero_stab_mission_driver.py's _override()/build_study_configs()).
+        # Unlike the RCS side's baseline entries, delta=0.0 configs here
+        # always carry a real (non-empty) parm_overrides list, so no
+        # back-derivation special-case is needed.
+        overrides = e.get("parm_overrides") or []
+        absolute_value = overrides[0][4] if overrides else None
         rows.append({
             "study": e["study"], "delta": e["delta"], "tag": e["tag"],
+            "absolute_value": absolute_value,
             "wing_area_ft2": e.get("wing_area_ft2"), "wing_aspect_ratio": e.get("wing_aspect_ratio"),
             "CD0_cruise": aero_pt["CD0"] if aero_pt else None,
             "K_cruise": aero_pt["K"] if aero_pt else None,
@@ -96,6 +105,22 @@ def plot_metric_by_study(df, metric, ylabel, out_path):
         ax.set_xlabel("delta")
         ax.set_title(study)
         ax.grid(True, ls="--", alpha=0.6)
+
+        # Secondary top axis: the ABSOLUTE applied value of this study's
+        # primary swept parameter, not just its delta - e.g. thickness/
+        # chord deltas of +-0.01/0.02 around an unstated 0.04 baseline
+        # should also read as 0.02-0.06 somewhere on the plot. Exact
+        # affine relationship within one study (absolute_value =
+        # spec_baseline + delta, see build_study_configs()' _override()),
+        # so any single row recovers spec_baseline exactly - no fit needed.
+        abs_sub = sub[sub["absolute_value"].notna()]
+        if not abs_sub.empty:
+            spec_baseline = float(abs_sub["absolute_value"].iloc[0] - abs_sub["delta"].iloc[0])
+            ax_top = ax.secondary_xaxis(
+                "top",
+                functions=(lambda x, b=spec_baseline: x + b, lambda x, b=spec_baseline: x - b),
+            )
+            ax_top.set_xlabel("absolute value", fontsize=9)
     axes[0].set_ylabel(ylabel)
     fig.suptitle(f"{ylabel} vs. shaping delta, by study")
     fig.tight_layout()

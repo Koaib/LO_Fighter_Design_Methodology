@@ -98,6 +98,45 @@ def _delta_from_tag(tag, study_name):
     return float(tag[len(study_name) + 1:])
 
 
+def _add_absolute_values(rows):
+    """
+    rows: [(delta, entry), ...] as returned by load_family().
+    Returns (rows3, spec_baseline):
+      rows3         : [(delta, entry, absolute_value), ...]
+      spec_baseline : SWEEP_PARAMS[param_key]["baseline"] for this study's
+                      PRIMARY swept parameter, or None if no row in this
+                      family has a non-empty parm_overrides yet to derive
+                      it from (e.g. only the shared Δ=0 baseline has
+                      finished so far).
+
+    absolute_value is parm_overrides[0][4] directly - the actual applied
+    value of the primary parameter, i.e. spec["baseline"] + delta (see
+    _override() in rcs_sweep_driver.py). The shared baseline entry stores
+    parm_overrides=[] (build_baseline_config() applies nothing), so its
+    own absolute_value can't be read directly - back-derived instead as
+    spec_baseline + 0.0 once spec_baseline is known from any ONE sibling
+    row. This is an exact affine identity, not a fit: every row in a
+    family shares the same spec_baseline by construction.
+    """
+    spec_baseline = None
+    for d, e in rows:
+        overrides = e.get("parm_overrides") or []
+        if overrides:
+            spec_baseline = overrides[0][4] - d
+            break
+    rows3 = []
+    for d, e in rows:
+        overrides = e.get("parm_overrides") or []
+        if overrides:
+            abs_val = overrides[0][4]
+        elif spec_baseline is not None:
+            abs_val = spec_baseline + d
+        else:
+            abs_val = None
+        rows3.append((d, e, abs_val))
+    return rows3, spec_baseline
+
+
 def load_family(study_name, results_root):
     """
     [(delta, manifest_dict), ...] sorted by delta, done runs only.
@@ -130,9 +169,9 @@ def load_family(study_name, results_root):
 
 # ── plotting ─────────────────────────────────────────────────────────────
 
-def _plot_mean_vs_delta(rows, tag_key, study_name, ylabel, out_path):
-    deltas = [d for d, e in rows if tag_key in e.get("means", {})]
-    means  = [e["means"][tag_key] for d, e in rows if tag_key in e.get("means", {})]
+def _plot_mean_vs_delta(rows, tag_key, study_name, ylabel, out_path, spec_baseline=None):
+    deltas = [d for d, e, _ in rows if tag_key in e.get("means", {})]
+    means  = [e["means"][tag_key] for d, e, _ in rows if tag_key in e.get("means", {})]
     if not deltas:
         print(f"  [outputs] no {tag_key} means to plot for {study_name}"); return None
 
@@ -152,6 +191,18 @@ def _plot_mean_vs_delta(rows, tag_key, study_name, ylabel, out_path):
     ax.set_ylabel(ylabel, fontsize=11)
     ax.grid(True, linestyle="--", alpha=0.5)
     ax.set_title(f"{study_name} — {ylabel} vs. Δ", fontsize=11)
+
+    if spec_baseline is not None:
+        # Secondary top axis: the ABSOLUTE applied value of this study's
+        # primary swept parameter (e.g. t/c 0.02-0.06, not just Δ=-0.02..
+        # +0.02 around an unstated 0.04 baseline) - exact affine mapping,
+        # see _add_absolute_values().
+        ax_top = ax.secondary_xaxis(
+            "top",
+            functions=(lambda x, b=spec_baseline: x + b, lambda x, b=spec_baseline: x - b),
+        )
+        ax_top.set_xlabel(f"{study_name}  absolute value", fontsize=10)
+
     fig.tight_layout()
     fig.savefig(out_path, dpi=150, bbox_inches="tight")
     plt.close(fig)
@@ -162,7 +213,7 @@ def _plot_mean_vs_delta(rows, tag_key, study_name, ylabel, out_path):
 def _plot_azimuth_polar_overlay(rows, study_name, out_path):
     """All deltas' azimuth cuts (TE-z co-pol = Sph) overlaid on one polar plot."""
     curves = []
-    for d, e in rows:
+    for d, e, a in rows:
         dat_path = e.get("rcs_outputs", {}).get("AZ_TE")
         if not dat_path or not os.path.isfile(dat_path):
             continue
@@ -170,7 +221,7 @@ def _plot_azimuth_polar_overlay(rows, study_name, out_path):
         if not len(parsed["sph"]):
             continue
         phi_full, sph_full = _azimuth_to_full_circle(parsed["phi_vals"], parsed["sph"])
-        curves.append((d, phi_full, sph_full))
+        curves.append((d, phi_full, sph_full, a))
     if not curves:
         print(f"  [outputs] no azimuth .dat files to overlay for {study_name}"); return None
 
@@ -183,7 +234,7 @@ def _plot_azimuth_polar_overlay(rows, study_name, out_path):
     ax.set_theta_zero_location("N")
     ax.set_theta_direction(-1)
 
-    max_abs_delta = max(abs(d) for d, _, _ in curves) or 1.0
+    max_abs_delta = max(abs(d) for d, _, _, _ in curves) or 1.0
     cmap = matplotlib.colormaps["coolwarm"]
 
     def _rcs_to_r(rcs):
@@ -200,14 +251,15 @@ def _plot_azimuth_polar_overlay(rows, study_name, out_path):
     for sd in range(0, 360, 30):
         ax.plot([np.deg2rad(sd), np.deg2rad(sd)], [0, 1], color="grey", lw=0.5, zorder=1)
 
-    for d, phi_full, sph_full in curves:
+    for d, phi_full, sph_full, a in curves:
         color = "black" if d == 0.0 else cmap(0.5 + 0.5 * d / max_abs_delta)
         r = _rcs_to_r(sph_full)
         t = np.append(np.deg2rad(phi_full), np.deg2rad(phi_full[0]))
         r = np.append(r, r[0])
+        abs_label = f", abs={a:.3g}" if a is not None else ""
         ax.plot(t, r, color=color, lw=1.6 if d == 0.0 else 1.0,
                 alpha=1.0 if d == 0.0 else 0.85, zorder=5,
-                label=f"Δ={d:+.2f}" + ("  (baseline)" if d == 0.0 else ""))
+                label=f"Δ={d:+.2f}{abs_label}" + ("  (baseline)" if d == 0.0 else ""))
 
     ax.legend(loc="lower left", bbox_to_anchor=(-0.15, -0.15), fontsize=7.5, framealpha=0.7)
     spokes = {0: "0°\n(nose)", 90: "90°", 180: "180°\n(tail)", 270: "270°"}
@@ -230,13 +282,13 @@ def _plot_azimuth_polar_overlay(rows, study_name, out_path):
 def _write_summary_csv(rows, study_name, out_path):
     with open(out_path, "w", newline="") as f:
         w = csv.writer(f)
-        w.writerow(["delta", "tag", "az_mean_TE_dBsm", "frontal_mean_TE_dBsm",
+        w.writerow(["delta", "absolute_value", "tag", "az_mean_TE_dBsm", "frontal_mean_TE_dBsm",
                     "stl_path", "az_dat_path", "frontal_dat_path"])
-        for d, e in rows:
+        for d, e, a in rows:
             means = e.get("means", {})
             rcs_out = e.get("rcs_outputs", {})
             w.writerow([
-                d, e.get("tag"),
+                d, a, e.get("tag"),
                 means.get("AZ_TE", ""), means.get("FR_TE", ""),
                 e.get("stl_path", ""),
                 rcs_out.get("AZ_TE", ""), rcs_out.get("FR_TE", ""),
@@ -251,18 +303,22 @@ def build_study_outputs(study_name):
         print(f"[{study_name}] no completed deltas found under {results_root} — nothing to plot")
         return
 
+    rows3, spec_baseline = _add_absolute_values(rows)
+
     plots_dir = results_root / "plots"
     plots_dir.mkdir(parents=True, exist_ok=True)
     has_baseline = any(d == 0.0 for d, _ in rows)
     print(f"[{study_name}] building plots from {len(rows)} completed deltas "
-          f"({'with' if has_baseline else 'WITHOUT'} baseline)")
+          f"({'with' if has_baseline else 'WITHOUT'} baseline)"
+          + (f", absolute baseline value={spec_baseline:.4g}" if spec_baseline is not None else
+             " (no absolute value yet - no non-baseline delta done)"))
 
-    _plot_mean_vs_delta(rows, "AZ_TE", study_name, "Mean Azimuth RCS (dBsm)",
-                         plots_dir / f"{study_name}_AzimuthMean_vs_delta.png")
-    _plot_mean_vs_delta(rows, "FR_TE", study_name, "Mean Frontal-Sector RCS (dBsm)",
-                         plots_dir / f"{study_name}_FrontalMean_vs_delta.png")
-    _plot_azimuth_polar_overlay(rows, study_name, plots_dir / f"{study_name}_AzimuthPolar_overlay.png")
-    _write_summary_csv(rows, study_name, results_root / f"summary_{study_name}.csv")
+    _plot_mean_vs_delta(rows3, "AZ_TE", study_name, "Mean Azimuth RCS (dBsm)",
+                         plots_dir / f"{study_name}_AzimuthMean_vs_delta.png", spec_baseline)
+    _plot_mean_vs_delta(rows3, "FR_TE", study_name, "Mean Frontal-Sector RCS (dBsm)",
+                         plots_dir / f"{study_name}_FrontalMean_vs_delta.png", spec_baseline)
+    _plot_azimuth_polar_overlay(rows3, study_name, plots_dir / f"{study_name}_AzimuthPolar_overlay.png")
+    _write_summary_csv(rows3, study_name, results_root / f"summary_{study_name}.csv")
 
 
 def discover_studies():
