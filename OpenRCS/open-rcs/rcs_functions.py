@@ -127,17 +127,40 @@ def calculate_r(x, y, z, nverts):
         r[i, :] = [x[i], y[i], z[i]]
     return r
 
-def plot_triangle_model(input_model, vind, x, y, z, xpts, ypts, zpts, nverts, ntria, node1, node2, node3, nfc):
+def plot_triangle_model(input_model, vind, x, y, z, xpts, ypts, zpts, nverts, ntria, node1, node2, node3, nfc,
+                         min_free_gb=2.0):
+    from mpl_toolkits.mplot3d.art3d import Line3DCollection
+
+    try:
+        import psutil
+        free_gb = psutil.virtual_memory().available / (1024**3)
+    except ImportError:
+        free_gb = None  # psutil not installed -> can't check, draw unconditionally
+
     fig = plt.figure(1)
     fig.suptitle(f'Triangle Model of Target: {input_model}')
     ilabv ='n'; ilabf='n' # label vertices and faces
     ax = fig.add_subplot(1,1,1, projection='3d')
-    
-    for i in range(ntria):
-        X = [x[vind[i, 0]-1], x[vind[i, 1]-1], x[vind[i, 2]-1], x[vind[i, 0]-1]]
-        Y = [y[vind[i, 0]-1], y[vind[i, 1]-1], y[vind[i, 2]-1], y[vind[i, 0]-1]]
-        Z = [z[vind[i, 0]-1], z[vind[i, 1]-1], z[vind[i, 2]-1], z[vind[i, 0]-1]]
-        ax.plot(X, Y, Z)
+
+    if free_gb is not None and free_gb < min_free_gb:
+        print(f"⚠️  Only {free_gb:.1f} GB free (need {min_free_gb} GB) — "
+              f"skipping wireframe preview to avoid a memory error.")
+    else:
+        # One batched Line3DCollection instead of ntria separate ax.plot()
+        # calls. Each ax.plot() call used to create its own full Line3D
+        # artist with real per-artist overhead, so a fine CFD mesh
+        # (hundreds of thousands to millions of triangles) turned this
+        # into a multi-GB allocation and could get the job OOM-killed —
+        # a single collection holds the same segment data with none of
+        # the per-artist overhead.
+        segs = [
+            [[x[vind[i,0]-1], y[vind[i,0]-1], z[vind[i,0]-1]],
+             [x[vind[i,1]-1], y[vind[i,1]-1], z[vind[i,1]-1]],
+             [x[vind[i,2]-1], y[vind[i,2]-1], z[vind[i,2]-1]],
+             [x[vind[i,0]-1], y[vind[i,0]-1], z[vind[i,0]-1]]]
+            for i in range(ntria)
+        ]
+        ax.add_collection3d(Line3DCollection(segs, linewidths=0.3, colors='k'))
 
     ax.set_xlabel('x')
     ax.set_ylabel('y')
@@ -186,35 +209,6 @@ def plot_triangle_model(input_model, vind, x, y, z, xpts, ypts, zpts, nverts, nt
     plt.close()
     
     return fig_name
-
-# def plot_triangle_model(input_model, vind, x, y, z, xpts, ypts, zpts, nverts, ntria, node1, node2, node3, nfc,
-#                          min_free_gb=2.0):
-#     from mpl_toolkits.mplot3d.art3d import Line3DCollection
-
-#     try:
-#         import psutil
-#         free_gb = psutil.virtual_memory().available / (1024**3)
-#     except ImportError:
-#         free_gb = None  # psutil not installed -> can't check, so just draw
-
-#     fig = plt.figure(1)
-#     fig.suptitle(f'Triangle Model of Target: {input_model}')
-#     ilabv ='n'; ilabf='n' # label vertices and faces
-#     ax = fig.add_subplot(1,1,1, projection='3d')
-
-#     if free_gb is not None and free_gb < min_free_gb:
-#         print(f"⚠️  Only {free_gb:.1f} GB free (need {min_free_gb} GB) — "
-#               f"skipping wireframe preview to avoid a memory error.")
-#     else:
-#         # one batched collection instead of ntria separate Line3D artists
-#         segs = [
-#             [[x[vind[i,0]-1], y[vind[i,0]-1], z[vind[i,0]-1]],
-#              [x[vind[i,1]-1], y[vind[i,1]-1], z[vind[i,1]-1]],
-#              [x[vind[i,2]-1], y[vind[i,2]-1], z[vind[i,2]-1]],
-#              [x[vind[i,0]-1], y[vind[i,0]-1], z[vind[i,0]-1]]]
-#             for i in range(ntria)
-#         ]
-#         ax.add_collection3d(Line3DCollection(segs, linewidths=0.3, colors='k'))
 
 def diretionCosines(alpha, beta, D0,m):
                         T1=np.array([[math.cos(alpha[m]),  math.sin(alpha[m]),   0],
