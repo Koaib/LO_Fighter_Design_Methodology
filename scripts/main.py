@@ -689,3 +689,40 @@ if RUN_MISSION:
         num_engines=NUM_ENGINES,
     )
     print_mission_results(mission_results)
+
+    # Persist a summary row to disk, same accumulating-CSV convention as
+    # the Aero (drag_polar_fits_*.csv) and Stability (stability_summary_
+    # *.csv) steps above - previously this step only ever printed to
+    # console, so a mission result was lost the moment the terminal
+    # scrolled past it (caught because no file was showing up under
+    # Results/Mission/ after a real run - both the other two steps have
+    # always written one). Handles both possible return shapes: a
+    # completed run (climb_completed=True, feasible/residual_fuel_lbm/etc.
+    # populated) and an incomplete one (climb_completed=False - couldn't
+    # even reach cruise altitude, most fields below stay blank).
+    mission_summary_path = os.path.join(vsp_setup.MISSION_DIR, f"mission_summary_{geom_stem}.csv")
+    write_header = not os.path.exists(mission_summary_path)
+    with open(mission_summary_path, "a", newline="") as f:
+        w = csv.writer(f)
+        if write_header:
+            w.writerow([
+                "geom_stem", "climb_completed", "feasible", "climb_throttle_used",
+                "design_range_nmi", "total_range_nmi", "target_cruise_altitude_ft",
+                "gross_mass_lbm", "fuel_capacity_lbm", "fuel_required_lbm",
+                "residual_fuel_lbm", "failure_reason",
+            ])
+        w.writerow([
+            geom_stem,
+            mission_results.get("climb_completed"),
+            mission_results.get("feasible"),
+            mission_results.get("climb_throttle_used"),
+            mission_results.get("design_range_nmi"),
+            mission_results.get("total_range_nmi"),
+            mission_results.get("target_cruise_altitude_ft", CRUISE_ALTITUDE_FT),
+            mission_results.get("gross_mass_lbm"),
+            mission_results.get("fuel_capacity_lbm"),
+            mission_results.get("fuel_required_lbm"),
+            mission_results.get("residual_fuel_lbm"),
+            mission_results.get("failure_reason", ""),
+        ])
+    print(f"   ✅ Mission summary: {mission_summary_path}")

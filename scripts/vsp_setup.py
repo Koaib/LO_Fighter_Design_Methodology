@@ -61,6 +61,13 @@ AVIARY_PERF_NATIVE_DIR = os.path.join(AVIARY_PERF_DIR, "native_aviary_files")  #
                                                                                  # (mission_summary.md etc.) — kept in their own
                                                                                  # subfolder so they're not mistaken for our
                                                                                  # plain-language summary sitting one level up
+MISSION_DIR       = os.path.join(ROOT_DIR, "Results", "Mission")  # mission_summary_<geom_stem>.csv lands here (main.py) - same
+                                                                     # constant name as performance/Raymer-sizing-approach's
+                                                                     # vsp_setup.py; GENERATED_FILES has no Linux-side twin, this
+                                                                     # branch's equivalent "raw/working generated output" dir is
+                                                                     # AVIARY_FILES above (see the prior merge's resolution) - any
+                                                                     # incoming code that referenced GENERATED_FILES is repointed
+                                                                     # at AVIARY_FILES instead, not reintroduced here.
 VSPAERO_EXE = os.path.join(VSP_INSTALL, "vspaero.exe" if sys.platform == "win32" else "vspaero")
 
 # Path to our bridge script (scripts/ folder, same folder as this file)
@@ -102,6 +109,7 @@ os.makedirs(STABILITY_DIR, exist_ok=True)
 os.makedirs(AVIARY_FILES, exist_ok=True)
 os.makedirs(AVIARY_PERF_DIR, exist_ok=True)
 os.makedirs(AVIARY_PERF_NATIVE_DIR, exist_ok=True)
+os.makedirs(MISSION_DIR, exist_ok=True)
 
 # =========================
 # OPENVSP INITIALIZATION

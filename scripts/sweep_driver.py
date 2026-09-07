@@ -50,7 +50,10 @@ def build_sweep(param_key, deltas, family_tag, extra_param_keys=None):
         overrides = [_override(param_key, d)]
         for extra_key in (extra_param_keys or []):
             overrides.append(_override(extra_key, d))
-        configs.append({**BASE, "tag": f"{family_tag}_{d:+.1f}", "parm_overrides": overrides})
+        # .2f (not the old .1f) to match rcs_sweep_driver.py's own tag
+        # precision exactly - tradeoff_study.py joins aero and RCS results
+        # by this tag string, so the two drivers' formatting has to agree.
+        configs.append({**BASE, "tag": f"{family_tag}_{d:+.2f}", "parm_overrides": overrides})
     return configs
 
 
@@ -91,29 +94,36 @@ def run_one(cfg, retry=True):
     
 
 if __name__ == "__main__":
-    STAGE = "S1"
+    # Mirrors rcs_sweep_driver.py's own __main__ exactly - same 5 studies,
+    # same parameter keys (including the "VT_Cant" fix - this file used to
+    # sweep the stale "VTCant" key, which no longer matches the RCS
+    # driver's corrected sweep_params.json entry), same deltas, same
+    # aligned/misaligned wing-sweep split, same combined t/c study. Tags
+    # also dropped the old "_S1"/"_S2" suffix so they match
+    # rcs_sweep_driver.py's tags character-for-character - the two
+    # studies already land in separate results trees (Results/
+    # SensitivityStudy vs Results/RCS_SensitivityStudy), so there's no
+    # collision risk in sharing the same tag string, and tradeoff_study.py
+    # depends on it to join aero and RCS rows by (study, delta).
+    STAGE = "S1"          # S1 = aero-only screening (this file always runs
+                          # this stage; S2 = same deltas + RCS is what
+                          # rcs_sweep_driver.py's own run is for - run that
+                          # separately, don't set RUN_RCS=True here).
+    RUN_RCS = (STAGE != "S1")
 
-    if STAGE == "S1":
-        #DELTAS_WING_SWEEP = [0.0, -15, -10, -5, 5, 10, 15]
-        DELTAS_WING_SWEEP = [0.0, 5]
-        DELTAS_VT_CANT    = [0.0, -20, -10, -5, 5, 10, 20]
-        DELTAS_WING_TWIST = [0.0, -3, -2, -1, 1, 2, 3]
-        RUN_RCS = False
-    else:
-        DELTAS_WING_SWEEP = [0.0, -12, -8, -4, 4, 8, 12]
-        DELTAS_VT_CANT    = [0.0, -15, -8, 8, 15]
-        DELTAS_WING_TWIST = [0.0, -2, -1, 1, 2]
-        RUN_RCS = True
+    DELTAS_ANGLE = [-15, -12, -9, -6, -3, 0.0, 3, 6, 9, 12, 15]  # deg
+    DELTAS_TC    = [-0.02, -0.01, 0.0, 0.01, 0.02]  # absolute t/c, 0.02-0.06 around baseline 0.04
 
-    def tagged(base_tag):
-        return f"{base_tag}_{STAGE}"
-
-    configs  = build_sweep("WingSweep_sec1", DELTAS_WING_SWEEP, tagged("WingSweep_aligned"),
+    configs  = build_sweep("VT_Cant", DELTAS_ANGLE, "VT_Cant")
+    configs += build_sweep("VT_Sweep_surf0sec1", DELTAS_ANGLE, "VT_Sweep_surf0sec1")
+    configs += build_sweep("WingSweep_sec1", DELTAS_ANGLE, "WingSweepAligned",
                         extra_param_keys=["WingSweep_sec2", "HTSweep_sec1", "HTSweep_sec2"])
-    # configs += build_sweep("WingSweep_sec1", DELTAS_WING_SWEEP, tagged("WingSweep_misaligned"),
-    #                     extra_param_keys=["WingSweep_sec2"])   # wing moves, HT stays put
-    # configs += build_sweep("VTCant",         DELTAS_VT_CANT,    tagged("VTCant"))
-    # configs += build_sweep("WingTwist_sec1", DELTAS_WING_TWIST, tagged("WingTwist"))
+    configs += build_sweep("WingSweep_sec1", DELTAS_ANGLE, "WingSweepMisaligned",
+                        extra_param_keys=["WingSweep_sec2"])   # wing moves, HT stays put
+    configs += build_sweep("WingThickChord_sec0", DELTAS_TC, "WingThickChord",
+                        extra_param_keys=["WingThickChord_sec1", "WingThickChord_sec2",
+                                          "HT_ThickChord_surf0sec0", "HT_ThickChord_surf0sec1", "HT_ThickChord_surf0sec2",
+                                          "VT_ThickChord_surf0sec0", "VT_ThickChord_surf0sec1"])
 
     for c in configs:
         c["run_rcs"] = RUN_RCS

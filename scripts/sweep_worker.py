@@ -86,7 +86,12 @@ def main():
         wing_id = name_to_id[cfg.get("ref_wing", "Main_Wing")]
 
         # ── AERO ──────────────────────────────────────────────────────────
-        polar_dst = vsp_setup.run_vspaero_aero(
+        # run_vspaero_aero() returns a 4-tuple (polar_dst, CD0, K, r2) - a
+        # prior version of this call only unpacked one value, so polar_dst
+        # was silently bound to the whole tuple (never None, so the
+        # aero_failed check below could never fire) and the very next
+        # .replace() call would raise AttributeError on every run.
+        polar_dst, CD0, K, r2 = vsp_setup.run_vspaero_aero(
             wing_id       = wing_id,
             alpha_start   = cfg["alpha_start"], alpha_end = cfg["alpha_end"],
             alpha_npts    = cfg["alpha_npts"],
@@ -104,6 +109,7 @@ def main():
         tagged_csv = os.path.join(aero_dir, f"{tag}.csv")
         shutil.copy2(polar_dst.replace(".polar", ".csv"), tagged_csv)
         entry["aero_csv"] = tagged_csv
+        entry["CD0"], entry["K"], entry["R2"] = CD0, K, r2
 
         df_check = pd.read_csv(tagged_csv)
         if (df_check["CDtot"] < 0).any():
