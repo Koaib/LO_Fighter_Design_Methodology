@@ -52,6 +52,7 @@ RESULTS_DIR  = os.path.join(ROOT_DIR, "Results",  "RCS")
 OPENRCS_DIR  = os.path.join(ROOT_DIR, "OpenRCS",  "open-rcs")
 AERO_RESULTS_DIR = os.path.join(ROOT_DIR, "Results", "Aero")
 STABILITY_DIR     = os.path.join(ROOT_DIR, "Results", "Stability")
+MISSION_DIR       = os.path.join(ROOT_DIR, "Results", "Mission")
 GENERATED_FILES   = os.path.join(ROOT_DIR, "Generated_Files")     # raw/working generated output (engine decks, etc.)
 VSPAERO_EXE = os.path.join(VSP_INSTALL, "vspaero.exe")
 
@@ -91,6 +92,7 @@ os.makedirs(STL_FILES,   exist_ok=True)
 os.makedirs(RESULTS_DIR, exist_ok=True)
 os.makedirs(AERO_RESULTS_DIR, exist_ok=True)
 os.makedirs(STABILITY_DIR, exist_ok=True)
+os.makedirs(MISSION_DIR, exist_ok=True)
 os.makedirs(GENERATED_FILES, exist_ok=True)
 
 # =========================
