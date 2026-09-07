@@ -14,8 +14,17 @@ condition (cruise_mach/cruise_altitude_ft, matching whatever the driver
 actually swept - not hardcoded here) specifically, since that's the
 mission-relevant flight point for a shaping trade-off - every config's
 full 9-point aero/stability detail is still sitting in its own manifest
-JSON under Results/AeroStabMissionStudy/manifest/ if a deeper look at a
+JSON under Results/AeroStabMissionStudy/<study_name>/manifest/ (or
+_baseline/manifest/ for the shared Delta=0 run) if a deeper look at a
 specific point/config is ever needed.
+
+Mirrors rcs_compare_family.py's own baseline handling: aero_stab_
+mission_driver.py's build_study_configs() skips d==0.0 and relies on
+one shared run_baseline() result instead (see that file's module
+docstring) - load_family() below splices that single manifest in as
+each discovered study's own Delta=0 anchor point, relabeled to that
+study so the faceted-by-study plots/CSV group it correctly instead of
+showing a stray 6th "baseline" facet.
 """
 import glob
 import json
@@ -25,20 +34,79 @@ import matplotlib.pyplot as plt
 import pandas as pd
 
 RESULTS_ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "Results", "AeroStabMissionStudy")
-MANIFEST_GLOB = os.path.join(RESULTS_ROOT, "manifest", "*.json")
+BASELINE_MANIFEST = os.path.join(RESULTS_ROOT, "_baseline", "manifest", "baseline.json")
 OUT_DIR = os.path.join(RESULTS_ROOT, "Comparisons")
 
 
-def load_family(manifest_glob=MANIFEST_GLOB):
-    """Reads every manifest JSON, returns (done_entries, other_entries).
+def discover_studies():
+    """Every subfolder of RESULTS_ROOT with its own manifest/ dir, i.e.
+    every study aero_stab_mission_driver.py's run_study() has touched at
+    least once. Skips the shared _baseline/_logs housekeeping folders
+    (leading underscore) and Comparisons (this script's own output)."""
+    studies = []
+    if not os.path.isdir(RESULTS_ROOT):
+        return studies
+    for name in sorted(os.listdir(RESULTS_ROOT)):
+        path = os.path.join(RESULTS_ROOT, name)
+        if not os.path.isdir(path) or name.startswith("_") or name == "Comparisons":
+            continue
+        if os.path.isdir(os.path.join(path, "manifest")):
+            studies.append(name)
+    return studies
+
+
+def _load_baseline_manifest():
+    """Returns the shared baseline manifest dict, or None if it doesn't
+    exist yet or hasn't finished - callers treat None as "no Delta=0
+    point available yet", not as an error. Mirrors rcs_compare_family.
+    py's own _load_baseline_manifest()."""
+    if not os.path.exists(BASELINE_MANIFEST):
+        return None
+    with open(BASELINE_MANIFEST) as f:
+        entry = json.load(f)
+    return entry if entry.get("status") == "done" else None
+
+
+def _splice_baseline_for_study(baseline_entry, study_name):
+    """Shallow copy of the shared baseline entry, relabeled as THIS
+    study's own Delta=0 point (same physical aircraft/analysis either
+    way - see module docstring). Relabeling instead of reusing the dict
+    directly matters because build_summary_rows()/plot_metric_by_study()
+    group rows by e["study"]; without this every study's baseline point
+    would collide into one stray "baseline" facet instead of anchoring
+    each study's own panel."""
+    spliced = dict(baseline_entry)
+    spliced["study"] = study_name
+    spliced["tag"] = f"{study_name}_+0.00"
+    return spliced
+
+
+def load_family(study_names=None):
+    """Reads every manifest JSON across every (or the given) study
+    folder(s), splices the shared baseline in as each study's own
+    Delta=0 anchor (unless that study somehow already has its own
+    delta==0.0 entry), and returns (done_entries, other_entries).
     other_entries (status != "done") are returned too, not silently
     dropped, so a caller can report what's still missing/failed rather
     than just seeing a shorter-than-expected table."""
+    study_names = discover_studies() if study_names is None else study_names
+    baseline_entry = _load_baseline_manifest()
+
     done, other = [], []
-    for path in sorted(glob.glob(manifest_glob)):
-        with open(path) as f:
-            entry = json.load(f)
-        (done if entry.get("status") == "done" else other).append(entry)
+    for study_name in study_names:
+        manifest_glob = os.path.join(RESULTS_ROOT, study_name, "manifest", "*.json")
+        has_zero = False
+        for path in sorted(glob.glob(manifest_glob)):
+            with open(path) as f:
+                entry = json.load(f)
+            if entry.get("status") == "done":
+                done.append(entry)
+                if entry.get("delta") == 0.0:
+                    has_zero = True
+            else:
+                other.append(entry)
+        if not has_zero and baseline_entry is not None:
+            done.append(_splice_baseline_for_study(baseline_entry, study_name))
     return done, other
 
 
@@ -50,6 +118,22 @@ def _point_at(points, mach, alt_ft, tol=1e-6):
 
 
 def build_summary_rows(entries, cruise_mach, cruise_altitude_ft):
+    # Back-derive each study's own spec_baseline (the swept primary
+    # parameter's un-swept value) from any ONE of that study's non-
+    # baseline rows. Needed because the spliced-in shared baseline row
+    # (see _splice_baseline_for_study()) carries the ORIGINAL
+    # parm_overrides=[] from build_baseline_config() - it's literally the
+    # untouched aircraft, nothing was applied - so its own absolute_value
+    # can't be read directly the way every other row's can. This is an
+    # exact affine identity (absolute_value = spec_baseline + delta for
+    # every non-baseline row of a study), not a fit: any one sibling
+    # recovers the same constant.
+    spec_baseline_by_study = {}
+    for e in entries:
+        overrides = e.get("parm_overrides") or []
+        if overrides and e["study"] not in spec_baseline_by_study:
+            spec_baseline_by_study[e["study"]] = overrides[0][4] - e["delta"]
+
     rows = []
     for e in entries:
         aero_pt = _point_at(e.get("aero_points", []), cruise_mach, cruise_altitude_ft)
@@ -58,11 +142,12 @@ def build_summary_rows(entries, cruise_mach, cruise_altitude_ft):
         # Absolute applied value of the PRIMARY swept parameter (index 4
         # of its override tuple = spec["baseline"] + delta - see
         # aero_stab_mission_driver.py's _override()/build_study_configs()).
-        # Unlike the RCS side's baseline entries, delta=0.0 configs here
-        # always carry a real (non-empty) parm_overrides list, so no
-        # back-derivation special-case is needed.
         overrides = e.get("parm_overrides") or []
-        absolute_value = overrides[0][4] if overrides else None
+        if overrides:
+            absolute_value = overrides[0][4]
+        else:
+            spec_baseline = spec_baseline_by_study.get(e["study"])
+            absolute_value = (spec_baseline + e["delta"]) if spec_baseline is not None else None
         rows.append({
             "study": e["study"], "delta": e["delta"], "tag": e["tag"],
             "absolute_value": absolute_value,

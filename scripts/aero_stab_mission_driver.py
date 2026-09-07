@@ -23,14 +23,40 @@ Mirrors rcs_sweep_driver.py's own proven subprocess-per-config +
 manifest-based skip/resume pattern exactly (see that file for the
 detailed rationale) - one JSON config per delta, spawned as
 aero_stab_mission_worker.py, one manifest JSON per config recording
-status + every metric a later compare/trade-off script needs. No
-baseline special-casing here the way the RCS driver has one: unlike an
-RCS solve, a full aero+mission run at delta=0.0 is not pure waste to
-repeat once per study (it's the SAME per-config cost as any other
-delta, and gives every study's plot its own explicit Delta=0 anchor
-point without a separate splice-in step) - so, unlike
-rcs_sweep_driver.py, every non-empty delta list here is run AS-IS,
-0.0 included.
+status + every metric a later compare/trade-off script needs.
+
+Also mirrors the RCS driver's shared-baseline pattern: Delta=0.0 is the
+exact same untouched aircraft no matter which of the 5 studies below it
+nominally belongs to (applying "+0" to VT_Cant vs. WingThickChord vs.
+anything else all produce the identical baseline geometry), so it's run
+exactly ONCE via run_baseline() and reused as every study's own Delta=0
+anchor point - build_study_configs() skips d==0.0 the same way
+rcs_sweep_driver.py's build_param_configs() does, and
+aero_stab_mission_compare_family.py splices the shared result in at
+plot/summary time, the same way rcs_compare_family.py does. An earlier
+version of this file argued a full aero+mission run at delta=0.0 wasn't
+worth sharing since it costs the same as any other delta (true) - but
+"costs the same" isn't "costs nothing to repeat": with 0.0 in all 5
+studies' delta lists, that was 5 separate full 9-point-grid runs of the
+literal same aircraft. Fixed here.
+
+FOLDER LAYOUT (mirrors RCS's Results/RCS_SensitivityStudy/ layout):
+    Results/AeroStabMissionStudy/
+        _logs/<tag>.log                  one log per config, incl. baseline
+        _baseline/manifest/baseline.json the one shared Delta=0 run
+        <study_name>/manifest/<tag>.json one manifest per non-zero-delta config, per study
+        Comparisons/*.png                 combined plots, built by compare_family.py
+        summary_aero_stab_mission.csv     combined summary, built by compare_family.py
+One real asymmetry vs. RCS worth knowing: RCS's worker controls exactly
+where its own STL/`.dat` outputs land (results_root passed all the way
+down), so those are ALSO per-study/per-baseline. This study's raw
+VSPAero CSV/.polar files are instead written by vsp_setup.
+run_vspaero_aero() straight into the single project-wide Results/Aero/
+folder - the same shared location main.py's own runs and the separate
+aero-only sweep_worker.py already use - since that function has no
+per-caller output-directory argument to redirect. Each file is still
+uniquely identifiable (run_name embeds the full tag), just not
+folder-isolated the way the manifests/logs above are.
 """
 import subprocess, json, sys
 from pathlib import Path
@@ -54,6 +80,9 @@ with open(SWEEP_PARAMS_FILE) as f:
 RESULTS_ROOT = ROOT_DIR / "Results" / "AeroStabMissionStudy"
 LOG_ROOT     = RESULTS_ROOT / "_logs"
 LOG_ROOT.mkdir(parents=True, exist_ok=True)
+# Same role as rcs_sweep_driver.py's own BASELINE_ROOT: the one shared
+# Delta=0 run, reused across all 5 studies below (see module docstring).
+BASELINE_ROOT = RESULTS_ROOT / "_baseline"
 
 TIMEOUT_SEC = None   # Same reasoning as rcs_sweep_driver.py's own TIMEOUT_SEC=None:
                      # a full 9-point aero grid can legitimately run long, and a
@@ -109,8 +138,10 @@ BASE = dict(
     num_engines=NUM_ENGINES, custom_engine_deck_path=CUSTOM_ENGINE_DECK_PATH,
     cruise_mach=CRUISE_MACH, cruise_altitude_ft=CRUISE_ALTITUDE_FT,
     design_range_nmi=DESIGN_RANGE_NMI,
-    manifest_dir=str(RESULTS_ROOT / "manifest"),
 )
+# manifest_dir is deliberately NOT in BASE - it's per-study (or per-
+# baseline), assigned in build_baseline_config()/build_study_configs()
+# below, not a single fixed value shared by every config.
 
 
 def _override(param_key, delta):
@@ -118,9 +149,47 @@ def _override(param_key, delta):
     return [spec["geom"], spec["surf"], spec["section"], spec["parm"], spec["baseline"] + delta]
 
 
+def build_baseline_config():
+    return {**BASE, "tag": "baseline", "study": "baseline", "delta": 0.0,
+            "parm_overrides": [], "manifest_dir": str(BASELINE_ROOT / "manifest")}
+
+
+def run_baseline():
+    """
+    Runs the shared Delta=0 baseline once (manifest-skip makes repeat
+    calls free) - same rationale as rcs_sweep_driver.py's own
+    run_baseline(): every one of the 5 studies below applies "+0" to a
+    DIFFERENT parameter, but "+0" is a no-op regardless of which
+    parameter it's nominally attached to, so all 5 studies' Delta=0
+    point is the exact same untouched aircraft - run it once, shared,
+    instead of once per study.
+
+    Best-effort, does not raise: aero_stab_mission_compare_family.py
+    already tolerates a missing baseline manifest (see its
+    load_family()), so a failed/slow baseline shouldn't block every
+    other study's own non-zero-delta configs from running.
+    """
+    cfg = build_baseline_config()
+    ok = run_one(cfg)
+    if not ok:
+        print(
+            "[baseline] FAILED or still running — continuing WITHOUT it.\n"
+            "  Every study below will still run its own non-zero deltas.\n"
+            f"  Check {LOG_ROOT / 'baseline.log'}, then re-run run_baseline() "
+            "(or just this whole script — manifest-skip makes finished "
+            "configs free) once it's fixed. Re-run "
+            "aero_stab_mission_compare_family.py afterwards to fill in the "
+            "Delta=0 anchor point on every study's plots."
+        )
+    return cfg if ok else None
+
+
 def build_study_configs(param_key, deltas, study_name, extra_param_keys=None):
+    manifest_dir = str(RESULTS_ROOT / study_name / "manifest")
     configs = []
     for d in deltas:
+        if d == 0.0:
+            continue   # shared baseline covers this - see run_baseline()
         overrides = [_override(param_key, d)]
         for extra_key in (extra_param_keys or []):
             overrides.append(_override(extra_key, d))
@@ -130,7 +199,7 @@ def build_study_configs(param_key, deltas, study_name, extra_param_keys=None):
         # this exact string.
         tag = f"{study_name}_{d:+.2f}"
         configs.append({**BASE, "tag": tag, "study": study_name, "delta": d,
-                         "parm_overrides": overrides})
+                         "parm_overrides": overrides, "manifest_dir": manifest_dir})
     return configs
 
 
@@ -198,6 +267,9 @@ if __name__ == "__main__":
     # change both together so the two studies stay comparable.
     DELTAS_ANGLE = [-15, -12, -9, -6, -3, 0.0, 3, 6, 9, 12, 15]  # deg
     DELTAS_TC    = [-0.02, -0.01, 0.0, 0.01, 0.02]  # absolute t/c, 0.02-0.06 around baseline 0.04
+
+    run_baseline()   # once, shared, BEST-EFFORT - no longer blocks the studies
+                     # below if it fails/is slow (see run_baseline() docstring).
 
     run_study("VT_Cant", DELTAS_ANGLE)
     run_study("VT_Sweep_surf0sec1", DELTAS_ANGLE)
