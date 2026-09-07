@@ -684,11 +684,16 @@ if __name__ == "__main__":
     # between the two independently-derived methods on the same aircraft.
     # num_engines=2: this aircraft is a confirmed twin-engine design (see
     # classical_mission.py's num_engines docstring).
+    # fuel_capacity_lbm=18064.672003: F22_FUEL_MASS_LBM/F22_WING_AREA_FT2 *
+    # wing_area_ft2 above (same F-22A wing-loading scaling main.py's
+    # GROSS_MASS_LBM/FUEL_CAPACITY_LBM use) - matches main.py's own
+    # FUEL_CAPACITY_LBM exactly; replaces a prior 24590.81 placeholder of
+    # unestablished provenance.
     results = run_raymer_mission_check(
         geom_stem="SSAM_final_geom_to_be_used_scaled_by_19_simplified",
         wing_area_ft2=843.018026816014,
         gross_mass_lbm=83800.00623707,
-        fuel_capacity_lbm=24590.81,
+        fuel_capacity_lbm=18064.672003,
         design_range_nmi=400.0,
         cruise_mach=0.6,
         cruise_altitude_ft=35000.0,

@@ -348,14 +348,26 @@ F22_WING_AREA_FT2  = 840.0     # published F-22A wing area
 # never silently disagree the way two separately-computed copies could.
 GROSS_MASS_LBM = (F22_GROSS_MASS_LBM / F22_WING_AREA_FT2) * TEST_WING_AREA_FT2
 
-# FUEL_CAPACITY_LBM: this aircraft's internal fuel tank capacity - NOT
-# derived from the F-22 wing-loading scaling above (that would give a
-# different, smaller number, ~18,000 lbm scaled the same way F22_FUEL_
-# MASS_LBM/F22_GROSS_MASS_LBM is - this value has been used consistently
-# across this project's mission-analysis tools instead, but its own
-# provenance predates this config section and should be verified/
-# replaced with a real internal-volume-based figure for this geometry).
-FUEL_CAPACITY_LBM = 24590.81
+# FUEL_CAPACITY_LBM: this aircraft's internal fuel tank capacity, scaled
+# from the F-22A the SAME way GROSS_MASS_LBM is above - the W/S scaling
+# logic is still live in the formula below, not a one-off number computed
+# by hand and pasted in: F22_FUEL_MASS_LBM/F22_WING_AREA_FT2 (F-22A fuel
+# loading, lbm per ft^2 of wing) times this geometry's own
+# TEST_WING_AREA_FT2, exactly mirroring GROSS_MASS_LBM's own line above
+# with F22_FUEL_MASS_LBM in place of F22_GROSS_MASS_LBM. This stays
+# correct automatically if TEST_WING_AREA_FT2 or the F-22 reference
+# constants above ever change - it is algebraically identical to scaling
+# GROSS_MASS_LBM directly by the F-22's own fuel fraction
+# (F22_FUEL_MASS_LBM/F22_GROSS_MASS_LBM = 21.6%): both routes give the
+# exact same 18,064.67 lbm to full floating-point precision, preserving
+# the real F-22A's fuel-to-weight ratio on this airframe.
+#
+# Replaces a previous flat placeholder (24,590.81 lbm) whose provenance
+# was never established - that number predated this config section, was
+# not derived from any of the constants above, and implied a ~29.3% fuel
+# fraction of GROSS_MASS_LBM versus the F-22's own ~21.6%, with no cited
+# source for the difference.
+FUEL_CAPACITY_LBM = (F22_FUEL_MASS_LBM / F22_WING_AREA_FT2) * TEST_WING_AREA_FT2
 
 # ── Engine specs (simplified F100-PW-229-class deck — NOT real engine test
 # data, see scripts/build_engine_deck.py) ───────────────────────────────────
