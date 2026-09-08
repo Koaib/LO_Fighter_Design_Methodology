@@ -496,6 +496,12 @@ def run_vspaero_aero(
         vsp.SetAnalysisInputDefaults("VSPAEROComputeGeometry")
         vsp.SetIntAnalysisInput("VSPAEROComputeGeometry", "GeomSet",     [thick_geom_set])
         vsp.SetIntAnalysisInput("VSPAEROComputeGeometry", "ThinGeomSet", [thin_geom_set])
+        # NCPU is a saved Parm (defaults to 4), NOT read from OMP_NUM_THREADS --
+        # OpenVSP passes it straight through as vspaero's "-omp N" flag, which
+        # overrides the env var. Forcing 1 here is the actual fix for vspaero's
+        # intermittent OpenMP wake-setup crash (see run_name comment in main.py);
+        # setting OMP_NUM_THREADS alone does not reach the solver.
+        vsp.SetIntAnalysisInput("VSPAEROComputeGeometry", "NCPU", [1])
 
         geoms_before = set(vsp.FindGeoms())
         geom_rid = vsp.ExecAnalysis("VSPAEROComputeGeometry")
@@ -561,6 +567,7 @@ def run_vspaero_aero(
         vsp.SetIntAnalysisInput(   "VSPAEROSweep", "WakeNumIter", [wake_iters])
         vsp.SetIntAnalysisInput(   "VSPAEROSweep", "GeomSet",     [thick_geom_set])
         vsp.SetIntAnalysisInput(   "VSPAEROSweep", "ThinGeomSet", [thin_geom_set])
+        vsp.SetIntAnalysisInput(   "VSPAEROSweep", "NCPU",        [1])  # see NCPU note above
 
         if ref_mode == "manual":
             vsp.SetIntAnalysisInput(   "VSPAEROSweep", "RefFlag", [0])

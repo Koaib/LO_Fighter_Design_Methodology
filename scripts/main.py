@@ -37,13 +37,17 @@ import openvsp as vsp
 import os
 
 # vspaero.exe (launched later, as a subprocess, by vsp_setup's ExecAnalysis
-# calls) intermittently crashes under its default -omp 4 multi-threading —
-# a genuine data race in its own OpenMP setup code (confirmed: repeat runs
-# crash at DIFFERENT points in the solver's setup sequence for DIFFERENT,
-# physically unrelated Mach/Altitude cases — the signature of a race, not
-# a deterministic numerical failure). Forcing single-threaded execution
-# eliminates the race entirely (slower, but no longer intermittent). Must
-# be set before vspaero.exe is spawned, which is any time after this point.
+# calls) intermittently crashes under multi-threading -- a genuine data race
+# in its own OpenMP setup code (confirmed: repeat runs crash at DIFFERENT
+# points in the solver's setup sequence for DIFFERENT, physically unrelated
+# Mach/Altitude cases -- the signature of a race, not a deterministic
+# numerical failure). Setting OMP_NUM_THREADS here does NOT fix this --
+# OpenVSP's thread count is a saved model Parm ("NCPU", defaults to 4) that
+# gets passed straight through as vspaero's own "-omp N" flag, which
+# overrides this env var entirely. The actual fix is forcing NCPU=1 via
+# SetIntAnalysisInput(..., "NCPU", [1]) in vsp_setup.run_vspaero_aero(),
+# right before VSPAEROComputeGeometry/VSPAEROSweep are executed. Left set
+# here too in case any other library in this process reads it.
 os.environ["OMP_NUM_THREADS"] = "1"
 
 import matplotlib.pyplot as plt
