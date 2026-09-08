@@ -549,6 +549,14 @@ def run_vspaero_aero(
         vsp.SetAnalysisInputDefaults("VSPAEROComputeGeometry")
         vsp.SetIntAnalysisInput("VSPAEROComputeGeometry", "GeomSet",     [thick_geom_set])
         vsp.SetIntAnalysisInput("VSPAEROComputeGeometry", "ThinGeomSet", [thin_geom_set])
+        # NCPU controls the actual -omp N flag vspaero.exe is launched with —
+        # it's a separate Parm (saved per-model, default 4), NOT the
+        # OMP_NUM_THREADS env var main.py sets. That env var never reaches
+        # the solver: confirmed by SLURM logs showing "-omp 4" /
+        # "NumberOfThreads_: 4" even with OMP_NUM_THREADS=1 set. Pin it here
+        # to actually get single-threaded execution (avoids the OpenMP data
+        # race in vspaero.exe's wake-sheet setup that crashes mid-solve).
+        vsp.SetIntAnalysisInput("VSPAEROComputeGeometry", "NCPU",        [1])
 
         geoms_before = set(vsp.FindGeoms())
         geom_rid = vsp.ExecAnalysis("VSPAEROComputeGeometry")
@@ -614,6 +622,8 @@ def run_vspaero_aero(
         vsp.SetIntAnalysisInput(   "VSPAEROSweep", "WakeNumIter", [wake_iters])
         vsp.SetIntAnalysisInput(   "VSPAEROSweep", "GeomSet",     [thick_geom_set])
         vsp.SetIntAnalysisInput(   "VSPAEROSweep", "ThinGeomSet", [thin_geom_set])
+        # See NCPU note on VSPAEROComputeGeometry above — same fix, same reason.
+        vsp.SetIntAnalysisInput(   "VSPAEROSweep", "NCPU",        [1])
 
         if ref_mode == "manual":
             vsp.SetIntAnalysisInput(   "VSPAEROSweep", "RefFlag", [0])
