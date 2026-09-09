@@ -14,11 +14,20 @@ edited in one place):
   2. OpenRCS    — Physical Optics monostatic RCS (pure Python, no MATLAB/
                   Octave/license) → Results/RCS/            [RUN_RCS toggle]
   3. VSPAero    — VLM aero sweep across the Mach x Altitude grid below →
-                  Results/Aero/
+                  Results/Aero/                          [RUN_VSPAERO toggle]
   4. Stability  — static margin / Cm-alpha analysis on each aero run →
-                  Results/Stability/
-  5. Aviary     — fixed-mission fuel/range analysis, built from this run's
-                  aero CSVs → Results/aviary_perf/           [RUN_AVIARY toggle]
+                  Results/Stability/ (runs whenever step 3's mach_results
+                  is non-empty - a fresh sweep this run, or none if
+                  RUN_VSPAERO=False and no sweep ran)
+  5. Mission    — Raymer (Ch 19) mission-fuel-fraction feasibility check,
+                  scripts/Raymer_sizing_based_mission_check.py, on this
+                  same geom_stem's aero CSVs        [RUN_MISSION toggle]
+
+classical_mission.py (this project's own from-scratch direct-integration
+mission tool - no optimizer, no textbook citation, see its own docstring
+for why it exists) is intentionally NOT wired in here - it remains a
+separate, standalone comparison, run directly:
+    python scripts/classical_mission.py
 
 Usage:
     python scripts/main.py
@@ -26,10 +35,10 @@ Usage:
 To change design parameters, edit the geometry section below.
 To change RCS settings (frequency, angles, polarisation), edit the
 RCS SETTINGS section at the bottom or pass them into run_openrcs_rcs().
-To change Aviary/mission settings (mass basis, engine specs, cruise
-profile), edit the AVIARY / MISSION CONFIG section below — everything
-Aviary-related is configured from this one file, nothing to edit in
-scripts/aviary/run_aviary.py for a normal run.
+To change mission settings (mass basis, engine specs, cruise profile),
+edit the ENGINE & MISSION CONFIG section below - the same constants feed
+both the Mission step here and classical_mission.py's own standalone run
+(edit its own smoke-test block to match if you change them here).
 """
 
 import vsp_setup
@@ -53,10 +62,12 @@ os.environ["OMP_NUM_THREADS"] = "1"
 import matplotlib.pyplot as plt
 import pandas as pd
 import time
+import csv
+import glob
 
 # IMPORT_FILE/GEOMETRY_DIR/REF_WING_NAME live in pipeline_config.py — the
 # single place that names the geometry file, shared with extract_params.py
-# and print_wing_ref_params.py so they can never silently disagree.
+# so they can never silently disagree.
 from pipeline_config import ROOT_DIR, GEOMETRY_DIR, IMPORT_FILE, REF_WING_NAME
 
 """
@@ -72,8 +83,8 @@ INPUT_MODE options:
 # INPUT MODE — edit this
 # =========================
 # IMPORT_FILE/REF_WING_NAME come from pipeline_config.py (see import above)
-# — edit them there, not here, so extract_params.py and
-# print_wing_ref_params.py automatically stay pointed at the same geometry.
+# — edit them there, not here, so extract_params.py automatically stays
+# pointed at the same geometry.
 
 INPUT_MODE    = "import_vsp3"       # "generate" | "import_stl" | "import_vsp3"
 REF_MODE      = "auto"      # use "manual" for box_template — it has no wing
@@ -81,10 +92,17 @@ REF_MODE      = "auto"      # use "manual" for box_template — it has no wing
 # =========================
 # PIPELINE STAGE TOGGLES — edit this
 # =========================
-RUN_RCS    = True    # OpenRCS monostatic RCS pass (Results/RCS/)
-RUN_AVIARY = True   # Aviary mission analysis, runs AFTER the aero+stability
-                     # loop below finishes — needs this run's full 9-file
-                     # Mach x Altitude aero-CSV grid to build its polar table
+RUN_RCS     = True    # OpenRCS monostatic RCS pass (Results/RCS/)
+RUN_VSPAERO = True    # VSPAero Mach x Altitude sweep (Results/Aero/) - Stability
+                       # and Mission both read this geom_stem's aero CSVs from
+                       # disk, so False here only skips re-running the sweep
+                       # itself, not those later steps (they'll just see
+                       # whatever aero data already exists on disk for this
+                       # geom_stem from a previous run - or fail with a clear
+                       # "no aero CSVs found" if none does).
+RUN_MISSION = True     # Raymer (Ch 19) mission-fuel-fraction feasibility
+                       # check, scripts/Raymer_sizing_based_mission_check.py -
+                       # runs last, after Stability
 
 # =========================
 # STL MESH SETTINGS — edit this
@@ -116,6 +134,12 @@ NUM_CIRCLE_SEGS  = 12.0     # OpenVSP default -- curvature detection ON (was ~0 
 os.makedirs(GEOMETRY_DIR, exist_ok=True)
 
 SETS_FILE = os.path.join(GEOMETRY_DIR, os.path.splitext(IMPORT_FILE)[0] + "_sets.json")
+
+# wing_id is only actually resolved below in the "import_vsp3" branch
+# (REF_MODE="auto") - initialized here so the ENGINE & MISSION CONFIG
+# section further down can safely check "if wing_id is not None" no
+# matter which INPUT_MODE/REF_MODE ran, instead of a NameError.
+wing_id = None
 
 # =========================
 # BRANCH ON INPUT MODE
@@ -274,11 +298,12 @@ Y_CG = 0.0      # m
 Z_CG = 0.0      # m
 
 # =========================
-# AVIARY / MISSION CONFIG — edit this to change any Aviary-related input
+# ENGINE & MISSION CONFIG — edit this to change any mission-analysis input
 # =========================
-# Same Mach/altitude grid drives both VSPAero (above) and Aviary — MACH_LIST
-# / ALTITUDE_LIST from AERO SETTINGS are reused directly below, so there's
-# no separate list here that could silently fall out of sync.
+# Same Mach/altitude grid drives VSPAero (above) and (once wired in) the
+# mission analysis — MACH_LIST / ALTITUDE_LIST from AERO SETTINGS are
+# reused directly below, so there's no separate list here that could
+# silently fall out of sync.
 
 # "scaled_by_19" wing planform (confirmed via both .vsp3 dumps to be
 # this project's own "NOT_scaled_by_19" geometry scaled up by an exact
@@ -288,17 +313,33 @@ Z_CG = 0.0      # m
 # vehicle" length, which is a different, unverified-against-this-project
 # number — see pipeline_config.py's IMPORT_FILE note) — NOT a scaled-down
 # F-16C value (see mass basis note below for why that distinction
-# matters). Read directly off the actual .vsp3 (TotalArea/TotalSpan/
-# TotalAR parms, via scripts/aviary/print_wing_ref_params.py's method)
-# and unit-converted:
-# TotalArea=78.319 m^2 -> 843.018 ft^2, TotalSpan=13.5565 m -> 44.477 ft,
-# TotalAR=2.3465 (dimensionless, low-AR delta planform per Giannelis,
-# Bykerk & Vio, Aerospace 2023, 10, 746 — the SSAM-Gen5 source paper).
-TEST_WING_AREA_FT2     = 843.018026816014
-TEST_WING_SPAN_FT      = 44.47670603674372
-TEST_WING_ASPECT_RATIO = 2.346542205448008
-TEST_WING_HAS_STRUT    = False
-TEST_WING_HAS_FOLD     = False
+# matters).
+#
+# Read LIVE off wing_id (vsp_setup.get_wing_reference_params(), the same
+# WingGeom-group parm read run_vspaero_aero() already uses for
+# TotalChord) whenever a real wing was resolved above - so this can never
+# silently disagree with whatever geometry main.py actually just loaded,
+# the way a hand-copied literal could (and did: this used to be a frozen
+# snapshot read once off the .vsp3 and pasted in here, the exact failure
+# mode that made FUEL_CAPACITY_LBM's old placeholder impossible to trust).
+# Only falls back to the last-known snapshot below when no live wing is
+# available this run (REF_MODE="manual", or an INPUT_MODE with no wing).
+if wing_id is not None:
+    TEST_WING_AREA_FT2, TEST_WING_SPAN_FT, TEST_WING_ASPECT_RATIO = \
+        vsp_setup.get_wing_reference_params(wing_id)
+    print(f"   Wing reference read live from model: area={TEST_WING_AREA_FT2:.3f} ft^2, "
+          f"span={TEST_WING_SPAN_FT:.3f} ft, AR={TEST_WING_ASPECT_RATIO:.4f}")
+else:
+    # Fallback snapshot only - last read directly off
+    # SSAM_final_geom_to_be_used_scaled_by_19_simplified.vsp3's Main_Wing
+    # (TotalArea=78.319 m^2 -> 843.018 ft^2, TotalSpan=13.5565 m ->
+    # 44.477 ft, TotalAR=2.3465 - low-AR delta planform per Giannelis,
+    # Bykerk & Vio, Aerospace 2023, 10, 746, the SSAM-Gen5 source paper).
+    print("   ⚠️  No wing_id resolved this run (REF_MODE='manual' or a "
+          "wing-less INPUT_MODE) - using last-known wing reference snapshot.")
+    TEST_WING_AREA_FT2     = 843.018026816014
+    TEST_WING_SPAN_FT      = 44.47670603674372
+    TEST_WING_ASPECT_RATIO = 2.346542205448008
 
 # ── Mass basis ───────────────────────────────────────────────────────────
 # Real F-22A Raptor published reference specs, used ONLY as a wing-loading
@@ -308,8 +349,9 @@ TEST_WING_HAS_FOLD     = False
 # full-scale geometry.
 #
 # Switched from F-16C to F-22A (was F16C_* before). Two reasons: (1) this
-# geometry's own wing area (TEST_WING_AREA_FT2 = 843.02 ft^2) is almost
-# exactly the real F-22A's (840 ft^2, 78.04 m^2) — scaling the F-22's
+# geometry's own wing area (MASS_BASIS_REFERENCE_WING_AREA_FT2 = 843.02
+# ft^2, see below) is almost exactly the real F-22A's (840 ft^2, 78.04
+# m^2) — scaling the F-22's
 # wing loading onto this geometry is ~1.004x, vs. ~2.81x scaling up from
 # the F-16C's much smaller 300 ft^2 wing, so far less of the resulting
 # mass is an artifact of the scale-up itself; (2) this project's source
@@ -327,19 +369,72 @@ F22_GROSS_MASS_LBM = 83500.0   # published F-22A max takeoff weight
 F22_FUEL_MASS_LBM  = 18000.0   # published F-22A internal fuel capacity
 F22_WING_AREA_FT2  = 840.0     # published F-22A wing area
 
+# MASS_BASIS_REFERENCE_WING_AREA_FT2: intentionally PINNED, NOT the same
+# thing as the live TEST_WING_AREA_FT2 above. TEST_WING_AREA_FT2 now
+# tracks whatever geometry main.py actually loads this run (see above) -
+# correct for the aero sweep and Stability's CL_TARGET, which MUST always
+# reflect the real current planform (CL = W/(q*S) is a real physical
+# relationship - q*S has to be this run's actual S).
+#
+# But this project's real comparison is baseline vs. RCS-shaped variant -
+# the SAME aircraft's structure/systems/fuel/payload, with only the
+# external mold-line (and therefore drag/RCS, not mass) changed. If
+# GROSS_MASS_LBM/FUEL_CAPACITY_LBM below scaled off the LIVE
+# TEST_WING_AREA_FT2 instead, a shaping-only planform-area change (edge
+# alignment, a faceted wingtip, etc.) would silently shift the assumed
+# aircraft WEIGHT too between the two runs being compared - an
+# uncontrolled variable in exactly the comparison this project exists to
+# make, and a coupling Stability's own CL = W/(q*S) never assumes either
+# (there, S is free to be whatever the current geometry is, but nothing
+# forces W to move with it). Pinning mass basis to one frozen reference
+# area - the baseline geometry's own, captured once below - keeps it
+# identical across every shape variant tested.
+MASS_BASIS_REFERENCE_WING_AREA_FT2 = 843.018026816014   # baseline geometry's own wing area (frozen, not live)
+
+# GROSS_MASS_LBM: this geometry's own placeholder gross mass, derived by
+# scaling the F-22A's wing loading (W/S) onto MASS_BASIS_REFERENCE_
+# WING_AREA_FT2 - the single source of truth both the Stability section
+# below and the Mission step (Raymer_sizing_based_mission_check.py) use,
+# so they can never silently disagree the way two separately-computed
+# copies could.
+GROSS_MASS_LBM = (F22_GROSS_MASS_LBM / F22_WING_AREA_FT2) * MASS_BASIS_REFERENCE_WING_AREA_FT2
+
+# FUEL_CAPACITY_LBM: this aircraft's internal fuel tank capacity, scaled
+# from the F-22A the SAME way GROSS_MASS_LBM is above (same pinned
+# MASS_BASIS_REFERENCE_WING_AREA_FT2, not the live TEST_WING_AREA_FT2) -
+# the W/S scaling logic is still live in the formula below, not a one-off
+# number computed by hand and pasted in: F22_FUEL_MASS_LBM/
+# F22_WING_AREA_FT2 (F-22A fuel loading, lbm per ft^2 of wing) times the
+# pinned reference area, exactly mirroring GROSS_MASS_LBM's own line
+# above with F22_FUEL_MASS_LBM in place of F22_GROSS_MASS_LBM. This is
+# algebraically identical to scaling GROSS_MASS_LBM directly by the
+# F-22's own fuel fraction (F22_FUEL_MASS_LBM/F22_GROSS_MASS_LBM =
+# 21.6%): both routes give the exact same 18,064.67 lbm to full
+# floating-point precision, preserving the real F-22A's fuel-to-weight
+# ratio on this airframe.
+#
+# Replaces a previous flat placeholder (24,590.81 lbm) whose provenance
+# was never established - that number predated this config section, was
+# not derived from any of the constants above, and implied a ~29.3% fuel
+# fraction of GROSS_MASS_LBM versus the F-22's own ~21.6%, with no cited
+# source for the difference.
+FUEL_CAPACITY_LBM = (F22_FUEL_MASS_LBM / F22_WING_AREA_FT2) * MASS_BASIS_REFERENCE_WING_AREA_FT2
+
 # ── Engine specs (simplified F100-PW-229-class deck — NOT real engine test
-# data, see scripts/aviary/build_engine_deck.py) ───────────────────────────
+# data, see scripts/build_engine_deck.py) ───────────────────────────────────
 # These are PER-ENGINE published values. This aircraft is a confirmed
-# TWIN-engine design (see scripts/aviary/classical_mission.py's
-# num_engines docstring for the derivation - a single engine at this
-# gross mass gives T/W~0.35, nowhere near a real fighter's ~0.9-1.2, and
-# was the dominant reason an early climb-feasibility check found this
-# aircraft couldn't sustain even a modest climb rate). Pass
-# num_engines=2 to classical_mission.run_classical_mission() (and
-# run_aviary.py's Aircraft.Engine.NUM_ENGINES is set to 2 to match) -
-# these two constants stay as per-engine values either way.
+# TWIN-engine design (see scripts/classical_mission.py's num_engines
+# docstring for the derivation - a single engine at this gross mass gives
+# T/W~0.35, nowhere near a real fighter's ~0.9-1.2, and was the dominant
+# reason an early climb-feasibility check found this aircraft couldn't
+# sustain even a modest climb rate). Pass num_engines=2 to
+# classical_mission.run_classical_mission() - these two constants stay as
+# per-engine values either way.
 ENGINE_T_SL_DRY_LBF = 17800.0   # published F100-PW-229 dry static thrust
 ENGINE_T_SL_AB_LBF  = 29100.0   # published F100-PW-229 afterburner static thrust
+NUM_ENGINES         = 2         # confirmed twin-engine (see comment above) -
+                                 # scales the per-engine values above to the
+                                 # whole aircraft's installed thrust/fuel flow
 # TSFC is no longer a constant here — build_engine_deck.py computes it
 # from Mattingly & Heiser's TSFC correlation (Ch.3 Sec.3.3.2, Eqs.
 # 3.55a/b for this engine class), same citation-over-guess upgrade as
@@ -376,22 +471,17 @@ ENGINE_THROTTLE_RATIO = 1.07
 # performance data instead of the Mattingly & Heiser textbook-correlation
 # deck above (ENGINE_T_SL_DRY_LBF/ENGINE_T_SL_AB_LBF/ENGINE_TYPE/
 # ENGINE_THROTTLE_RATIO are all ignored when this is set). See
-# scripts/aviary/engine_deck_template.csv for the required column format
-# and a starting skeleton to fill in — Aviary itself has never shipped a
-# fighter-class (afterburning) engine deck (checked: none of its bundled
-# example decks in aviary/models/engines/ are anything but civil transport
-# turbofans/turboshafts), and no public F100-PW-229 performance deck
-# exists to substitute in, so this stays None (auto-generated deck) for
-# real use until real engine data becomes available for this project.
-#
-# Was pointed at Aviary's own bundled turbofan_22k.csv for one diagnostic
-# run, to test whether the OFF_DESIGN_MAX_RANGE stall was specific to the
-# auto-generated Mattingly & Heiser deck (it wasn't - see
-# scripts/aviary/classical_mission.py's module docstring for how that
-# investigation concluded). Reverted back to None now that test has
-# served its purpose; a civil turbofan is not this aircraft's real engine
-# class (no afterburner, different thrust-lapse/SFC curve) and would make
-# any fuel-burn/range numbers physically meaningless for this aircraft.
+# scripts/engine_deck_template.csv for the required column format and a
+# starting skeleton to fill in — no public F100-PW-229 performance deck
+# exists to substitute in, and a civil-transport turbofan deck (no
+# afterburner, different thrust-lapse/SFC curve) would make any fuel-
+# burn/range numbers physically meaningless for this aircraft class, so
+# this stays None (auto-generated deck) for real use until real engine
+# data becomes available for this project. This is not hypothetical
+# caution: an earlier, now-retired Aviary-based pipeline was pointed at
+# Aviary's own bundled civil turbofan deck for one diagnostic run, purely
+# to check whether a numerical stall was specific to the auto-generated
+# deck (it wasn't) - never for a real fuel-burn/range result.
 CUSTOM_ENGINE_DECK_PATH = None
 
 # ── Mission profile ────────────────────────────────────────────────────────
@@ -399,115 +489,90 @@ CRUISE_MACH        = 0.6
 CRUISE_ALTITUDE_FT = 35000.0
 DESIGN_RANGE_NMI   = 400.0
 
-# SIMPLE_MISSION — debugging toggle, not a normal-run setting. True
-# collapses the climb+cruise+descent mission below to a single cruise-only
-# phase spanning the full DESIGN_RANGE_NMI at fixed CRUISE_MACH/
-# CRUISE_ALTITUDE_FT (same aircraft/aero/engine data, ~3x fewer collocation
-# nodes, no phase-linking) — a cheap test for whether an SLSQP stall is
-# inherent to this problem's scale/formulation or specific to the climb/
-# descent phase machinery. Leave False for a real mission result.
-SIMPLE_MISSION = False
-
 # =========================
 # TRIGGER AERO PIPELINE
 # =========================
 
 geom_stem = os.path.splitext(IMPORT_FILE)[0]
 
-import glob
-for f in glob.glob(os.path.join(vsp_setup.VSP_FILES, f"{geom_stem}_M*.*")):
-    os.remove(f)
+mach_results = []  # (M, alt, polar_dst, CD0, K, r2) - stays [] if RUN_VSPAERO
+                    # is False, so Stability below still runs (and simply has
+                    # nothing to loop over) instead of raising NameError.
+if RUN_VSPAERO:
+    for f in glob.glob(os.path.join(vsp_setup.VSP_FILES, f"{geom_stem}_M*.*")):
+        os.remove(f)
 
-mach_results = []  # (M, alt, polar_dst, CD0, K, r2)
-for ALT in ALTITUDE_LIST:
-    for M in MACH_LIST:
-        # supersonic panel/mixed-body limitation: thick surfaces only valid subsonic —
-        # for M>=1, exclude thick geometry entirely and run thin-surfaces-only VLM
-        thick_set_this_run = thick_set if M < 1.0 else vsp.SET_NONE
-        polar_dst, CD0, K, r2 = vsp_setup.run_vspaero_aero(
-            wing_id=wing_id,
-            altitude_ft=ALT,
-            alpha_start=ALPHA_START, alpha_end=ALPHA_END, alpha_npts=ALPHA_NPTS,
-            mach_start=M, mach_end=M, mach_npts=1,
-            re_cref_start=RE_CREF, wake_iters=WAKE_ITERS,
-            thin_geom_set=thin_set,
-            thick_geom_set=thick_set_this_run,
-            ref_mode=REF_MODE,
-            x_cg=X_CG, y_cg=Y_CG, z_cg=Z_CG,
-            run_name=f"{geom_stem}_M{M:.2f}_ALT{int(ALT)}",
-        )
-        if polar_dst is not None:
-            mach_results.append((M, ALT, polar_dst, CD0, K, r2))
-        time.sleep(5)
+    for ALT in ALTITUDE_LIST:
+        for M in MACH_LIST:
+            # supersonic panel/mixed-body limitation: thick surfaces only valid subsonic —
+            # for M>=1, exclude thick geometry entirely and run thin-surfaces-only VLM
+            thick_set_this_run = thick_set if M < 1.0 else vsp.SET_NONE
+            polar_dst, CD0, K, r2 = vsp_setup.run_vspaero_aero(
+                wing_id=wing_id,
+                altitude_ft=ALT,
+                alpha_start=ALPHA_START, alpha_end=ALPHA_END, alpha_npts=ALPHA_NPTS,
+                mach_start=M, mach_end=M, mach_npts=1,
+                re_cref_start=RE_CREF, wake_iters=WAKE_ITERS,
+                thin_geom_set=thin_set,
+                thick_geom_set=thick_set_this_run,
+                ref_mode=REF_MODE,
+                x_cg=X_CG, y_cg=Y_CG, z_cg=Z_CG,
+                run_name=f"{geom_stem}_M{M:.2f}_ALT{int(ALT)}",
+            )
+            if polar_dst is not None:
+                mach_results.append((M, ALT, polar_dst, CD0, K, r2))
+            time.sleep(5)
 
-# ── everything below runs ONCE, after the loop finishes ──────────────
-import csv
-summary_path = os.path.join(vsp_setup.AERO_RESULTS_DIR, f"drag_polar_fits_{geom_stem}.csv")
-write_header = not os.path.exists(summary_path)
-with open(summary_path, "a", newline="") as f:
-    writer = csv.writer(f)
-    if write_header:
-        writer.writerow(["Mach", "Altitude_ft", "CD0", "K", "R2", "polar_file"])
-    for M, ALT, polar_dst, CD0, K, r2 in mach_results:
-        writer.writerow([M, ALT, CD0, K, r2, os.path.basename(polar_dst)])
-print(f"   ✅ CD0/K summary: {summary_path}")
+    # ── everything below runs ONCE, after the loop finishes ──────────────
+    summary_path = os.path.join(vsp_setup.AERO_RESULTS_DIR, f"drag_polar_fits_{geom_stem}.csv")
+    write_header = not os.path.exists(summary_path)
+    with open(summary_path, "a", newline="") as f:
+        writer = csv.writer(f)
+        if write_header:
+            writer.writerow(["Mach", "Altitude_ft", "CD0", "K", "R2", "polar_file"])
+        for M, ALT, polar_dst, CD0, K, r2 in mach_results:
+            writer.writerow([M, ALT, CD0, K, r2, os.path.basename(polar_dst)])
+    print(f"   ✅ CD0/K summary: {summary_path}")
       
         
-# # ── OVERLAY PLOTS — all Mach points on same axes, one per metric ────────
-
-# # L/D vs Alpha
-# fig, ax = plt.subplots(figsize=(7, 5))
-# for M, polar_dst, CD0, K, r2 in mach_results:
-#     df = pd.read_csv(polar_dst.replace(".polar", ".csv"))
-#     if df["CL"].isna().all():
-#         print(f"   Skipping M={M:.2f} in L/D overlay — all-NaN (diverged)")
-#         continue
-#     ax.plot(df["Alpha"], df["L/D"], "-o", ms=4, label=f"M={M:.2f}")
-# ax.set_xlabel("Alpha (deg)")
-# ax.set_ylabel("L/D")
-# ax.set_title(f"L/D vs Alpha — {geom_stem}, Mach comparison")
-# ax.legend()
-# ax.grid(True, ls="--", alpha=0.6)
-# fig.tight_layout()
-# fig.savefig(os.path.join(vsp_setup.AERO_RESULTS_DIR, f"ld_alpha_overlay_{geom_stem}.png"), dpi=150)
-# plt.close(fig)
-# print(f"   ✅ L/D overlay saved for {geom_stem}")
-
-# # CL vs Alpha
-# fig, ax = plt.subplots(figsize=(7, 5))
-# for M, polar_dst, CD0, K, r2 in mach_results:
-#     df = pd.read_csv(polar_dst.replace(".polar", ".csv"))
-#     if df["CL"].isna().all():
-#         print(f"   Skipping M={M:.2f} in CL-alpha overlay — all-NaN (diverged)")
-#         continue
-#     ax.plot(df["Alpha"], df["CL"], "-o", ms=4, label=f"M={M:.2f}")
-# ax.set_xlabel("Alpha (deg)")
-# ax.set_ylabel("CL")
-# ax.set_title(f"CL vs Alpha — {geom_stem}, Mach comparison")
-# ax.legend()
-# ax.grid(True, ls="--", alpha=0.6)
-# fig.tight_layout()
-# fig.savefig(os.path.join(vsp_setup.AERO_RESULTS_DIR, f"cl_alpha_overlay_{geom_stem}.png"), dpi=150)
-# plt.close(fig)
-# print(f"   ✅ CL-alpha overlay saved for {geom_stem}")
-
-# # CL vs CD (drag polar)
-# fig, ax = plt.subplots(figsize=(7, 5))
-# for M, polar_dst, CD0, K, r2 in mach_results:
-#     df = pd.read_csv(polar_dst.replace(".polar", ".csv"))
-#     if df["CL"].isna().all():
-#         print(f"   Skipping M={M:.2f} in drag-polar overlay — all-NaN (diverged)")
-#         continue
-#     ax.plot(df["CDtot"], df["CL"], "-o", ms=4, label=f"M={M:.2f}")
-# ax.set_xlabel("CD")
-# ax.set_ylabel("CL")
-# ax.set_title(f"Drag Polar — {geom_stem}, Mach comparison")
-# ax.legend()
-# ax.grid(True, ls="--", alpha=0.6)
-# fig.tight_layout()
-# fig.savefig(os.path.join(vsp_setup.AERO_RESULTS_DIR, f"drag_polar_overlay_{geom_stem}.png"), dpi=150)
-# plt.close(fig)
-# print(f"   ✅ Drag polar overlay saved for {geom_stem}")
+# ── OVERLAY PLOTS — faceted by altitude (one panel per altitude, Mach
+# curves within each panel), only if the sweep actually produced anything
+# to plot (mach_results stays [] when RUN_VSPAERO=False and no prior sweep
+# ran, per that toggle's own comment above). A single 9-line plot (3 Mach
+# x 3 Altitude) was the original approach here, but mach_results grew a
+# second axis (Altitude) after this was first written and the old code
+# never accounted for it - faceting by altitude keeps each panel to 3
+# legible Mach curves, and leaves room to add a baseline-vs-shaped-config
+# comparison later without overloading a single plot's color channel.
+if mach_results:
+    altitudes_sorted = sorted({alt for _, alt, *_ in mach_results})
+    for metric_name, x_col, y_col, x_label, y_label, title in [
+        ("ld_alpha",   "Alpha", "L/D", "Alpha (deg)", "L/D", "L/D vs Alpha"),
+        ("cl_alpha",   "Alpha", "CL",  "Alpha (deg)", "CL",  "CL vs Alpha"),
+        ("drag_polar", "CDtot", "CL",  "CD",          "CL",  "Drag Polar"),
+    ]:
+        fig, axes = plt.subplots(1, len(altitudes_sorted), figsize=(5 * len(altitudes_sorted), 5), sharey=True)
+        if len(altitudes_sorted) == 1:
+            axes = [axes]
+        for ax, ALT in zip(axes, altitudes_sorted):
+            for M, alt_pt, polar_dst, CD0, K, r2 in mach_results:
+                if alt_pt != ALT:
+                    continue
+                df = pd.read_csv(polar_dst.replace(".polar", ".csv"))
+                if df[y_col].isna().all():
+                    print(f"   Skipping M={M:.2f}, {int(ALT)}ft in {title} overlay — all-NaN (diverged)")
+                    continue
+                ax.plot(df[x_col], df[y_col], "-o", ms=4, label=f"M={M:.2f}")
+            ax.set_xlabel(x_label)
+            ax.set_title(f"{int(ALT)} ft")
+            ax.legend()
+            ax.grid(True, ls="--", alpha=0.6)
+        axes[0].set_ylabel(y_label)
+        fig.suptitle(f"{title} — {geom_stem}")
+        fig.tight_layout()
+        fig.savefig(os.path.join(vsp_setup.AERO_RESULTS_DIR, f"{metric_name}_overlay_{geom_stem}.png"), dpi=150)
+        plt.close(fig)
+        print(f"   ✅ {title} overlay saved for {geom_stem}")
 
 # ── STABILITY ────────────────────────────────────────────────────────
 # CL_TARGET is computed PER (Mach, Altitude) point rather than one fixed
@@ -518,16 +583,13 @@ print(f"   ✅ CD0/K summary: {summary_path}")
 # drops) — a single fixed CL_TARGET would report SM at a CL most of the
 # 9 sweep points don't actually fly at.
 #
-# Weight reuses the SAME wing-loading-scaled placeholder mass
-# run_aviary.py computes downstream (gross_mass_lbm = F-22A wing loading
-# x this geometry's TEST_WING_AREA_FT2, see AVIARY/MISSION CONFIG above)
-# — kept consistent here rather than introducing a second, independent
-# mass assumption just for this plot. Still inherits that mass basis's
-# placeholder status (real F-22A wing loading, not this airframe's own
-# mass) until the real full-scale mass buildup replaces it.
-_wing_loading_lbm_ft2 = F22_GROSS_MASS_LBM / F22_WING_AREA_FT2
-_gross_mass_lbm = _wing_loading_lbm_ft2 * TEST_WING_AREA_FT2
-_weight_N = _gross_mass_lbm * 0.45359237 * 9.80665   # lbm -> kg -> N (std gravity)
+# Weight reuses the SAME GROSS_MASS_LBM placeholder mass basis defined
+# above (ENGINE & MISSION CONFIG section) — kept consistent here rather
+# than introducing a second, independent mass assumption just for this
+# plot. Still inherits that mass basis's placeholder status (real F-22A
+# wing loading, not this airframe's own mass) until the real full-scale
+# mass buildup replaces it.
+_weight_N = GROSS_MASS_LBM * 0.45359237 * 9.80665   # lbm -> kg -> N (std gravity)
 _wing_area_m2 = TEST_WING_AREA_FT2 * 0.09290304
 
 for M, ALT, polar_dst, CD0, K, r2 in mach_results:
@@ -596,37 +658,75 @@ for M, ALT, polar_dst, CD0, K, r2 in mach_results:
         w.writerow([M, ALT, X_CG, CL_TARGET, sm, sm_r2, linear_range[0], linear_range[1]])
 
 # =========================
-# AVIARY MISSION ANALYSIS
+# MISSION ANALYSIS
 # =========================
-# Runs last — needs the full 9-file Mach x Altitude aero-CSV grid this
-# script just produced (above) for this same geom_stem. Every Aviary input
-# comes from the AVIARY / MISSION CONFIG section above and is passed in
-# explicitly below — run_aviary.py has nothing left to edit for a normal run.
+# Runs last - needs this geom_stem's aero CSVs (from a fresh RUN_VSPAERO
+# sweep above, or a previous one already on disk; either way
+# Raymer_sizing_based_mission_check.py reads them straight from disk by
+# geom_stem, not from mach_results in memory - see RUN_VSPAERO's own
+# comment above). Every aircraft/mission input comes from the ENGINE &
+# MISSION CONFIG section above; the climb schedule, margins, and
+# historical mission-segment fractions are left at that function's own
+# documented defaults (edit Raymer_sizing_based_mission_check.py directly
+# if those need to change for a specific study, not here).
+#
+# classical_mission.py (this project's own separate tool) is NOT run
+# here - see this file's module docstring for why.
 
-if RUN_AVIARY:
-    import sys
-    sys.path.insert(0, os.path.join(ROOT_DIR, "scripts", "aviary"))
-    from run_aviary import run_aviary_mission
-    run_aviary_mission(
+if RUN_MISSION:
+    from Raymer_sizing_based_mission_check import run_raymer_mission_check, print_results as print_mission_results
+    mission_results = run_raymer_mission_check(
         geom_stem=geom_stem,
         wing_area_ft2=TEST_WING_AREA_FT2,
-        wing_span_ft=TEST_WING_SPAN_FT,
-        wing_aspect_ratio=TEST_WING_ASPECT_RATIO,
-        wing_has_strut=TEST_WING_HAS_STRUT,
-        wing_has_fold=TEST_WING_HAS_FOLD,
-        f22_empty_mass_lbm=F22_EMPTY_MASS_LBM,
-        f22_gross_mass_lbm=F22_GROSS_MASS_LBM,
-        f22_fuel_mass_lbm=F22_FUEL_MASS_LBM,
-        f22_wing_area_ft2=F22_WING_AREA_FT2,
+        gross_mass_lbm=GROSS_MASS_LBM,
+        fuel_capacity_lbm=FUEL_CAPACITY_LBM,
+        design_range_nmi=DESIGN_RANGE_NMI,
+        cruise_mach=CRUISE_MACH,
+        cruise_altitude_ft=CRUISE_ALTITUDE_FT,
+        mach_list=MACH_LIST,
+        altitude_list=ALTITUDE_LIST,
+        custom_engine_deck_path=CUSTOM_ENGINE_DECK_PATH,
         engine_t_sl_dry_lbf=ENGINE_T_SL_DRY_LBF,
         engine_t_sl_ab_lbf=ENGINE_T_SL_AB_LBF,
         engine_throttle_ratio=ENGINE_THROTTLE_RATIO,
         engine_type=ENGINE_TYPE,
-        cruise_mach=CRUISE_MACH,
-        cruise_altitude_ft=CRUISE_ALTITUDE_FT,
-        design_range_nmi=DESIGN_RANGE_NMI,
-        mach_list=MACH_LIST,
-        altitude_list=ALTITUDE_LIST,
-        custom_engine_deck_path=CUSTOM_ENGINE_DECK_PATH,
-        simple_mission=SIMPLE_MISSION,
+        num_engines=NUM_ENGINES,
     )
+    print_mission_results(mission_results)
+
+    # Persist a summary row to disk, same accumulating-CSV convention as
+    # the Aero (drag_polar_fits_*.csv) and Stability (stability_summary_
+    # *.csv) steps above - previously this step only ever printed to
+    # console, so a mission result was lost the moment the terminal
+    # scrolled past it (caught because no file was showing up under
+    # Results/Mission/ after a real run - both the other two steps have
+    # always written one). Handles both possible return shapes: a
+    # completed run (climb_completed=True, feasible/residual_fuel_lbm/etc.
+    # populated) and an incomplete one (climb_completed=False - couldn't
+    # even reach cruise altitude, most fields below stay blank).
+    mission_summary_path = os.path.join(vsp_setup.MISSION_DIR, f"mission_summary_{geom_stem}.csv")
+    write_header = not os.path.exists(mission_summary_path)
+    with open(mission_summary_path, "a", newline="") as f:
+        w = csv.writer(f)
+        if write_header:
+            w.writerow([
+                "geom_stem", "climb_completed", "feasible", "climb_throttle_used",
+                "design_range_nmi", "total_range_nmi", "target_cruise_altitude_ft",
+                "gross_mass_lbm", "fuel_capacity_lbm", "fuel_required_lbm",
+                "residual_fuel_lbm", "failure_reason",
+            ])
+        w.writerow([
+            geom_stem,
+            mission_results.get("climb_completed"),
+            mission_results.get("feasible"),
+            mission_results.get("climb_throttle_used"),
+            mission_results.get("design_range_nmi"),
+            mission_results.get("total_range_nmi"),
+            mission_results.get("target_cruise_altitude_ft", CRUISE_ALTITUDE_FT),
+            mission_results.get("gross_mass_lbm"),
+            mission_results.get("fuel_capacity_lbm"),
+            mission_results.get("fuel_required_lbm"),
+            mission_results.get("residual_fuel_lbm"),
+            mission_results.get("failure_reason", ""),
+        ])
+    print(f"   ✅ Mission summary: {mission_summary_path}")

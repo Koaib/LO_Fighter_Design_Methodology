@@ -52,12 +52,8 @@ RESULTS_DIR  = os.path.join(ROOT_DIR, "Results",  "RCS")
 OPENRCS_DIR  = os.path.join(ROOT_DIR, "OpenRCS",  "open-rcs")
 AERO_RESULTS_DIR = os.path.join(ROOT_DIR, "Results", "Aero")
 STABILITY_DIR     = os.path.join(ROOT_DIR, "Results", "Stability")
-AVIARY_FILES      = os.path.join(ROOT_DIR, "Aviary_Files")       # raw/working Aviary+OpenMDAO output (engine deck, native _out/reports/)
-AVIARY_PERF_DIR   = os.path.join(ROOT_DIR, "Results", "aviary_perf")  # our OWN plain-language mission summary lives directly here
-AVIARY_PERF_NATIVE_DIR = os.path.join(AVIARY_PERF_DIR, "native_aviary_files")  # curated copies of Aviary's OWN native reports
-                                                                                 # (mission_summary.md etc.) — kept in their own
-                                                                                 # subfolder so they're not mistaken for our
-                                                                                 # plain-language summary sitting one level up
+MISSION_DIR       = os.path.join(ROOT_DIR, "Results", "Mission")
+GENERATED_FILES   = os.path.join(ROOT_DIR, "Generated_Files")     # raw/working generated output (engine decks, etc.)
 VSPAERO_EXE = os.path.join(VSP_INSTALL, "vspaero.exe")
 
 # Path to our bridge script (scripts/ folder, same folder as this file)
@@ -96,9 +92,8 @@ os.makedirs(STL_FILES,   exist_ok=True)
 os.makedirs(RESULTS_DIR, exist_ok=True)
 os.makedirs(AERO_RESULTS_DIR, exist_ok=True)
 os.makedirs(STABILITY_DIR, exist_ok=True)
-os.makedirs(AVIARY_FILES, exist_ok=True)
-os.makedirs(AVIARY_PERF_DIR, exist_ok=True)
-os.makedirs(AVIARY_PERF_NATIVE_DIR, exist_ok=True)
+os.makedirs(MISSION_DIR, exist_ok=True)
+os.makedirs(GENERATED_FILES, exist_ok=True)
 
 # =========================
 # OPENVSP INITIALIZATION
@@ -427,6 +422,26 @@ def isa_atmosphere(alt_ft):
     a_sound = (GAMMA * R_AIR * T) ** 0.5
     return T, RHO, MU, a_sound
 
+
+def get_wing_reference_params(wing_id):
+    """Reads TotalArea/TotalSpan/TotalAR straight off wing_id's own
+    "WingGeom" parm group - the model's actual current planform, not a
+    hand-copied snapshot from a previous run. Same container name/pattern
+    run_vspaero_aero() below already uses for "TotalChord" (its auto-Re
+    calculation), just two more sibling parms in that same group.
+
+    Model length unit is assumed to be meters, this project's convention
+    throughout (see main.py's X_CG note) - returns (area_ft2, span_ft,
+    aspect_ratio_dimensionless)."""
+    import openvsp as vsp
+    area_m2 = vsp.GetParmVal(wing_id, "TotalArea", "WingGeom")
+    span_m  = vsp.GetParmVal(wing_id, "TotalSpan", "WingGeom")
+    ar      = vsp.GetParmVal(wing_id, "TotalAR",   "WingGeom")
+    area_ft2 = area_m2 / (0.3048 ** 2)
+    span_ft  = span_m / 0.3048
+    return area_ft2, span_ft, ar
+
+
 def run_vspaero_aero(
     wing_id,
     altitude_ft    = 0.0,   # NEW — drives Re calc via ISA atmosphere
@@ -447,11 +462,23 @@ def run_vspaero_aero(
     thick_geom_set = 0,
     ref_mode       = "auto",
     sref = None, bref = None, cref = None,
-    x_cg = None, y_cg = None, z_cg = None,   
+    x_cg = None, y_cg = None, z_cg = None,
     run_name       = "aircraft",
+    output_dir     = None,   # Where the final .polar/.csv + 3 PNGs land.
+                              # None (default) = AERO_RESULTS_DIR, i.e. the
+                              # exact existing shared Results/Aero/ folder
+                              # every current caller (main.py, sweep_worker.py)
+                              # keeps getting unless it opts in. Does NOT
+                              # affect VSP_FILES (the .vsp3/.vspgeom scratch
+                              # files vspaero.exe itself writes while
+                              # solving, below) - those stay in the shared
+                              # VSP_Files/ folder regardless, same as today.
 ):
-    
+
     import openvsp as vsp
+
+    out_dir = output_dir if output_dir is not None else AERO_RESULTS_DIR
+    os.makedirs(out_dir, exist_ok=True)
 
     print("\n🔄 Running VSPAero VLM analysis...")
     print(f"   wing_id: {wing_id}")
@@ -611,7 +638,7 @@ def run_vspaero_aero(
 
     # ── 7. COPY TO RESULTS FOLDER ─────────────────────────────────────────────
     timestamp = time.strftime('%Y%m%d_%H%M%S')
-    polar_dst = os.path.join(AERO_RESULTS_DIR, f"aero_{run_name}_{timestamp}.polar")    
+    polar_dst = os.path.join(out_dir, f"aero_{run_name}_{timestamp}.polar")
     shutil.copy2(polar_src, polar_dst)
     print(f"   Polar file saved : {polar_dst}")
 
@@ -686,7 +713,7 @@ def run_vspaero_aero(
     ax.axhline(0, color='k', linewidth=0.8)
     ax.axvline(0, color='k', linewidth=0.8)
     fig.tight_layout()
-    cl_path = os.path.join(AERO_RESULTS_DIR, f"cl_alpha_{run_name}_{timestamp}.png")
+    cl_path = os.path.join(out_dir, f"cl_alpha_{run_name}_{timestamp}.png")
     fig.savefig(cl_path, dpi=150)
     plt.close(fig)
     print(f"\n   ✅ CL-alpha plot : {cl_path}")
@@ -702,7 +729,7 @@ def run_vspaero_aero(
     ax.legend(fontsize=10)
     ax.grid(True, linestyle='--', alpha=0.6)
     fig.tight_layout()
-    polar_path = os.path.join(AERO_RESULTS_DIR, f"drag_polar_{run_name}_{timestamp}.png")
+    polar_path = os.path.join(out_dir, f"drag_polar_{run_name}_{timestamp}.png")
     fig.savefig(polar_path, dpi=150)
     plt.close(fig)
     print(f"   ✅ Drag polar    : {polar_path}")
@@ -717,7 +744,7 @@ def run_vspaero_aero(
     ax.set_title(f"L/D vs Alpha — VSPAero VLM (M={mach_start:.2f})", fontsize=13)
     ax.grid(True, linestyle='--', alpha=0.6)
     fig.tight_layout()
-    ld_path = os.path.join(AERO_RESULTS_DIR, f"ld_alpha_{run_name}_{timestamp}.png")
+    ld_path = os.path.join(out_dir, f"ld_alpha_{run_name}_{timestamp}.png")
     fig.savefig(ld_path, dpi=150)
     plt.close(fig)
     print(f"   ✅ L/D-alpha plot: {ld_path}")

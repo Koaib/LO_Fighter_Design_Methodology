@@ -1,20 +1,23 @@
 # ENGINE DECK TEMPLATE - fill in real thrust/fuel-flow data and delete this comment block
 #
 # HOW TO USE THIS FILE:
-#  1. Copy this file somewhere (e.g. Aviary_Files/engines/my_real_engine.csv).
+#  1. Copy this file somewhere (e.g. Generated_Files/engines/my_real_engine.csv).
 #  2. Replace every 0.0 in the Net_Thrust(lbf) and Fuel_Flow_Rate(lbm/h) columns
 #     with your engine's real values at that Mach/Altitude/Throttle point.
 #  3. Point main.py's CUSTOM_ENGINE_DECK_PATH at your filled-in copy.
 #     Leave CUSTOM_ENGINE_DECK_PATH = None to keep using the auto-generated
-#     Mattingly & Heiser textbook deck instead (scripts/aviary/build_engine_deck.py).
+#     Mattingly & Heiser textbook deck instead (scripts/build_engine_deck.py).
 #
-# RULES Aviary itself enforces (aviary/subsystems/propulsion/engine_deck.py):
+# RULES this project's own EngineTable class enforces (scripts/classical_mission.py):
 #  - Column headers are matched case-insensitively with whitespace stripped, so
 #    the exact header text below is not sacred - 'Mach', 'mach_number', 'MACH' all
-#    work - but Mach, Altitude, Throttle, and Thrust columns are REQUIRED; Fuel Flow
-#    is required by this pipeline even though Aviary itself treats it as optional.
-#  - Mach=0, Altitude=0 (sea-level static) MUST be included - Aviary needs it as a
-#    reference point.
+#    work - but Mach, Altitude, Throttle, Thrust, and Fuel Flow columns are all
+#    REQUIRED (raises KeyError naming what's missing if any column can't be found).
+#  - The (Mach, Altitude, Throttle) grid must be COMPLETE - every combination of
+#    the distinct values present in each column needs a row, or EngineTable raises
+#    ValueError rather than silently interpolating through a hole. Including
+#    Mach=0, Altitude=0 (sea-level static) is recommended for good low-speed
+#    interpolation coverage, not a hard requirement of the grid-completeness check.
 #  - Throttle: 0.0=idle, 0.5=military/dry power, 1.0=full afterburner (this
 #    pipeline's convention - matches build_engine_deck.py's own generated decks).
 #  - Add or remove Mach/Altitude/Throttle rows as your real data allows - this grid
