@@ -8,11 +8,17 @@ runs the FULL Mach x Altitude aero grid (same points main.py's own
 TRIGGER AERO PIPELINE sweeps for the un-swept baseline), computes static
 margin at each of those points, then runs the real Raymer (Ch 19)
 mission-feasibility check on this config's own aero data. Writes ONE
-manifest JSON per config - no separate summary CSV here, by design:
-aero_stab_mission_compare_family.py aggregates across every config's
-manifest into whatever summary tables/plots are needed, the same
-division of responsibility rcs_sweep_worker.py/rcs_compare_family.py
-already use.
+manifest JSON per config holding every number computed - no separate
+SUMMARY CSV here, by design: aero_stab_mission_compare_family.py
+aggregates across every config's manifest into whatever summary tables/
+plots are needed ACROSS configs, the same division of responsibility
+rcs_sweep_worker.py/rcs_compare_family.py already use. That's different
+from a per-config human-readable artifact, though: this worker also
+writes a Cm-vs-Alpha stability plot (stability/<tag>_cm_alpha.png) and a
+mission-feasibility .md report (mission/<tag>.md) for THIS config alone,
+mirroring aero_dir's per-study "aero/" folder - both are cheap pure
+formatting/plotting steps over numbers already computed here, not new
+analysis.
 
 Geometry-override mechanism (_find_section_parm, the geom/sets-loading
 sequence) is the same proven pattern already used by sweep_worker.py and
@@ -47,6 +53,9 @@ if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
 
 import pandas as pd
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import vsp_setup
@@ -81,6 +90,15 @@ def main():
     # without threading this through too, the write-side redirect alone
     # would make every config's mission check fail with FileNotFoundError).
     aero_dir = os.path.join(os.path.dirname(cfg["manifest_dir"]), "aero")
+    # Same sibling-of-manifest/ pattern as aero_dir, one folder each for
+    # the two per-config artifacts added alongside it: a Cm-vs-Alpha
+    # stability plot and a human-readable mission-feasibility .md report -
+    # both cheap, pure-visualization/formatting steps over data already
+    # computed below (no new VSPAero calls), unlike aero_dir's contents.
+    stability_dir = os.path.join(os.path.dirname(cfg["manifest_dir"]), "stability")
+    mission_dir = os.path.join(os.path.dirname(cfg["manifest_dir"]), "mission")
+    os.makedirs(stability_dir, exist_ok=True)
+    os.makedirs(mission_dir, exist_ok=True)
     entry = {"tag": tag, "study": cfg["study"], "delta": cfg["delta"],
               "parm_overrides": cfg["parm_overrides"], "aero_dir": aero_dir, "status": "running"}
 
@@ -205,6 +223,36 @@ def main():
             })
         entry["stability_points"] = stability_points
 
+        # Cm vs Alpha, faceted by altitude (same layout main.py's own
+        # aero overlay plots use) - one line per Mach per panel, reusing
+        # the CMytot column already sitting in each aero point's own CSV
+        # (written above by run_vspaero_aero()), no new computation.
+        # One plot per CONFIG here, not per (Mach, Altitude) point like
+        # main.py's own Stability section does - 9 plots x 49 configs
+        # would be disproportionate for a sensitivity sweep; the faceted
+        # layout keeps all 9 points visible in one image per config.
+        altitudes_sorted = sorted({pt["alt_ft"] for pt in aero_points})
+        fig, axes = plt.subplots(1, len(altitudes_sorted), figsize=(5 * len(altitudes_sorted), 5), sharey=True)
+        if len(altitudes_sorted) == 1:
+            axes = [axes]
+        for ax, ALT in zip(axes, altitudes_sorted):
+            for pt in aero_points:
+                if pt["alt_ft"] != ALT:
+                    continue
+                df_pt = pd.read_csv(pt["csv"])
+                if df_pt["CMytot"].isna().all():
+                    continue
+                ax.plot(df_pt["Alpha"], df_pt["CMytot"], "-o", ms=4, label=f"M={pt['mach']:.2f}")
+            ax.set_xlabel("Alpha (deg)"); ax.set_title(f"{int(ALT)} ft")
+            ax.legend(); ax.grid(True, ls="--", alpha=0.6)
+        axes[0].set_ylabel("Cm")
+        fig.suptitle(f"Cm vs Alpha — {tag}")
+        fig.tight_layout()
+        cm_alpha_path = os.path.join(stability_dir, f"{tag}_cm_alpha.png")
+        fig.savefig(cm_alpha_path, dpi=150)
+        plt.close(fig)
+        entry["stability_plot_path"] = cm_alpha_path
+
         # ── MISSION: real Raymer Ch 19 feasibility check on THIS config's
         # own aero data (geom_stem=tag -> AeroLookup finds exactly the 9
         # files just written above, nothing from the baseline run or any
@@ -225,6 +273,11 @@ def main():
             aero_search_dir=aero_dir,
         )
         entry["mission_results"] = mission_results
+
+        mission_md_path = os.path.join(mission_dir, f"{tag}.md")
+        with open(mission_md_path, "w", encoding="utf-8") as f:
+            f.write(raymer.format_mission_results_md(mission_results, title=tag))
+        entry["mission_md_path"] = mission_md_path
 
         entry["status"] = "done"
         _write(manifest_path, entry)
