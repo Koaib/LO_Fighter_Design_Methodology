@@ -45,8 +45,12 @@ FOLDER LAYOUT (mirrors RCS's Results/RCS_SensitivityStudy/ layout):
         _logs/<tag>.log                  one log per config, incl. baseline
         _baseline/manifest/baseline.json the one shared Delta=0 run
         _baseline/aero/                  its own raw VSPAero .polar/.csv/3 PNGs
+        _baseline/stability/             its own Cm-vs-Alpha plot
+        _baseline/mission/               its own mission-feasibility .md report
         <study_name>/manifest/<tag>.json one manifest per non-zero-delta config, per study
         <study_name>/aero/               that study's own raw VSPAero .polar/.csv/3 PNGs x 9 points x N deltas
+        <study_name>/stability/          one Cm-vs-Alpha plot per config (faceted by altitude)
+        <study_name>/mission/            one mission-feasibility .md report per config
         Comparisons/*.png                 combined plots, built by compare_family.py
         summary_aero_stab_mission.csv     combined summary, built by compare_family.py
 The raw VSPAero output is isolated per study/baseline too now (not just
@@ -57,7 +61,10 @@ check.py's run_raymer_mission_check() takes a matching aero_search_dir
 so its AeroLookup still finds those files afterward - both default to
 None, preserving the original shared Results/Aero/ behavior exactly
 for every caller that doesn't pass them (main.py, the separate aero-
-only sweep_worker.py).
+only sweep_worker.py). stability/ and mission/ are new per-config
+human-readable artifacts (see aero_stab_mission_worker.py's own
+docstring) - distinct from the ACROSS-config summary CSV/plots
+aero_stab_mission_compare_family.py builds under Comparisons/.
 """
 import subprocess, json, sys
 from pathlib import Path

@@ -684,6 +684,56 @@ def print_results(results):
     print(f"  RESIDUAL FUEL (available - required)             : {results['residual_fuel_lbm']:+.1f} lbm")
     verdict = "FEASIBLE" if results["feasible"] else "NOT FEASIBLE"
     print(f"  VERDICT: MISSION {verdict}")
+
+
+def format_mission_results_md(results, title=None):
+    """Markdown rendering of the same fields print_results() prints to
+    console - same source of truth (same dict, same keys), just written
+    to a saved .md report instead of stdout, for callers (e.g. a sweep
+    worker running many configs unattended) that need a per-run artifact
+    rather than a console line nobody's watching. Handles both return
+    shapes exactly like print_results()/build_summary_rows() already do."""
+    heading = f"Mission Feasibility — {title}" if title else "Mission Feasibility"
+    lines = [f"# {heading}", "", "Raymer (Ch 19) mission-fuel-fraction feasibility check.", ""]
+
+    if results.get("climb_completed") is False:
+        lines += [
+            "**Status:** MISSION NOT FEASIBLE (could not complete the climb)", "",
+            "| Field | Value |", "|---|---|",
+            f"| Climb throttle tried | {results['climb_throttle_used']:.2f} |",
+            f"| Target cruise altitude | {results['target_cruise_altitude_ft']:.0f} ft |",
+            f"| Gross mass | {results['gross_mass_lbm']:.1f} lbm |",
+            f"| Fuel capacity | {results['fuel_capacity_lbm']:.1f} lbm |",
+            f"| Design range | {results['design_range_nmi']:.1f} nmi |",
+            "", f"**Reason:** {results['failure_reason']}", "",
+        ]
+        return "\n".join(lines)
+
+    verdict = "FEASIBLE" if results["feasible"] else "NOT FEASIBLE (fuel shortfall)"
+    lines += [
+        f"**Status:** MISSION {verdict}", "",
+        "## Summary", "",
+        "| Field | Value |", "|---|---|",
+        f"| Climb throttle used | {results['climb_throttle_used']:.2f} |",
+        f"| Total range flown | {results['total_range_nmi']:.1f} nmi |",
+        f"| Design range | {results['design_range_nmi']:.1f} nmi |",
+        f"| Fuel burned (pre-reserve) | {results['fuel_before_reserve_lbm']:.1f} lbm |",
+        f"| Fuel required (+6% reserve/trapped, Raymer Ch 19) | {results['fuel_required_lbm']:.1f} lbm |",
+        f"| Fuel available (tank capacity) | {results['fuel_capacity_lbm']:.1f} lbm |",
+        f"| Residual fuel (available - required) | {results['residual_fuel_lbm']:+.1f} lbm |",
+        f"| Gross mass | {results['gross_mass_lbm']:.1f} lbm |",
+        "",
+        "## Phase Breakdown", "",
+        "| Phase | Distance (nmi) | Time (min) | Fuel (lbm) |", "|---|---|---|---|",
+    ]
+    for phase in ("climb", "cruise", "descent"):
+        p = results[phase]
+        lines.append(f"| {phase.capitalize()} | {p['distance_nmi']:.1f} | "
+                      f"{p['time_s'] / 60.0:.1f} | {p['fuel_lbm']:.1f} |")
+    lines.append(f"| Start/taxi/takeoff | — | — | {results['start_taxi_takeoff']['fuel_lbm']:.1f} |")
+    lines.append(f"| Landing | — | — | {results['landing']['fuel_lbm']:.1f} |")
+    lines.append("")
+    return "\n".join(lines)
     print("=" * 68)
 
 
