@@ -24,6 +24,3 @@ pillow==10.4.0
 # To find what your Spyder needs: in Spyder go to
 #   Help → Dependencies → look for spyder-kernels required version
 spyder-kernels>=3.0,<3.2
-
-# ── NASA AVIARY ──────────────────────────────────────────────────
-aviary==1.0.1

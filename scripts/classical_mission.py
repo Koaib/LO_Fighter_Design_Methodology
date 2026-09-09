@@ -22,20 +22,21 @@ This module answers the same question a different way: given a FIXED
 aircraft (mass, aero, engine - nothing here is being sized or optimized),
 does it complete a climb/cruise/descent mission of the design range, and
 how much fuel does that take? It flies a fixed, reasonable schedule
-(climb Mach/altitude bounds and cruise Mach/altitude straight from this
-project's own phase_info.py) via direct numerical integration - small
-altitude/distance steps, quasi-steady flight mechanics - instead of
-collocation + gradient-based optimization. There is no optimizer in this
-file, so there is nothing here that can report "Exit mode 8"; it either
-completes and reports a real number, or it reports exactly which
-altitude/Mach combination ran outside the tested aero table (an
-extrapolation would be a real, meaningful failure, not a numerical
-artifact) - not the answer a full trajectory optimizer would give (it
-doesn't find the OPTIMAL climb schedule, cruise-climb profile, etc.),
-but it is a physically-grounded fuel-burn number a baseline-vs-RCS-shaped
-comparison can actually rely on getting.
+(climb Mach/altitude bounds and cruise Mach/altitude matching this
+project's original Aviary mission profile) via direct numerical
+integration - small altitude/distance steps, quasi-steady flight
+mechanics - instead of collocation + gradient-based optimization. There
+is no optimizer in this file, so there is nothing here that can report
+"Exit mode 8"; it either completes and reports a real number, or it
+reports exactly which altitude/Mach combination ran outside the tested
+aero table (an extrapolation would be a real, meaningful failure, not a
+numerical artifact) - not the answer a full trajectory optimizer would
+give (it doesn't find the OPTIMAL climb schedule, cruise-climb profile,
+etc.), but it is a physically-grounded fuel-burn number a baseline-vs-
+RCS-shaped comparison can actually rely on getting.
 
-Uses the EXACT SAME data sources as run_aviary.py:
+Uses the same data sources the project's now-retired Aviary pipeline
+did:
   - build_aero_polar.py's build_polar_arrays()/reshape_to_grid() (the same
     VSPAero-derived (altitude, Mach, alpha) -> (CL, CD) sweep).
   - build_engine_deck.py's build_deck() (the same Mattingly & Heiser
@@ -62,11 +63,10 @@ METHOD (per phase):
            thrust/fuel-flow from the engine deck at that Mach/altitude/
            throttle. Climb (vertical) rate from excess power:
            ROC = (Thrust-Drag)*V/Weight. Mach is ramped linearly between
-           phase_info.py's climb mach_initial/mach_final over the
-           altitude range as a nominal schedule, matching the existing
-           mission's own schedule, but can accelerate past that nominal
-           ramp (bounded by mach_final) when needed to keep the climb-
-           rate margin above the floor - see fly_climb_or_descent.
+           the climb's mach_initial/mach_final over the altitude range as
+           a nominal schedule, but can accelerate past that nominal ramp
+           (bounded by mach_final) when needed to keep the climb-rate
+           margin above the floor - see fly_climb_or_descent.
   Cruise:  step-cruise at the fixed design Mach/altitude: at each
            distance step, required CL/drag as above, but throttle is
            SOLVED (by direct linear interpolation of the engine deck's
@@ -96,14 +96,11 @@ import numpy as np
 import pandas as pd
 from scipy.interpolate import RegularGridInterpolator
 
-# Same bootstrapping run_aviary.py uses: this file's own directory (for
-# build_aero_polar/build_engine_deck, its sibling modules) plus the parent
-# scripts/ directory (for vsp_setup, which lives one level up) - needed
-# because running this file directly (Spyder's %runfile, or `python
-# classical_mission.py`) only puts THIS file's own directory on sys.path
-# by default, not its parent.
+# This file's own directory - needed because running it directly
+# (Spyder's %runfile, or `python classical_mission.py`) only puts THIS
+# file's own directory on sys.path by default; vsp_setup/build_aero_polar/
+# build_engine_deck are all plain siblings in scripts/ alongside this file.
 sys.path.insert(0, os.path.dirname(__file__))
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 import vsp_setup
 from build_aero_polar import build_polar_arrays, reshape_to_grid
@@ -148,8 +145,9 @@ class LiftMarginError(RuntimeError):
 
 class AeroTable:
     """(altitude, Mach, alpha) -> (CL, CD) lookup, built from this
-    project's own VSPAero sweep - the same data external_aero_builder.py
-    feeds into Aviary, used here directly instead."""
+    project's own VSPAero sweep - the same data the retired Aviary
+    pipeline used to feed into Aviary's own aero subsystem, read directly
+    here instead."""
 
     def __init__(self, geom_stem, expected_machs=None, expected_altitudes=None):
         arrays = build_polar_arrays(geom_stem, expected_machs, expected_altitudes)
@@ -188,15 +186,15 @@ class AeroTable:
 
 class EngineTable:
     """(Mach, altitude, throttle) -> (thrust_lbf, fuel_flow_lbm_per_hr),
-    from the same engine deck run_aviary.py uses (either the
-    auto-generated Mattingly & Heiser deck or a real custom_engine_deck_path
-    CSV) - read directly rather than through Aviary's EngineDeck class.
+    from an engine deck (either the auto-generated Mattingly & Heiser
+    deck or a real custom_engine_deck_path CSV) - read directly rather
+    than through Aviary's now-retired EngineDeck class.
 
     The deck (and build_engine_deck.py's t_sl_dry/t_sl_ab inputs) model
     ONE ENGINE's performance curve - published, per-engine F100-PW-229
-    spec values, same convention run_aviary.py uses for
+    spec values, the same convention Aviary itself used for
     Aircraft.Engine.REFERENCE_SLS_THRUST (a per-engine value Aviary
-    itself scales by Aircraft.Engine.NUM_ENGINES internally). num_engines
+    scaled by Aircraft.Engine.NUM_ENGINES internally). num_engines
     here does the same scaling explicitly: confirmed this session that
     this aircraft is a TWIN-engine design (gross_mass_lbm=83,800 with a
     single F100-PW-229-class engine gives T/W~0.35 at full afterburner -
@@ -565,10 +563,11 @@ def find_min_climb_start_mach(
     A low-aspect-ratio wing (this project's own wing-loading-scaled
     configs are typically AR ~2-3) has a LARGE induced-drag penalty at
     low speed/high CL - simply picking a slow, comfortable-sounding climb
-    Mach (or even the CL-margin-based Mach run_aviary.py computes, which
-    targets stall margin, a DIFFERENT constraint) can leave inadequate
-    THRUST margin even though there is plenty of LIFT margin. Caught
-    exactly this running the real aircraft data for the first time: CL
+    Mach (or even a CL-margin-based Mach targeting stall margin, a
+    DIFFERENT constraint - the retired Aviary pipeline computed one this
+    way) can leave inadequate THRUST margin even though there is plenty
+    of LIFT margin. Caught exactly this running the real aircraft data
+    for the first time: CL
     was a comfortable 0.71 (well under this table's ~1.0 max), but
     induced drag at that CL nearly equaled available military thrust at
     Mach 0.3 near sea level. A single Mach scan at the worst-case
@@ -640,8 +639,9 @@ def run_classical_mission(
     demonstrated failure mode has been made to degrade gracefully so far.
 
     num_engines: engine_t_sl_dry_lbf/engine_t_sl_ab_lbf are PER-ENGINE
-    published F100-PW-229 spec values (same convention run_aviary.py
-    uses for Aircraft.Engine.REFERENCE_SLS_THRUST) - num_engines scales
+    published F100-PW-229 spec values (the same convention the retired
+    Aviary pipeline used for Aircraft.Engine.REFERENCE_SLS_THRUST) -
+    num_engines scales
     the deck's thrust AND fuel flow up to the whole aircraft's installed
     total. Defaults to 1 because this function has no way to know the
     real engine count on its own, but confirmed this session that this
@@ -716,7 +716,7 @@ def run_classical_mission(
         engine_deck_path = custom_engine_deck_path
     else:
         engine_deck_path = build_deck(
-            out_dir=os.path.join(vsp_setup.AVIARY_FILES, "engines"),
+            out_dir=os.path.join(vsp_setup.GENERATED_FILES, "engines"),
             deck_name="classical_mission_f100_pw229_simplified.deck",
             t_sl_dry=engine_t_sl_dry_lbf, t_sl_ab=engine_t_sl_ab_lbf,
             throttle_ratio=engine_throttle_ratio, engine_type=engine_type,
@@ -893,8 +893,8 @@ def print_results(results, fuel_capacity_lbm):
 
 
 if __name__ == "__main__":
-    # Standalone smoke test — mirrors run_aviary.py's own standalone
-    # defaults so it finds the same aero CSVs when run directly.
+    # Standalone smoke test — uses this project's real geometry/mass
+    # placeholders so it finds the same aero CSVs when run directly.
     # num_engines=2: confirmed this session that this project's real
     # aircraft is twin-engine - see run_classical_mission's num_engines
     # docstring for why single-engine gave an unrealistically low T/W.

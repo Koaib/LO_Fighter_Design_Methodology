@@ -13,7 +13,7 @@ but both the thrust-lapse and TSFC SHAPES (how they vary with Mach and
 altitude) are now cited textbook formulas instead of generic guesses.
 
 All engine-specific numbers are passed in by the caller (see main.py's
-AVIARY / MISSION CONFIG section) rather than hardcoded here, so there is
+ENGINE & MISSION CONFIG section) rather than hardcoded here, so there is
 one place to edit them.
 
 =============================================================================
