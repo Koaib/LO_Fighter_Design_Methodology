@@ -1,32 +1,31 @@
 # -*- coding: utf-8 -*-
 """
-aero_stab_mission_rerun_mission_only.py — recomputes stability_points +
-mission_results (and mission/<tag>.md) for every already-finished config
-under Results/AeroStabMissionStudy, WITHOUT touching the aero grid.
+aero_stab_mission_rerun_mission_only.py — recomputes mission_results (and
+mission/<tag>.md) for every already-finished config under Results/
+AeroStabMissionStudy, WITHOUT touching the aero grid or stability_points.
 
 For the one-off situation where aero_stab_mission_driver.py was run with
 wrong mission-only settings (cruise_mach/cruise_altitude_ft/design_range_nmi/
-gross_mass_lbm/fuel_capacity_lbm/engine_*) but the aero grid itself
-(mach_list/altitude_list/alpha range/re_cref/wake_iters/geometry deltas)
-was fine. aero_stab_mission_driver.py's own manifest-status skip (see its
-run_one()) can't do a mission-only redo: it's all-or-nothing per config,
-and if forced to rerun it goes through aero_stab_mission_worker.py, which
-launches a full OpenVSP session per config just to re-read wing_area_ft2 -
-already sitting in the manifest - and would only skip re-running VSPAero
-if the manifest's aero_points survives untouched, which is fragile to
-rely on by hand across every manifest.
+engine_*) but the aero grid AND the weight basis (gross_mass_lbm/
+fuel_capacity_lbm) were fine - so stability_points (which depend only on
+wing_area_ft2 + gross_mass_lbm, both untouched) has nothing wrong to fix,
+only the Raymer mission check itself does. aero_stab_mission_driver.py's
+own manifest-status skip (see its run_one()) can't do a mission-only
+redo: it's all-or-nothing per config, and if forced to rerun it goes
+through aero_stab_mission_worker.py, which launches a full OpenVSP
+session per config just to re-read wing_area_ft2 - already sitting in the
+manifest - and would only skip re-running VSPAero if the manifest's
+aero_points survives untouched, which is fragile to rely on by hand
+across every manifest.
 
 This script instead reads each manifest directly, reuses its aero_points/
-wing_area_ft2/aero_dir as-is (never re-invokes VSPAero or OpenVSP), and
-recomputes only the two things that actually depend on mission/weight
-settings: stability_points (isa_atmosphere/compute_static_margin - pure
-numpy/pandas over the existing aero CSVs) and mission_results (Raymer_
-sizing_based_mission_check.run_raymer_mission_check() - pure function of
-its args plus files under aero_search_dir). Both mirror aero_stab_mission_
-worker.py's own calls exactly, just without the geometry/aero machinery
-around them. stability_plot_path's PNG is untouched on purpose - it only
-plots raw CMytot vs Alpha per aero CSV, independent of any mission/weight
-setting, so there's nothing in it to go stale.
+wing_area_ft2/aero_dir/stability_points as-is (never re-invokes VSPAero,
+OpenVSP, or the stability calc), and recomputes only mission_results via
+Raymer_sizing_based_mission_check.run_raymer_mission_check() - a pure
+function of its args plus files under aero_search_dir, mirroring
+aero_stab_mission_worker.py's own call exactly. stability_plot_path's PNG
+is untouched too, for the same reason it always was: it only plots raw
+CMytot vs Alpha per aero CSV, independent of any mission/weight setting.
 
 BEFORE RUNNING: fix the wrong constants in aero_stab_mission_driver.py
 first (this script imports that module and reads its current BASE dict
@@ -52,7 +51,6 @@ from pathlib import Path
 SCRIPT_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPT_DIR))
 
-import vsp_setup
 import aero_stab_mission_driver as driver
 import Raymer_sizing_based_mission_check as raymer
 
@@ -63,23 +61,6 @@ MISSION_KWARGS = (
     "engine_throttle_ratio", "engine_type", "num_engines",
 )
 SKIP_STATUSES = {"aero_failed", "aero_diverged", "running"}
-
-
-def _recompute_stability(entry):
-    weight_n = driver.BASE["gross_mass_lbm"] * 0.45359237 * 9.80665
-    wing_area_m2 = entry["wing_area_ft2"] * 0.09290304
-    stability_points = []
-    for pt in entry["aero_points"]:
-        _, rho, _, a_sound = vsp_setup.isa_atmosphere(pt["alt_ft"])
-        v_mps = pt["mach"] * a_sound
-        q_pa = 0.5 * rho * v_mps ** 2
-        cl_target = weight_n / (q_pa * wing_area_m2)
-        sm, sm_r2 = vsp_setup.compute_static_margin(pt["csv"], cl_target)
-        stability_points.append({
-            "mach": pt["mach"], "alt_ft": pt["alt_ft"],
-            "CL_target": cl_target, "SM": sm, "SM_R2": sm_r2,
-        })
-    return stability_points
 
 
 def _recompute_mission(entry, mission_dir):
@@ -110,7 +91,6 @@ def main():
             continue
 
         try:
-            entry["stability_points"] = _recompute_stability(entry)
             mission_dir = path.parent.parent / "mission"
             mission_results, mission_md_path = _recompute_mission(entry, mission_dir)
             entry["mission_results"] = mission_results
