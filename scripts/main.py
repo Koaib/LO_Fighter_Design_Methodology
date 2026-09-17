@@ -88,7 +88,7 @@ REF_MODE      = "auto"      # use "manual" for box_template — it has no wing
 # =========================
 # PIPELINE STAGE TOGGLES — edit this
 # =========================
-RUN_RCS     = False    # OpenRCS monostatic RCS pass (Results/RCS/)
+RUN_RCS     = True    # OpenRCS monostatic RCS pass (Results/RCS/)
 RUN_VSPAERO = True    # VSPAero Mach x Altitude sweep (Results/Aero/) - Stability
                        # and Mission both read this geom_stem's aero CSVs from
                        # disk, so False here only skips re-running the sweep
@@ -109,7 +109,7 @@ RUN_MISSION = True     # Raymer (Ch 19) mission-fuel-fraction feasibility
 # lambda/6 is the time/accuracy compromise currently in use.
 # min and max no longer have to match — e.g. MAX=4, MIN=8 refines curved
 # regions to lambda/8 while flatter regions stay at lambda/4.
-USE_CFD_MESH     = False     # False -> old plain ExportFile(EXPORT_STL)
+USE_CFD_MESH     = True     # False -> old plain ExportFile(EXPORT_STL)
 FREQ_GHZ         = 12.0     # also drives the RCS run below
 AZ_RANGE         = "half"   # "full" or "half" — half valid for bilaterally symmetric aircraft
 DELP             = 1.0       # phi step, deg — 30° (7 pts across a half-circle) was
@@ -483,7 +483,7 @@ CUSTOM_ENGINE_DECK_PATH = None
 # ── Mission profile ────────────────────────────────────────────────────────
 CRUISE_MACH        = 0.6
 CRUISE_ALTITUDE_FT = 30000.0
-DESIGN_RANGE_NMI   = 340.0
+DESIGN_RANGE_NMI   = 330.0
 
 # =========================
 # TRIGGER AERO PIPELINE
