@@ -63,10 +63,10 @@ MISSION_KWARGS = (
 SKIP_STATUSES = {"aero_failed", "aero_diverged", "running"}
 
 
-def _recompute_mission(entry, mission_dir):
+def _recompute_mission(entry, mission_dir, aero_search_dir):
     mission_results = raymer.run_raymer_mission_check(
         geom_stem=entry["tag"], wing_area_ft2=entry["wing_area_ft2"],
-        aero_search_dir=entry["aero_dir"],
+        aero_search_dir=aero_search_dir,
         **{k: driver.BASE[k] for k in MISSION_KWARGS},
     )
     mission_dir.mkdir(parents=True, exist_ok=True)
@@ -84,6 +84,15 @@ def main():
     for path in manifest_paths:
         entry = json.loads(path.read_text())
         tag = entry.get("tag", path.stem)
+        # This manifest's own study (or _baseline) directory - manifest_dir's
+        # own parent, exactly as aero_stab_mission_worker.py's own
+        # results_root is defined. Used below to resolve entry["aero_dir"]
+        # (stored relative to it, per that file's _portable_entry()) back
+        # to absolute for this run, and to re-relativize mission_md_path
+        # before writing the manifest back out - so running this script
+        # never bakes an absolute, machine-specific path into the
+        # manifest, whichever machine it's run on.
+        results_root = path.parent.parent
 
         if entry.get("status") in SKIP_STATUSES or not entry.get("aero_points"):
             print(f"skip {tag} — aero incomplete (status={entry.get('status')})")
@@ -91,10 +100,13 @@ def main():
             continue
 
         try:
-            mission_dir = path.parent.parent / "mission"
-            mission_results, mission_md_path = _recompute_mission(entry, mission_dir)
+            aero_dir = entry["aero_dir"]
+            if not Path(aero_dir).is_absolute():
+                aero_dir = str(results_root / aero_dir)
+            mission_dir = results_root / "mission"
+            mission_results, mission_md_path = _recompute_mission(entry, mission_dir, aero_dir)
             entry["mission_results"] = mission_results
-            entry["mission_md_path"] = mission_md_path
+            entry["mission_md_path"] = str(Path(mission_md_path).relative_to(results_root))
             entry["status"] = "done"
             entry.pop("error", None)
             path.write_text(json.dumps(entry, indent=2))

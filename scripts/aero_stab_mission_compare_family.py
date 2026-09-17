@@ -56,6 +56,29 @@ def discover_studies():
     return studies
 
 
+def _resolve_manifest_paths(entry, results_root):
+    """Rewrites entry["aero_dir"]/entry["stability_plot_path"]/
+    entry["mission_md_path"]/each aero_points[*]["csv"] in place from
+    RESULTS_ROOT-relative (as aero_stab_mission_worker.py now writes
+    them) to absolute, resolved against results_root - the study/
+    _baseline directory THIS manifest file was just read from, not
+    wherever it was originally generated. Makes copying the whole
+    Results/AeroStabMissionStudy/ tree to a different machine or clone
+    location just work. Manifests written before this fix already store
+    absolute paths there - os.path.isabs() below leaves those untouched
+    (best-effort; they only resolve on the machine that generated them,
+    exactly like before this fix existed)."""
+    for key in ("aero_dir", "stability_plot_path", "mission_md_path"):
+        v = entry.get(key)
+        if v and not os.path.isabs(v):
+            entry[key] = os.path.join(results_root, v)
+    for pt in entry.get("aero_points", []):
+        v = pt.get("csv")
+        if v and not os.path.isabs(v):
+            pt["csv"] = os.path.join(results_root, v)
+    return entry
+
+
 def _load_baseline_manifest():
     """Returns the shared baseline manifest dict, or None if it doesn't
     exist yet or hasn't finished - callers treat None as "no Delta=0
@@ -65,7 +88,9 @@ def _load_baseline_manifest():
         return None
     with open(BASELINE_MANIFEST) as f:
         entry = json.load(f)
-    return entry if entry.get("status") == "done" else None
+    if entry.get("status") != "done":
+        return None
+    return _resolve_manifest_paths(entry, os.path.dirname(os.path.dirname(BASELINE_MANIFEST)))
 
 
 def _splice_baseline_for_study(baseline_entry, study_name):
@@ -101,6 +126,7 @@ def load_family(study_names=None):
             with open(path) as f:
                 entry = json.load(f)
             if entry.get("status") == "done":
+                _resolve_manifest_paths(entry, os.path.join(RESULTS_ROOT, study_name))
                 done.append(entry)
                 if entry.get("delta") == 0.0:
                     has_zero = True
