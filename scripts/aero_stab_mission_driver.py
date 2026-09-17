@@ -132,7 +132,7 @@ ENGINE_TYPE = "low_bypass_mixed_flow_turbofan"
 NUM_ENGINES = 2
 CUSTOM_ENGINE_DECK_PATH = None
 
-CRUISE_MACH, CRUISE_ALTITUDE_FT, DESIGN_RANGE_NMI = 0.6, 35000.0, 400.0
+CRUISE_MACH, CRUISE_ALTITUDE_FT, DESIGN_RANGE_NMI = 0.6, 30000.0, 330.0
 
 BASE = dict(
     vsp3=VSP3_FILE, sets_file=SETS_FILE, ref_wing=REF_WING_NAME,
@@ -273,8 +273,8 @@ if __name__ == "__main__":
     # Identical parameter keys/deltas/study split to rcs_sweep_driver.py's
     # own __main__ - see that file if these ever need to change, and
     # change both together so the two studies stay comparable.
-    DELTAS_ANGLE = [-15, -12, -9, -6, -3, 0.0, 3, 6, 9, 12, 15]  # deg
-    DELTAS_TC    = [-0.02, -0.01, 0.0, 0.01, 0.02]  # absolute t/c, 0.02-0.06 around baseline 0.04
+    DELTAS_ANGLE = [-20, -19, -18, -17, -16, -15, -14, -13, -12, -11, -10, -9, -8, -7, -6, -5, -4, -3, -2, -1, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]  # deg
+    DELTAS_TC    = [-0.02, -0.01, 0.01, 0.02]  # absolute t/c, 0.02-0.06 around baseline 0.04
 
     run_baseline()   # once, shared, BEST-EFFORT - no longer blocks the studies
                      # below if it fails/is slow (see run_baseline() docstring).
