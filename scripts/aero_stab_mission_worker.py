@@ -58,6 +58,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import plot_style
 import vsp_setup
 import openvsp as vsp
 
@@ -249,7 +250,7 @@ def main():
         fig.suptitle(f"Cm vs Alpha — {tag}")
         fig.tight_layout()
         cm_alpha_path = os.path.join(stability_dir, f"{tag}_cm_alpha.png")
-        fig.savefig(cm_alpha_path, dpi=150)
+        fig.savefig(cm_alpha_path)
         plt.close(fig)
         entry["stability_plot_path"] = cm_alpha_path
 

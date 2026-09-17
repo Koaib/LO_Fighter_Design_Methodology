@@ -30,6 +30,7 @@ import glob
 import shutil
 import numpy as np
 import matplotlib.pyplot as plt
+import plot_style
 
 # =============================================================================
 # ROOT DIRECTORY (PORTABLE - works wherever the repo is cloned)
@@ -699,15 +700,15 @@ def run_vspaero_aero(
     # ── 10. CL-ALPHA PLOT ─────────────────────────────────────────────────────
     fig, ax = plt.subplots(figsize=(7, 5))
     ax.plot(alpha, CL, 'b-o', markersize=4, linewidth=1.5)
-    ax.set_xlabel("Angle of Attack α (deg)", fontsize=12)
-    ax.set_ylabel("Lift Coefficient CL", fontsize=12)
-    ax.set_title("CL vs Alpha — VSPAero VLM", fontsize=13)
+    ax.set_xlabel("Angle of Attack α (deg)")
+    ax.set_ylabel("Lift Coefficient CL")
+    ax.set_title("CL vs Alpha — VSPAero VLM")
     ax.grid(True, linestyle='--', alpha=0.6)
     ax.axhline(0, color='k', linewidth=0.8)
     ax.axvline(0, color='k', linewidth=0.8)
     fig.tight_layout()
     cl_path = os.path.join(out_dir, f"cl_alpha_{run_name}_{timestamp}.png")
-    fig.savefig(cl_path, dpi=150)
+    fig.savefig(cl_path)
     plt.close(fig)
     print(f"\n   ✅ CL-alpha plot : {cl_path}")
 
@@ -716,14 +717,14 @@ def run_vspaero_aero(
     ax.plot(CDtot, CL, 'r-o', markersize=4, linewidth=1.5, label='CDtot')
     ax.plot(CDi,   CL, 'b--', markersize=3, linewidth=1.0, label='CDi (induced)')
     ax.plot(CDo,   CL, 'g--', markersize=3, linewidth=1.0, label='CDo (parasite)')
-    ax.set_xlabel("Drag Coefficient CD", fontsize=12)
-    ax.set_ylabel("Lift Coefficient CL", fontsize=12)
-    ax.set_title("Drag Polar — VSPAero VLM", fontsize=13)
-    ax.legend(fontsize=10)
+    ax.set_xlabel("Drag Coefficient CD")
+    ax.set_ylabel("Lift Coefficient CL")
+    ax.set_title("Drag Polar — VSPAero VLM")
+    ax.legend()
     ax.grid(True, linestyle='--', alpha=0.6)
     fig.tight_layout()
     polar_path = os.path.join(out_dir, f"drag_polar_{run_name}_{timestamp}.png")
-    fig.savefig(polar_path, dpi=150)
+    fig.savefig(polar_path)
     plt.close(fig)
     print(f"   ✅ Drag polar    : {polar_path}")
 
@@ -732,13 +733,13 @@ def run_vspaero_aero(
     # ── 12. L/D vs AoA PLOT ───────────────────────────────────────────────────
     fig, ax = plt.subplots(figsize=(7, 5))
     ax.plot(alpha, LD, 'g-o', markersize=4, linewidth=1.5)
-    ax.set_xlabel("Angle of Attack α (deg)", fontsize=12)
-    ax.set_ylabel("L/D", fontsize=12)
-    ax.set_title(f"L/D vs Alpha — VSPAero VLM (M={mach_start:.2f})", fontsize=13)
+    ax.set_xlabel("Angle of Attack α (deg)")
+    ax.set_ylabel("L/D")
+    ax.set_title(f"L/D vs Alpha — VSPAero VLM (M={mach_start:.2f})")
     ax.grid(True, linestyle='--', alpha=0.6)
     fig.tight_layout()
     ld_path = os.path.join(out_dir, f"ld_alpha_{run_name}_{timestamp}.png")
-    fig.savefig(ld_path, dpi=150)
+    fig.savefig(ld_path)
     plt.close(fig)
     print(f"   ✅ L/D-alpha plot: {ld_path}")
 

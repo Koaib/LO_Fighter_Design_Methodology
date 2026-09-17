@@ -31,6 +31,7 @@ import json
 import os
 
 import matplotlib.pyplot as plt
+import plot_style
 import pandas as pd
 
 RESULTS_ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "Results", "AeroStabMissionStudy")
@@ -205,11 +206,11 @@ def plot_metric_by_study(df, metric, ylabel, out_path):
                 "top",
                 functions=(lambda x, b=spec_baseline: x + b, lambda x, b=spec_baseline: x - b),
             )
-            ax_top.set_xlabel("absolute value", fontsize=9)
+            ax_top.set_xlabel("absolute value", fontsize=11)
     axes[0].set_ylabel(ylabel)
     fig.suptitle(f"{ylabel} vs. shaping delta, by study")
     fig.tight_layout()
-    fig.savefig(out_path, dpi=150)
+    fig.savefig(out_path)
     plt.close(fig)
     print(f"   ✅ {out_path}")
 

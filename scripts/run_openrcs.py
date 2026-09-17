@@ -147,6 +147,7 @@ import numpy as np
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+import plot_style
 
 # =============================================================================
 # PATHS
@@ -341,15 +342,15 @@ def _plot_dual_linear(x_arr_te, copol_te, xpol_te,
     ymin = -110.0
     ax.set_ylim(ymin, ymax)
 
-    ax.set_xlabel(xlabel, fontsize=11)
-    ax.set_ylabel("RCS (dBsm)", fontsize=11)
-    ax.legend(fontsize=9, loc="upper right")
+    ax.set_xlabel(xlabel)
+    ax.set_ylabel("RCS (dBsm)")
+    ax.legend(loc="upper right")
     ax.grid(True, linestyle="--", alpha=0.55)
     ax.axvline(0, color="black", lw=0.6, linestyle=":")
 
-    fig.suptitle(f"{title}\n{subtitle}", fontsize=10)
+    fig.suptitle(f"{title}\n{subtitle}", fontsize=13)
     fig.tight_layout()
-    fig.savefig(output_path, dpi=150, bbox_inches="tight")
+    fig.savefig(output_path, bbox_inches="tight")
     plt.close(fig)
     print(f"      saved → {os.path.basename(output_path)}")
     
@@ -445,9 +446,9 @@ def _plot_polar(phi_arr, copol_arr, xpol_arr, output_path, *,
     ax.spines["polar"].set_visible(False)
     ax.set_ylim(0, 1)
 
-    fig.suptitle(f"{title}\n{subtitle}", fontsize=9, y=1.02)
+    fig.suptitle(f"{title}\n{subtitle}", fontsize=11, y=1.02)
     fig.tight_layout()
-    fig.savefig(output_path, dpi=150, bbox_inches="tight", facecolor="#e8e8e8")
+    fig.savefig(output_path, bbox_inches="tight", facecolor="#e8e8e8")
     plt.close(fig)
     print(f"      saved → {os.path.basename(output_path)}")
     
@@ -503,10 +504,10 @@ def _save_mean_table(rows, output_path, freq, stl_name) -> None:
     ax.set_title(
         f"Mean RCS Summary  —  {stl_name}    f = {freq:.1f} GHz\n"
         "Mean = average total scattered power (Sθ + Sφ) in linear domain",
-        fontsize=11, pad=14,
+        fontsize=13, pad=14,
     )
     fig.tight_layout()
-    fig.savefig(output_path, dpi=150, bbox_inches="tight")
+    fig.savefig(output_path, bbox_inches="tight")
     plt.close(fig)
     print(f"      saved → {os.path.basename(output_path)}")
 

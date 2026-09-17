@@ -1,0 +1,99 @@
+# LO Fighter Design Methodology - shared journal-figure style.
+#
+# Adapted from the group's NL_ROM_paper.mplstyle (bold serif, thick axes,
+# 300 dpi) so every plot this project generates - aero, stability, mission,
+# RCS - reads as one consistent figure set, matching the other papers this
+# work will sit alongside.
+#
+# text.usetex is deliberately OFF: this project's plots are generated
+# unattended on a headless HPC node as part of main.py's own pipeline run,
+# not just assembled by hand for the paper afterward, so a missing/broken
+# system LaTeX install (TeX Live/MiKTeX - a real external dependency, not
+# a pip package) would silently break every plot-producing step of that
+# pipeline. mathtext.fontset=cm (matplotlib's own Computer Modern math
+# renderer) gives the same LaTeX look (serif math, proper $C_L$/$C_p$/
+# Greek-letter rendering) with no install required on any machine this
+# project runs on.
+#
+# Label/tick sizes are set smaller than NL_ROM_paper.mplstyle's own 24pt/
+# 16pt: that file was tuned for large, single-panel 10x6in figures. A lot
+# of this project's own plots are multi-panel facets (one panel per Mach/
+# altitude/study), often only ~5in wide per panel - the same absolute
+# point size would overflow/collide at that width. These sizes are the
+# largest that still read cleanly across both cases; per-plot fontsize=
+# overrides in the code should only exist for genuinely secondary text
+# (e.g. a smaller in-plot annotation), not to work around this default.
+
+lines.linewidth : 2
+lines.linestyle : -
+lines.antialiased: True
+
+patch.linewidth: 0.5
+patch.facecolor: C0
+patch.edgecolor: black
+patch.antialiased: True
+
+font.family  : serif
+font.style   : normal
+font.variant : normal
+font.weight  : bold
+font.stretch : condensed
+font.size    : 14.0
+
+text.usetex: False
+text.color : black
+text.hinting_factor : 10
+
+mathtext.fontset : cm
+
+axes.facecolor: white
+axes.edgecolor: black
+axes.grid : True
+axes.linewidth: 1.4
+axes.titlesize: 16
+axes.labelsize: 18
+axes.labelweight: bold
+axes.prop_cycle: cycler('color', ['348ABD', 'A60628', '467821', 'D55E00', '7A68A6', 'CC79A7', '56B4E9', '009E73', 'F0E442', '0072B2'])
+axes.axisbelow : True
+
+xtick.color          : black
+xtick.labelsize      : 13
+xtick.direction: inout
+xtick.major.size     : 5
+xtick.minor.size     : 2.5
+xtick.major.width    : 1.4
+xtick.minor.width    : 0.8
+xtick.major.pad      : 5
+xtick.minor.pad      : 5
+
+ytick.color          : black
+ytick.labelsize      : 13
+ytick.direction: inout
+ytick.major.size     : 5
+ytick.minor.size     : 2.5
+ytick.major.width    : 1.4
+ytick.minor.width    : 0.8
+ytick.major.pad      : 5
+ytick.minor.pad      : 5
+
+grid.color: 0.75
+grid.linestyle: --
+grid.linewidth: 0.5
+
+legend.loc           : best
+legend.frameon       : True
+legend.framealpha    : 1.0
+legend.facecolor     : white
+legend.edgecolor     : black
+legend.fancybox      : False
+legend.shadow        : False
+legend.fontsize      : 13
+legend.title_fontsize: 13
+
+figure.titlesize : 16
+figure.titleweight : bold
+figure.figsize   : 8, 5.5
+figure.dpi       : 300
+figure.facecolor : white
+figure.edgecolor : white
+figure.subplot.wspace : 0.15
