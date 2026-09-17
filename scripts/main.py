@@ -84,6 +84,7 @@ import os
 os.environ["OMP_NUM_THREADS"] = "1"
 
 import matplotlib.pyplot as plt
+import plot_style
 import pandas as pd
 import time
 import csv
@@ -594,7 +595,7 @@ if mach_results:
         axes[0].set_ylabel(y_label)
         fig.suptitle(f"{title} — {geom_stem}")
         fig.tight_layout()
-        fig.savefig(os.path.join(vsp_setup.AERO_RESULTS_DIR, f"{metric_name}_overlay_{geom_stem}.png"), dpi=150)
+        fig.savefig(os.path.join(vsp_setup.AERO_RESULTS_DIR, f"{metric_name}_overlay_{geom_stem}.png"))
         plt.close(fig)
         print(f"   ✅ {title} overlay saved for {geom_stem}")
 
@@ -652,7 +653,7 @@ for M, ALT, polar_dst, CD0, K, r2 in mach_results:
     ax.set_xlabel("Alpha (deg)"); ax.set_ylabel("Cm")
     ax.set_title(f"Cm vs Alpha — M={M:.2f}, ALT={int(ALT)}ft, Xcg={X_CG}")
     ax.grid(True, ls="--", alpha=0.6)
-    fig.savefig(os.path.join(vsp_setup.STABILITY_DIR, f"cm_alpha_{geom_stem}_M{M:.2f}_ALT{int(ALT)}.png"), dpi=150)
+    fig.savefig(os.path.join(vsp_setup.STABILITY_DIR, f"cm_alpha_{geom_stem}_M{M:.2f}_ALT{int(ALT)}.png"))
     plt.close(fig)
 
     # Cm vs CL
@@ -661,7 +662,7 @@ for M, ALT, polar_dst, CD0, K, r2 in mach_results:
     ax.set_xlabel("CL"); ax.set_ylabel("Cm")
     ax.set_title(f"Cm vs CL — M={M:.2f}, ALT={int(ALT)}ft, Xcg={X_CG}")
     ax.grid(True, ls="--", alpha=0.6)
-    fig.savefig(os.path.join(vsp_setup.STABILITY_DIR, f"cm_cl_{geom_stem}_M{M:.2f}_ALT{int(ALT)}.png"), dpi=150)
+    fig.savefig(os.path.join(vsp_setup.STABILITY_DIR, f"cm_cl_{geom_stem}_M{M:.2f}_ALT{int(ALT)}.png"))
     plt.close(fig)
 
     # local-slope diagnostic
@@ -670,7 +671,7 @@ for M, ALT, polar_dst, CD0, K, r2 in mach_results:
     ax.set_xlabel("Alpha (deg)"); ax.set_ylabel("Local SM (windowed)")
     ax.set_title(f"Local SM vs Alpha — M={M:.2f}, ALT={int(ALT)}ft")
     ax.grid(True, ls="--", alpha=0.6)
-    fig.savefig(os.path.join(vsp_setup.STABILITY_DIR, f"sm_local_{geom_stem}_M{M:.2f}_ALT{int(ALT)}.png"), dpi=150)
+    fig.savefig(os.path.join(vsp_setup.STABILITY_DIR, f"sm_local_{geom_stem}_M{M:.2f}_ALT{int(ALT)}.png"))
     plt.close(fig)
 
     summary_path = os.path.join(vsp_setup.STABILITY_DIR, f"stability_summary_{geom_stem}.csv")

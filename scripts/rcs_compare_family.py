@@ -52,6 +52,8 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 ROOT_DIR   = SCRIPT_DIR.parent
 sys.path.insert(0, str(SCRIPT_DIR))
 
+import plot_style
+
 from run_openrcs import _parse_dat  # module-level in run_openrcs.py — safe to reuse
 
 RESULTS_ROOT  = ROOT_DIR / "Results" / "RCS_SensitivityStudy"
@@ -185,12 +187,12 @@ def _plot_mean_vs_delta(rows, tag_key, study_name, ylabel, out_path, spec_baseli
         ax.plot(deltas[i0], means[i0], marker="o", markersize=9,
                 markerfacecolor="none", markeredgecolor="crimson", markeredgewidth=1.6,
                 zorder=4, label="baseline (Δ=0)")
-        ax.legend(fontsize=9)
+        ax.legend()
     ax.axhline(baseline_val, color="grey", lw=0.6, linestyle=":", zorder=1)
-    ax.set_xlabel(f"{study_name}  Δ", fontsize=11)
-    ax.set_ylabel(ylabel, fontsize=11)
+    ax.set_xlabel(f"{study_name}  Δ")
+    ax.set_ylabel(ylabel)
     ax.grid(True, linestyle="--", alpha=0.5)
-    ax.set_title(f"{study_name} — {ylabel} vs. Δ", fontsize=11)
+    ax.set_title(f"{study_name} — {ylabel} vs. Δ")
 
     if spec_baseline is not None:
         # Secondary top axis: the ABSOLUTE applied value of this study's
@@ -201,10 +203,10 @@ def _plot_mean_vs_delta(rows, tag_key, study_name, ylabel, out_path, spec_baseli
             "top",
             functions=(lambda x, b=spec_baseline: x + b, lambda x, b=spec_baseline: x - b),
         )
-        ax_top.set_xlabel(f"{study_name}  absolute value", fontsize=10)
+        ax_top.set_xlabel(f"{study_name}  absolute value", fontsize=11)
 
     fig.tight_layout()
-    fig.savefig(out_path, dpi=150, bbox_inches="tight")
+    fig.savefig(out_path, bbox_inches="tight")
     plt.close(fig)
     print(f"  saved -> {out_path.name}")
     return out_path
@@ -273,7 +275,7 @@ def _plot_azimuth_polar_overlay(rows, study_name, out_path):
                  f"scale: {rcs_min:.0f} dBsm (centre) → {rcs_max:.0f} dBsm (rim)",
                  fontsize=10, y=1.0)
     fig.tight_layout()
-    fig.savefig(out_path, dpi=150, bbox_inches="tight", facecolor="#e8e8e8")
+    fig.savefig(out_path, bbox_inches="tight", facecolor="#e8e8e8")
     plt.close(fig)
     print(f"  saved -> {out_path.name}")
     return out_path
