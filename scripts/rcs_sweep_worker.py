@@ -135,7 +135,13 @@ def _export_mesh_checkpoint(cfg, tag, stl_dir, entry, manifest_path):
         )
         os.replace(tmp_out, stl_out)   # atomic rename — only a complete export ever lands here
 
-    entry["stl_path"] = stl_out
+    # Stored RELATIVE to cfg["results_root"] (this config's own study/
+    # _baseline directory), not absolute - so the manifest stays valid
+    # after copying the whole Results/RCS_SensitivityStudy/ tree to a
+    # different machine or clone location. rcs_compare_family.py resolves
+    # it back to absolute against wherever it actually finds this
+    # manifest file, not against where it was originally written.
+    entry["stl_path"] = os.path.relpath(stl_out, cfg["results_root"])
     entry.setdefault("checkpoints", {})["mesh"] = True
     _write(manifest_path, entry)
     return stl_out
@@ -183,7 +189,9 @@ def _run_cut_checkpoint(cfg, tag, stl_out, rcs_dir, cut_flag, entry, manifest_pa
         print(f"  [checkpoint] {cut_flag} cut already done for {tag} — reusing existing .dat files")
         for k, path in clean_dat_paths.items():
             parsed = run_openrcs._parse_dat(path)
-            outputs[k] = path
+            # Relative to results_root - see _export_mesh_checkpoint's own
+            # comment on entry["stl_path"] for why.
+            outputs[k] = os.path.relpath(path, cfg["results_root"])
             means[k] = run_openrcs._mean_total(parsed["sth"], parsed["sph"])
     else:
         print(f"  [checkpoint] running {cut_flag} cut for {tag} ...")
@@ -223,7 +231,9 @@ def _run_cut_checkpoint(cfg, tag, stl_out, rcs_dir, cut_flag, entry, manifest_pa
             out_key = f"{cut_flag}_{k}" if k == "mean_table" else k
             new_path = os.path.join(os.path.dirname(path), f"{tag}_{out_key}{ext}")
             os.replace(path, new_path)
-            outputs[out_key] = new_path
+            # Relative to results_root - see _export_mesh_checkpoint's own
+            # comment on entry["stl_path"] for why.
+            outputs[out_key] = os.path.relpath(new_path, cfg["results_root"])
 
         # Raw .dat files: written into rcs_dir with a timestamp baked into
         # the name, but never returned by run_openrcs_pipeline at all (see
@@ -238,7 +248,9 @@ def _run_cut_checkpoint(cfg, tag, stl_out, rcs_dir, cut_flag, entry, manifest_pa
                 print(f"  WARNING: expected a {k} .dat file for {tag} but found none in {rcs_dir}")
                 continue
             os.replace(matches[-1], clean_dat_paths[k])   # newest, in case >1 somehow exist
-            outputs[k] = clean_dat_paths[k]
+            # Relative to results_root - see _export_mesh_checkpoint's own
+            # comment on entry["stl_path"] for why.
+            outputs[k] = os.path.relpath(clean_dat_paths[k], cfg["results_root"])
 
         means.update(rcs_out.get("means", {}))
 

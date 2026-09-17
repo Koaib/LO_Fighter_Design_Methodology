@@ -92,9 +92,32 @@ def _find_section_parm(gid, surf_idx, section_idx, parm_name):
     return pid
 
 
-def _write(path, entry):
+def _portable_entry(entry, results_root):
+    """Deep-copies entry with aero_dir/aero_points[*]["csv"]/
+    stability_plot_path/mission_md_path rewritten RELATIVE to
+    results_root (this config's own study/_baseline directory), instead
+    of the absolute paths this process uses locally. Written to the
+    manifest so it stays valid after copying the whole Results/
+    AeroStabMissionStudy/ tree to a different machine or clone location -
+    aero_stab_mission_compare_family.py/aero_stab_mission_rerun_mission_
+    only.py resolve it back to absolute against wherever they actually
+    find this manifest file. The caller's own entry dict is left
+    untouched (still absolute) so it keeps working for local re-reads
+    (e.g. pd.read_csv(pt["csv"])) within this same run."""
+    portable = json.loads(json.dumps(entry))  # cheap, JSON-safe deep copy
+    for key in ("aero_dir", "stability_plot_path", "mission_md_path"):
+        if portable.get(key):
+            portable[key] = os.path.relpath(portable[key], results_root)
+    for pt in portable.get("aero_points", []):
+        if pt.get("csv"):
+            pt["csv"] = os.path.relpath(pt["csv"], results_root)
+    return portable
+
+
+def _write(path, entry, results_root=None):
+    payload = _portable_entry(entry, results_root) if results_root else entry
     with open(path, "w") as f:
-        json.dump(entry, f, indent=2)
+        json.dump(payload, f, indent=2)
 
 
 def main():
@@ -102,6 +125,12 @@ def main():
     tag = cfg["tag"]
     os.makedirs(cfg["manifest_dir"], exist_ok=True)
     manifest_path = os.path.join(cfg["manifest_dir"], f"{tag}.json")
+    # This config's own study (or _baseline) directory - manifest_dir's
+    # own parent. Every path _write() below stores in the manifest is
+    # made relative to this (see _portable_entry()); every local read/
+    # write in this function keeps using the absolute paths built from
+    # it below, unchanged.
+    results_root = os.path.dirname(cfg["manifest_dir"])
     # Sibling of manifest/, under this config's own study (or _baseline)
     # root - e.g. .../VT_Cant/manifest -> .../VT_Cant/aero. Passed to
     # both run_vspaero_aero() (so the raw .polar/.csv/3 PNGs land here
@@ -110,14 +139,14 @@ def main():
     # mission check's AeroLookup actually finds them again afterward -
     # without threading this through too, the write-side redirect alone
     # would make every config's mission check fail with FileNotFoundError).
-    aero_dir = os.path.join(os.path.dirname(cfg["manifest_dir"]), "aero")
+    aero_dir = os.path.join(results_root, "aero")
     # Same sibling-of-manifest/ pattern as aero_dir, one folder each for
     # the two per-config artifacts added alongside it: a Cm-vs-Alpha
     # stability plot and a human-readable mission-feasibility .md report -
     # both cheap, pure-visualization/formatting steps over data already
     # computed below (no new VSPAero calls), unlike aero_dir's contents.
-    stability_dir = os.path.join(os.path.dirname(cfg["manifest_dir"]), "stability")
-    mission_dir = os.path.join(os.path.dirname(cfg["manifest_dir"]), "mission")
+    stability_dir = os.path.join(results_root, "stability")
+    mission_dir = os.path.join(results_root, "mission")
     os.makedirs(stability_dir, exist_ok=True)
     os.makedirs(mission_dir, exist_ok=True)
     entry = {"tag": tag, "study": cfg["study"], "delta": cfg["delta"],
@@ -142,6 +171,13 @@ def main():
             with open(manifest_path) as f:
                 prior = json.load(f)
             for pt in prior.get("aero_points", []):
+                # "csv" is stored relative to results_root (see
+                # _portable_entry()) - resolve back to absolute so the
+                # rest of this run (e.g. the Cm-vs-Alpha plot loop's own
+                # pd.read_csv(pt["csv"])) can keep using it directly,
+                # exactly as if this point had just been computed fresh.
+                if pt.get("csv") and not os.path.isabs(pt["csv"]):
+                    pt = {**pt, "csv": os.path.join(results_root, pt["csv"])}
                 already_done_points[(pt["mach"], pt["alt_ft"])] = pt
         except (json.JSONDecodeError, KeyError):
             pass   # corrupt/partial write from a crash mid-_write() - just start over
@@ -206,7 +242,7 @@ def main():
                     entry["aero_points"] = aero_points
                     entry["status"] = "aero_failed"
                     entry["note"] = f"VSPAero failed at M={M}, ALT={ALT} ft"
-                    _write(manifest_path, entry); return
+                    _write(manifest_path, entry, results_root); return
 
                 aero_csv = polar_dst.replace(".polar", ".csv")
                 df_check = pd.read_csv(aero_csv)
@@ -214,7 +250,7 @@ def main():
                     entry["aero_points"] = aero_points
                     entry["status"] = "aero_diverged"
                     entry["note"] = f"Negative CDtot at M={M}, ALT={ALT} ft - wake iteration did not converge"
-                    _write(manifest_path, entry); return
+                    _write(manifest_path, entry, results_root); return
 
                 ld_max_theoretical = (1.0 / (2.0 * (CD0 * K) ** 0.5)) if (CD0 and K and CD0 > 0 and K > 0) else None
                 aero_points.append({
@@ -222,7 +258,7 @@ def main():
                     "CD0": CD0, "K": K, "R2": r2, "LD_max_theoretical": ld_max_theoretical,
                 })
                 entry["aero_points"] = aero_points
-                _write(manifest_path, entry)   # checkpoint - survives a crash on the NEXT point
+                _write(manifest_path, entry, results_root)   # checkpoint - survives a crash on the NEXT point
         entry["aero_points"] = aero_points
 
         # ── STABILITY: static margin at each of the same 9 points -
@@ -301,13 +337,13 @@ def main():
         entry["mission_md_path"] = mission_md_path
 
         entry["status"] = "done"
-        _write(manifest_path, entry)
+        _write(manifest_path, entry, results_root)
 
     except Exception as e:
         import traceback
         entry["status"] = "error"
         entry["error"] = f"{e}\n{traceback.format_exc()}"
-        _write(manifest_path, entry)
+        _write(manifest_path, entry, results_root)
         raise
 
 

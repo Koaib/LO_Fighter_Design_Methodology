@@ -82,6 +82,28 @@ def _azimuth_to_full_circle(phi_deg, rcs_dBsm):
 
 # ── manifest loading (glob-based — no hardcoded delta list required) ────────
 
+def _resolve_manifest_paths(entry, results_root):
+    """Rewrites entry["stl_path"]/entry["rcs_outputs"][...] in place from
+    RESULTS_ROOT-relative (as rcs_sweep_worker.py now writes them) to
+    absolute, resolved against results_root - the study/_baseline
+    directory THIS manifest file was just read from, not wherever it was
+    originally generated. This is what makes copying the whole
+    Results/RCS_SensitivityStudy/ tree to a different machine or clone
+    location just work.
+
+    Manifests written before this fix already store absolute paths
+    there - os.path.isabs() below leaves those untouched (best-effort;
+    they only resolve correctly on the machine that generated them,
+    exactly like before this fix existed)."""
+    stl_path = entry.get("stl_path")
+    if stl_path and not os.path.isabs(stl_path):
+        entry["stl_path"] = str(results_root / stl_path)
+    for k, v in entry.get("rcs_outputs", {}).items():
+        if v and not os.path.isabs(v):
+            entry["rcs_outputs"][k] = str(results_root / v)
+    return entry
+
+
 def _load_baseline_manifest():
     """Returns the shared baseline manifest dict, or None if it doesn't
     exist yet or hasn't finished — callers treat None as "no Δ=0 point
@@ -91,7 +113,9 @@ def _load_baseline_manifest():
         return None
     with open(mpath) as f:
         entry = json.load(f)
-    return entry if entry.get("status") == "done" else None
+    if entry.get("status") != "done":
+        return None
+    return _resolve_manifest_paths(entry, BASELINE_ROOT)
 
 
 def _delta_from_tag(tag, study_name):
@@ -158,6 +182,7 @@ def load_family(study_name, results_root):
             entry = json.load(fh)
         if entry.get("status") != "done":
             continue
+        _resolve_manifest_paths(entry, results_root)
         tag = entry.get("tag") or Path(f).stem
         rows.append((_delta_from_tag(tag, study_name), entry))
 
