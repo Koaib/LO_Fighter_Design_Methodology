@@ -42,6 +42,34 @@ both the Mission step here and classical_mission.py's own standalone run
 """
 
 import vsp_setup
+
+import sys, os, json, glob
+
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8")
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import vsp_setup
+# --- Headless & Non-Circular Import Shim (User-Space) ---
+import types
+if "openvsp_config" not in sys.modules:
+    _cfg = types.ModuleType("openvsp_config")
+    _cfg.LOAD_GRAPHICS = False
+    _cfg.LOAD_FACADE = False
+    _cfg.LOAD_MULTI_FACADE = False
+    _cfg._IGNORE_IMPORTS = True
+    _cfg.FACADE_PORT = -1
+    sys.modules["openvsp_config"] = _cfg
+
+if "./OpenVSP/python/utilities" not in sys.path:
+    sys.path.insert(0, "./OpenVSP/python/utilities")
+try:
+    import utilities
+    sys.modules["utilities"] = utilities
+except Exception:
+    pass
+# --------------------------------------------------------
+
 import openvsp as vsp
 import os
 
@@ -88,7 +116,7 @@ REF_MODE      = "auto"      # use "manual" for box_template — it has no wing
 # =========================
 # PIPELINE STAGE TOGGLES — edit this
 # =========================
-RUN_RCS     = True    # OpenRCS monostatic RCS pass (Results/RCS/)
+RUN_RCS     = False    # OpenRCS monostatic RCS pass (Results/RCS/)
 RUN_VSPAERO = True    # VSPAero Mach x Altitude sweep (Results/Aero/) - Stability
                        # and Mission both read this geom_stem's aero CSVs from
                        # disk, so False here only skips re-running the sweep
@@ -109,7 +137,7 @@ RUN_MISSION = True     # Raymer (Ch 19) mission-fuel-fraction feasibility
 # lambda/6 is the time/accuracy compromise currently in use.
 # min and max no longer have to match — e.g. MAX=4, MIN=8 refines curved
 # regions to lambda/8 while flatter regions stay at lambda/4.
-USE_CFD_MESH     = True     # False -> old plain ExportFile(EXPORT_STL)
+USE_CFD_MESH     = False     # False -> old plain ExportFile(EXPORT_STL)
 FREQ_GHZ         = 12.0     # also drives the RCS run below
 AZ_RANGE         = "half"   # "full" or "half" — half valid for bilaterally symmetric aircraft
 DELP             = 1.0       # phi step, deg — 30° (7 pts across a half-circle) was
@@ -195,7 +223,7 @@ elif INPUT_MODE == "import_vsp3":
 
     print(f"✅ Loaded VSP3 and exported STL: {stl_name}")
     stl_for_rcs = stl_name
-    
+
 else:  # "generate"
     import openvsp as vsp
     vsp.VSPCheckSetup()
@@ -266,7 +294,7 @@ RE_CREF      = 1e6   # fallback only — run_vspaero_aero() auto-computes the re
                       # whenever it can read the wing geometry (always, in
                       # practice), silently overriding this value. Only takes
                       # effect if that auto-calc fails.
-WAKE_ITERS   = 8
+WAKE_ITERS   = 15
 
 # =========================
 # STABILITY SETTINGS
@@ -482,8 +510,8 @@ CUSTOM_ENGINE_DECK_PATH = None
 
 # ── Mission profile ────────────────────────────────────────────────────────
 CRUISE_MACH        = 0.6
-CRUISE_ALTITUDE_FT = 35000.0
-DESIGN_RANGE_NMI   = 400.0
+CRUISE_ALTITUDE_FT = 30000.0
+DESIGN_RANGE_NMI   = 340.0
 
 # =========================
 # TRIGGER AERO PIPELINE
@@ -529,8 +557,8 @@ if RUN_VSPAERO:
         for M, ALT, polar_dst, CD0, K, r2 in mach_results:
             writer.writerow([M, ALT, CD0, K, r2, os.path.basename(polar_dst)])
     print(f"   ✅ CD0/K summary: {summary_path}")
-      
-        
+
+
 # ── OVERLAY PLOTS — faceted by altitude (one panel per altitude, Mach
 # curves within each panel), only if the sweep actually produced anything
 # to plot (mach_results stays [] when RUN_VSPAERO=False and no prior sweep

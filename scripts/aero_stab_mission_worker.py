@@ -47,7 +47,7 @@ never crash the whole sweep - it just needs a human (or
 compare_family.py) to read that config's own error text rather than a
 clean climb_completed=False/feasible=False field.
 """
-import sys, os, json
+import sys, os, json, glob
 
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
@@ -59,6 +59,26 @@ import matplotlib.pyplot as plt
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import vsp_setup
+# --- Headless & Non-Circular Import Shim (User-Space) ---
+import types
+if "openvsp_config" not in sys.modules:
+    _cfg = types.ModuleType("openvsp_config")
+    _cfg.LOAD_GRAPHICS = False
+    _cfg.LOAD_FACADE = False
+    _cfg.LOAD_MULTI_FACADE = False
+    _cfg._IGNORE_IMPORTS = True
+    _cfg.FACADE_PORT = -1
+    sys.modules["openvsp_config"] = _cfg
+
+if "./OpenVSP/python/utilities" not in sys.path:
+    sys.path.insert(0, "./OpenVSP/python/utilities")
+try:
+    import utilities
+    sys.modules["utilities"] = utilities
+except Exception:
+    pass
+# --------------------------------------------------------
+
 import openvsp as vsp
 
 

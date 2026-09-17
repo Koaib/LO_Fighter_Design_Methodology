@@ -795,6 +795,27 @@ def run_vspaero_aero(
     print("\n✅ VSPAero analysis complete.\n")
     return polar_dst, CD0, K, r2   # now returning fit params too — update main.py's unpacking accordingly
 
+
+def run_vspaero_aero_with_retry(*args, max_attempts=3, **kwargs):
+    """
+    vspaero.exe crashes non-deterministically during wake-sheet setup on
+    some geometries -- confirmed non-deterministic (same code/geometry/
+    settings failed once, then succeeded on a bare retry on Windows), and
+    the crash point itself shifts between runs. That rules out a settings
+    or geometry bug -- it's a flaky crash inside vspaero itself. Retrying
+    the whole attempt from scratch is the practical mitigation.
+    """
+    for attempt in range(1, max_attempts + 1):
+        result = run_vspaero_aero(*args, **kwargs)
+        if result[0] is not None:
+            if attempt > 1:
+                print(f"   ✅ Succeeded on attempt {attempt}/{max_attempts}")
+            return result
+        print(f"   ⚠️  Attempt {attempt}/{max_attempts} produced no output — retrying vspaero...")
+    print(f"   ❌ All {max_attempts} attempts failed.")
+    return None, None, None, None
+
+
 def local_slope_curve(aero_csv, window_pts=5, r2_threshold=0.98):
     """Rolling local dCm/dCL (= -SM) across the swept CL range, plus the
     alpha range where R2 stays above threshold (the 'linear region')."""
