@@ -9,8 +9,7 @@ sized or iterated, unlike Raymer's own Chapter 3/6 TOGW sizing loop).
 WHY RAYMER, WHY THIS CHAPTER: this project's mission-analysis approach
 was originally NASA Aviary (Dymos/SLSQP trajectory optimization), which
 was retired after a documented, provable numerical/structural limitation
-(see scripts/classical_mission.py's module docstring) and replaced with
-a from-scratch direct-integration tool. That tool is physically sound,
+and replaced with a from-scratch direct-integration tool. That tool is physically sound,
 but has no textbook citation behind its specific method - reasonable for
 an engineering deliverable, not ideal for a course project where the
 sizing methodology itself needs to be justified. Raymer's book is the
@@ -57,9 +56,8 @@ METHOD, PER SEGMENT (equation numbers are Raymer, Chapter 19):
   altitude, (1 - D/T) <= 0 and Eq. 19.8 is undefined/nonphysical - Raymer
   never has to confront this because his worked examples don't hit it,
   but this project's aircraft has a DOCUMENTED, real thrust-margin
-  problem (see classical_mission.py's development history), so this is
-  treated as a real, reportable "cannot sustain climb past this altitude"
-  finding, not silently divided through.
+  problem, so this is treated as a real, reportable "cannot sustain
+  climb past this altitude" finding, not silently divided through.
 
   Cruise, Eq. 19.10 (Breguet range equation):
     Wi/Wi-1 = exp[-R*C / (V*(L/D))]
@@ -83,10 +81,8 @@ METHOD, PER SEGMENT (equation numbers are Raymer, Chapter 19):
 
 FEASIBILITY VERDICT: this is not a sizing loop - gross mass, empty mass,
 and fuel tank capacity are already fixed (see run_raymer_mission_check's
-own arguments, matching main.py's ENGINE & MISSION CONFIG section and
-classical_mission.py's own placeholder values for a direct, apples-to-
-apples comparison between the two independent methods on the same
-aircraft). Raymer describes exactly this scenario: "the takeoff weight
+own arguments, matching main.py's ENGINE & MISSION CONFIG section).
+Raymer describes exactly this scenario: "the takeoff weight
 calculated from the refined estimate of fuel burned and the as-drawn
 empty weight will not equal the as-drawn takeoff weight" - i.e., the
 fuel actually REQUIRED by the mission (per this chapter's method, plus
@@ -107,20 +103,17 @@ plain climb-cruise-descent profile matches both the actual research
 question (does a baseline vs. RCS-shaped config complete a transit
 mission, judged by fuel burn) and this aircraft's real, already-
 established characteristics (a low-aspect-ratio, thrust-margin-limited
-design - see classical_mission.py's development history), so it is the
-right scope for this check, not an oversimplification of it.
+design), so it is the right scope for this check, not an
+oversimplification of it.
 
 SUPPORTING DATA: build_aero_polar.py/build_engine_deck.py are reused
 directly (not duplicated) - they are this project's own general-purpose
 VSPAero-polar-reading and Mattingly-&-Heiser-engine-deck-building
-utilities, not anything specific to classical_mission.py's own
-integration approach. This module's AeroLookup/EngineLookup classes
-below are lighter-weight, independent wrappers around that same data
-(no cl_margin bookkeeping, no adaptive Mach search, no throttle-fallback
-retry ladder) - this file is a deliberately separate, self-contained
-implementation of Raymer's method, not a re-skin of
-classical_mission.py, even though both tools answer the same underlying
-question about the same aircraft.
+utilities. This module's AeroLookup/EngineLookup classes below are
+lighter-weight wrappers around that same data (no cl_margin bookkeeping,
+no adaptive Mach search, no throttle-fallback retry ladder) - this file
+is a deliberately separate, self-contained implementation of Raymer's
+method.
 """
 
 import os
@@ -160,8 +153,7 @@ class LiftMarginError(RuntimeError):
 
 class AeroLookup:
     """(altitude, Mach, alpha) -> (CL, CD), built directly from this
-    project's own VSPAero sweep via build_aero_polar.py - the same
-    source classical_mission.py uses, wrapped independently here."""
+    project's own VSPAero sweep via build_aero_polar.py."""
 
     def __init__(self, geom_stem, expected_machs=None, expected_altitudes=None, search_dir=None):
         arrays = build_polar_arrays(geom_stem, expected_machs, expected_altitudes, search_dir)
@@ -195,18 +187,15 @@ class AeroLookup:
 class EngineLookup:
     """(Mach, altitude, throttle) -> (thrust_lbf, fuel_flow_lbm_per_hr),
     from an engine deck built by build_engine_deck.py (or a real
-    custom_engine_deck_path CSV in the same column format) - the same
-    source classical_mission.py uses, read directly here.
+    custom_engine_deck_path CSV in the same column format).
 
     The deck models ONE ENGINE's performance curve - published, per-
     engine spec values, same convention this project's main.py uses for
     ENGINE_T_SL_DRY_LBF/ENGINE_T_SL_AB_LBF. num_engines scales thrust AND
     fuel flow up to the whole aircraft's installed total: this project's
-    aircraft is a confirmed TWIN-engine design (see
-    classical_mission.py's num_engines docstring for the full derivation
-    - a single engine at this aircraft's mass gives an unrealistically
-    low thrust-to-weight ratio), so num_engines=2 is this module's own
-    smoke test default too."""
+    aircraft is a confirmed TWIN-engine design (a single engine at this
+    aircraft's mass gives an unrealistically low thrust-to-weight ratio),
+    so num_engines=2 is this module's own smoke test default too."""
 
     def __init__(self, deck_path, num_engines=1):
         self.num_engines = num_engines
@@ -318,10 +307,8 @@ def fly_climb_raymer(
     integrated in small altitude steps - Raymer's own guidance for when a
     single-segment average would not hold. Mach is ramped LINEARLY
     between mach_start/mach_end over the altitude range (a plain
-    approximation of the actual climb schedule, appropriate for this
-    method - no adaptive acceleration search the way
-    classical_mission.py's own, separate tool does; that refinement is
-    specific to that tool, not part of citing Raymer's method here).
+    approximation of the actual climb schedule, appropriate for citing
+    Raymer's method here - no adaptive acceleration search).
 
     Distance credit follows Raymer's own stated convention exactly:
     "Distance travelled during climb is calculated as average velocity
@@ -330,9 +317,9 @@ def fly_climb_raymer(
     min_climb_rate_fpm is a practical floor on top of Eq. 19.8's own
     built-in failure mode (T <= D makes (1 - D/T) <= 0, undefined) - this
     project's aircraft has a documented, real thrust-margin sensitivity
-    to altitude (see classical_mission.py's development history), so a
-    small positive climb rate is treated the same as no climb rate at
-    all: not a realistic part of a cross-country climb schedule.
+    to altitude, so a small positive climb rate is treated the same as
+    no climb rate at all: not a realistic part of a cross-country climb
+    schedule.
 
     Returns (time_s, distance_nmi, fuel_burned_lbm, final_mass_lbm).
     Raises ThrustMarginError naming the exact altitude/condition if climb
@@ -510,17 +497,16 @@ def run_raymer_mission_check(
     Eq. 19.8 undefined, or below min_climb_rate_fpm, even within this
     phase's own Mach range), the climb is retried in full from sea level
     at this higher throttle instead of failing outright - the same real-
-    world response classical_mission.py's independent tool needed for
-    this aircraft (afterburner, when military power cannot sustain the
-    climb). Set to None (or <= climb_throttle) to disable.
+    world response this aircraft needs (afterburner, when military power
+    cannot sustain the climb). Set to None (or <= climb_throttle) to
+    disable.
 
     Returns a dict: if the climb cannot complete at any throttle tried,
     {'climb_completed': False, 'failure_reason': ..., 'achieved_altitude_ft': ...,
-    'climb_throttle_used': ...} (cruise/descent never ran - mirrors
-    classical_mission.py's own graceful-degradation convention, since
-    "this config's climb ran out of thrust" needs to be a normal,
-    comparable outcome for a baseline-vs-RCS-shaped comparison, not a
-    crash). Otherwise {'climb_completed': True, 'feasible': bool,
+    'climb_throttle_used': ...} (cruise/descent never ran - a graceful
+    degradation, since "this config's climb ran out of thrust" needs to
+    be a normal, comparable outcome for a baseline-vs-RCS-shaped
+    comparison, not a crash). Otherwise {'climb_completed': True, 'feasible': bool,
     'residual_fuel_lbm': ..., 'fuel_required_lbm': ..., 'fuel_capacity_lbm': ...,
     'climb'/'cruise'/'descent': {'time_s', 'distance_nmi', 'fuel_lbm'},
     'climb_throttle_used': ...}. Every other failure mode (a lift-margin
@@ -598,8 +584,7 @@ def run_raymer_mission_check(
         }
 
     # Rough pre-estimate of descent (for cruise distance budgeting only -
-    # matches classical_mission.py's own pattern for the same reason: the
-    # real descent needs the post-cruise mass, which isn't known yet).
+    # the real descent needs the post-cruise mass, which isn't known yet).
     _, d_descent_est, _, _ = fly_descent_historical(
         mass_after_climb * 0.97, cruise_altitude_ft, 500.0, 0.5 * (cruise_mach + descent_mach_final),
         descent_angle_deg=descent_angle_deg, descent_fuel_fraction=descent_fuel_fraction,
@@ -739,10 +724,8 @@ def format_mission_results_md(results, title=None):
 
 if __name__ == "__main__":
     # Standalone smoke test - same real geometry/mass/mission placeholders
-    # classical_mission.py uses, for a direct, apples-to-apples comparison
-    # between the two independently-derived methods on the same aircraft.
-    # num_engines=2: this aircraft is a confirmed twin-engine design (see
-    # classical_mission.py's num_engines docstring).
+    # used throughout this project for a consistent basis of comparison.
+    # num_engines=2: this aircraft is a confirmed twin-engine design.
     # fuel_capacity_lbm=18064.672003: F22_FUEL_MASS_LBM/F22_WING_AREA_FT2 *
     # wing_area_ft2 above (same F-22A wing-loading scaling main.py's
     # GROSS_MASS_LBM/FUEL_CAPACITY_LBM use) - matches main.py's own

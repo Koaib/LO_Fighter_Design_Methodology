@@ -23,12 +23,6 @@ edited in one place):
                   scripts/Raymer_sizing_based_mission_check.py, on this
                   same geom_stem's aero CSVs        [RUN_MISSION toggle]
 
-classical_mission.py (this project's own from-scratch direct-integration
-mission tool - no optimizer, no textbook citation, see its own docstring
-for why it exists) is intentionally NOT wired in here - it remains a
-separate, standalone comparison, run directly:
-    python scripts/classical_mission.py
-
 Usage:
     python scripts/main.py
 
@@ -37,8 +31,7 @@ To change RCS settings (frequency, angles, polarisation), edit the
 RCS SETTINGS section at the bottom or pass them into run_openrcs_rcs().
 To change mission settings (mass basis, engine specs, cruise profile),
 edit the ENGINE & MISSION CONFIG section below - the same constants feed
-both the Mission step here and classical_mission.py's own standalone run
-(edit its own smoke-test block to match if you change them here).
+the Mission step here.
 """
 
 import vsp_setup
@@ -115,8 +108,7 @@ FREQ_GHZ         = 12.0     # also drives the RCS run below
 AZ_RANGE         = "half"   # "full" or "half" — half valid for bilaterally symmetric aircraft
 DELP             = 1.0       # phi step, deg — 30° (7 pts across a half-circle) was
                               # far too coarse to resolve real RCS features (specular
-                              # flashes/nulls are often only a few degrees wide);
-                              # matches sweep_driver.py's own delp=1.0
+                              # flashes/nulls are often only a few degrees wide)
 MAX_EDGE_FACTOR  = 1        # coarse bound: edge = lambda / MAX_EDGE_FACTOR
 MIN_EDGE_FACTOR  = 3        # fine bound:   edge = lambda / MIN_EDGE_FACTOR
 MAX_GAP_FACTOR   = 3        # max_gap = lambda / MAX_GAP_FACTOR
@@ -420,13 +412,11 @@ FUEL_CAPACITY_LBM = (F22_FUEL_MASS_LBM / F22_WING_AREA_FT2) * MASS_BASIS_REFEREN
 # ── Engine specs (simplified F100-PW-229-class deck — NOT real engine test
 # data, see scripts/build_engine_deck.py) ───────────────────────────────────
 # These are PER-ENGINE published values. This aircraft is a confirmed
-# TWIN-engine design (see scripts/classical_mission.py's num_engines
-# docstring for the derivation - a single engine at this gross mass gives
+# TWIN-engine design - a single engine at this gross mass gives
 # T/W~0.35, nowhere near a real fighter's ~0.9-1.2, and was the dominant
 # reason an early climb-feasibility check found this aircraft couldn't
-# sustain even a modest climb rate). Pass num_engines=2 to
-# classical_mission.run_classical_mission() - these two constants stay as
-# per-engine values either way.
+# sustain even a modest climb rate. These two constants stay as
+# per-engine values; NUM_ENGINES below scales them up.
 ENGINE_T_SL_DRY_LBF = 17800.0   # published F100-PW-229 dry static thrust
 ENGINE_T_SL_AB_LBF  = 29100.0   # published F100-PW-229 afterburner static thrust
 NUM_ENGINES         = 2         # confirmed twin-engine (see comment above) -
@@ -475,10 +465,10 @@ ENGINE_THROTTLE_RATIO = 1.07
 # burn/range numbers physically meaningless for this aircraft class, so
 # this stays None (auto-generated deck) for real use until real engine
 # data becomes available for this project. This is not hypothetical
-# caution: an earlier, now-retired Aviary-based pipeline was pointed at
-# Aviary's own bundled civil turbofan deck for one diagnostic run, purely
-# to check whether a numerical stall was specific to the auto-generated
-# deck (it wasn't) - never for a real fuel-burn/range result.
+# caution: an earlier mission-analysis approach was pointed at a real
+# civil turbofan deck for one diagnostic run, purely to check whether a
+# numerical stall was specific to the auto-generated deck (it wasn't) -
+# never for a real fuel-burn/range result.
 CUSTOM_ENGINE_DECK_PATH = None
 
 # ── Mission profile ────────────────────────────────────────────────────────
@@ -666,9 +656,6 @@ for M, ALT, polar_dst, CD0, K, r2 in mach_results:
 # historical mission-segment fractions are left at that function's own
 # documented defaults (edit Raymer_sizing_based_mission_check.py directly
 # if those need to change for a specific study, not here).
-#
-# classical_mission.py (this project's own separate tool) is NOT run
-# here - see this file's module docstring for why.
 
 if RUN_MISSION:
     from Raymer_sizing_based_mission_check import run_raymer_mission_check, print_results as print_mission_results

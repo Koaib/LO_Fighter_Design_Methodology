@@ -7,11 +7,12 @@ Created on Wed Aug 26 19:02:48 2026
 
 """
 Reshapes existing VSPAero per-Mach-per-altitude aero CSVs
-(Results/Aero/aero_*_M#_ALT#_*.csv) into the flat, unstructured arrays
-Aviary's external aero mechanism expects. Only picks up files matching the
-current M/ALT naming convention and the current expected grid — legacy
-files (pre-altitude naming) and stale duplicate runs are skipped, keeping
-only the newest file per (Mach, Altitude) pair.
+(Results/Aero/aero_*_M#_ALT#_*.csv) into flat, unstructured
+(altitude, mach, alpha) -> (CL, CD) arrays, and into the regular grid
+those arrays are gridded onto. Only picks up files matching the current
+M/ALT naming convention and the current expected grid — legacy files
+(pre-altitude naming) and stale duplicate runs are skipped, keeping only
+the newest file per (Mach, Altitude) pair.
 """
 
 import os
@@ -103,8 +104,8 @@ def build_polar_arrays(geom_stem, expected_machs=None, expected_altitudes=None, 
 def reshape_to_grid(arrays):
     """
     Reshapes the flat (altitude, mach, alpha, cl, cd) arrays from
-    build_polar_arrays() into the 3D (n_alt, n_mach, n_alpha) grids
-    Aviary's GASP tabular_cruise mechanism expects.
+    build_polar_arrays() into 3D (n_alt, n_mach, n_alpha) CL/CD grids,
+    ready for a RegularGridInterpolator over (altitude, mach, alpha).
     """
     alt = np.round(arrays["altitude"], 3)
     mach = np.round(arrays["mach"], 3)

@@ -10,8 +10,8 @@ results can be joined with the RCS study's results by identical
 (study, delta) tags in a later trade-off study - see that file for the
 authoritative parameter/delta definitions this one is meant to match.
 
-Unlike sweep_driver.py/sweep_worker.py's own aero-only screening (Stage
-1: one flight condition, Mach 0.6/sea level, per config), this study
+Unlike an earlier aero-only screening sweep (Stage 1: one flight
+condition, Mach 0.6/sea level, per config), this study
 runs the FULL Mach x Altitude aero grid per config - same as main.py's
 normal single-geometry run - so each swept configuration gets a real
 Raymer (Ch 19) mission-feasibility number, not a single-point proxy.
@@ -51,8 +51,8 @@ FOLDER LAYOUT (mirrors RCS's Results/RCS_SensitivityStudy/ layout):
         <study_name>/aero/               that study's own raw VSPAero .polar/.csv/3 PNGs x 9 points x N deltas
         <study_name>/stability/          one Cm-vs-Alpha plot per config (faceted by altitude)
         <study_name>/mission/            one mission-feasibility .md report per config
-        Comparisons/*.png                 combined plots, built by compare_family.py
-        summary_aero_stab_mission.csv     combined summary, built by compare_family.py
+        Comparisons/*.png                 combined plots, built by aero_stab_mission_compare_family.py
+        summary_aero_stab_mission.csv     combined summary, built by aero_stab_mission_compare_family.py
 The raw VSPAero output is isolated per study/baseline too now (not just
 manifests/logs): aero_stab_mission_worker.py passes vsp_setup.
 run_vspaero_aero()'s new output_dir=<this config's own aero/ folder>
@@ -60,8 +60,7 @@ run_vspaero_aero()'s new output_dir=<this config's own aero/ folder>
 check.py's run_raymer_mission_check() takes a matching aero_search_dir
 so its AeroLookup still finds those files afterward - both default to
 None, preserving the original shared Results/Aero/ behavior exactly
-for every caller that doesn't pass them (main.py, the separate aero-
-only sweep_worker.py). stability/ and mission/ are new per-config
+for every caller that doesn't pass them (main.py). stability/ and mission/ are new per-config
 human-readable artifacts (see aero_stab_mission_worker.py's own
 docstring) - distinct from the ACROSS-config summary CSV/plots
 aero_stab_mission_compare_family.py builds under Comparisons/.
@@ -77,7 +76,7 @@ from pipeline_config import GEOMETRY_DIR, IMPORT_FILE, REF_WING_NAME
 
 VSP3_FILE = str(Path(GEOMETRY_DIR) / IMPORT_FILE)
 SETS_FILE = str(Path(GEOMETRY_DIR) / (Path(IMPORT_FILE).stem + "_sets.json"))
-# Same sidecar file rcs_sweep_driver.py/sweep_driver.py already read -
+# Same sidecar file rcs_sweep_driver.py already reads -
 # lives on your machine only (gitignored), built by
 # vsp_setup.dump_geom_params(), hand-curated.
 SWEEP_PARAMS_FILE = str(Path(GEOMETRY_DIR) / (Path(IMPORT_FILE).stem + "_sweep_params.json"))
@@ -201,10 +200,8 @@ def build_study_configs(param_key, deltas, study_name, extra_param_keys=None):
         overrides = [_override(param_key, d)]
         for extra_key in (extra_param_keys or []):
             overrides.append(_override(extra_key, d))
-        # .2f tag precision matches rcs_sweep_driver.py's own tags exactly
-        # (and this study's own aero-only counterpart, sweep_driver.py,
-        # after its recent fix) - a later trade-off script joins rows by
-        # this exact string.
+        # .2f tag precision matches rcs_sweep_driver.py's own tags exactly -
+        # a later trade-off script joins rows by this exact string.
         tag = f"{study_name}_{d:+.2f}"
         configs.append({**BASE, "tag": tag, "study": study_name, "delta": d,
                          "parm_overrides": overrides, "manifest_dir": manifest_dir})

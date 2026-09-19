@@ -3,13 +3,13 @@
 rcs_sweep_worker.py — runs ONE (shaping parameter, delta) RCS-only job, then exits.
 Called as: python rcs_sweep_worker.py '<json config>'
 
-RCS-only counterpart to sweep_worker.py: no VSPAero, no aero analysis at
-all. Loads the baseline geometry, applies exactly one parameter's delta,
-exports the CFD-mesh STL (same settings as main.py), runs it through
-run_openrcs.run_openrcs_pipeline(), and writes a manifest — same
-subprocess-per-config / manifest-based resume pattern as the existing
-aero sweep_worker.py, so an expensive multi-hour RCS sweep can be
-interrupted and picked back up without re-running finished deltas.
+RCS-only counterpart to aero_stab_mission_worker.py: no VSPAero, no aero
+analysis at all. Loads the baseline geometry, applies exactly one
+parameter's delta, exports the CFD-mesh STL (same settings as main.py),
+runs it through run_openrcs.run_openrcs_pipeline(), and writes a
+manifest — same subprocess-per-config / manifest-based resume pattern,
+so an expensive multi-hour RCS sweep can be interrupted and picked back
+up without re-running finished deltas.
 
 ── CHECKPOINTING (added for cluster runs with unreliable power) ───────────
 Resume granularity used to be per-DELTA only: if a delta's worker got
@@ -272,7 +272,7 @@ def main():
         name_to_id = {vsp.GetGeomName(g): g for g in vsp.FindGeoms()}
 
         # parm_overrides: list of [geom_name, surf_idx, section_idx, parm_name, value]
-        # — same override mechanism as the existing aero sweep_worker.py,
+        # — same override mechanism as aero_stab_mission_worker.py,
         # applying ONLY this one parameter's delta (one-at-a-time, not a
         # full-factorial combination of every parameter at once). Always
         # re-applied on resume too -- it's cheap, and re-applying the same
