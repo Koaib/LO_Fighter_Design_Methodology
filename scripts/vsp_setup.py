@@ -236,7 +236,7 @@ def run_openrcs_rcs(
         if result_dict:
             print("✅ OpenRCS finished.")
             for k, v in result_dict.items():
-                if v and k != "results_dir":
+                if v and k not in ("results_dir", "means"):
                     print(f"   {k:<18}: {os.path.basename(v)}")
         else:
             print("❌ OpenRCS returned no results.")
@@ -264,7 +264,12 @@ def dump_geom_params(vsp3_path: str, out_json_path: str) -> dict:
         entry["parms"] = {vsp.GetParmName(pid): vsp.GetParmVal(pid)
                            for pid in vsp.GetGeomParmIDs(gid)}
 
-        WING_SHAPE_PARMS = {"Sweep", "Sweep_Location", "Dihedral", "Twist", "Root_Chord", "Tip_Chord"}
+        # ThickChord added after the RCS sensitivity study needed t/c as a
+        # sweep parameter — it's a real per-XSec parm (confirmed present on
+        # every wing section, e.g. 0.04 uniformly across Main_Wing's three
+        # sections) that this whitelist had simply never included before.
+        WING_SHAPE_PARMS = {"Sweep", "Sweep_Location", "Dihedral", "Twist",
+                             "Root_Chord", "Tip_Chord", "ThickChord"}
         FUSELAGE_SHAPE_PARMS = {
             "Width", "Height", "MaxWidthLoc", "CornerRad",
             "TopLAngle", "TopLStrength", "TopRAngle", "TopRStrength",
@@ -468,8 +473,8 @@ def run_vspaero_aero(
     output_dir     = None,   # Where the final .polar/.csv + 3 PNGs land.
                               # None (default) = AERO_RESULTS_DIR, i.e. the
                               # exact existing shared Results/Aero/ folder
-                              # every current caller (main.py, sweep_worker.py)
-                              # keeps getting unless it opts in. Does NOT
+                              # every current caller (main.py) keeps getting
+                              # unless it opts in. Does NOT
                               # affect VSP_FILES (the .vsp3/.vspgeom scratch
                               # files vspaero.exe itself writes while
                               # solving, below) - those stay in the shared
