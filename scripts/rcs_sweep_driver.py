@@ -21,10 +21,9 @@ every delta for that parameter has finished — produces:
      so a later trade-off study can reuse this RCS data without
      re-running the (expensive) solver.
 
-Mirrors sweep_driver.py/sweep_worker.py's proven subprocess-per-config +
-manifest-based skip/resume pattern, stripped of every aero step — see
-rcs_sweep_worker.py. Results land under Results/RCS_SensitivityStudy/,
-kept separate from the existing Results/SensitivityStudy/ aero sweep.
+Uses a subprocess-per-config + manifest-based skip/resume pattern,
+stripped of every aero step — see rcs_sweep_worker.py. Results land
+under Results/RCS_SensitivityStudy/.
 
 Config choices below (pol="TE-z", cuts="azimuth+frontal", az_range="half")
 were confirmed with the user; az_range="half" assumes every delta stays
@@ -66,10 +65,10 @@ from pipeline_config import GEOMETRY_DIR, IMPORT_FILE
 
 VSP3_FILE = str(Path(GEOMETRY_DIR) / IMPORT_FILE)
 SETS_FILE = str(Path(GEOMETRY_DIR) / (Path(IMPORT_FILE).stem + "_sets.json"))
-# Same "<geometry stem>_sweep_params.json" convention as the existing aero
-# sweep_driver.py, but derived from pipeline_config.IMPORT_FILE instead of
-# a hardcoded filename, so it always follows whatever geometry main.py is
-# currently pointed at.
+# Same "<geometry stem>_sweep_params.json" convention as
+# aero_stab_mission_driver.py, derived from pipeline_config.IMPORT_FILE
+# instead of a hardcoded filename, so it always follows whatever
+# geometry main.py is currently pointed at.
 SWEEP_PARAMS_FILE = str(Path(GEOMETRY_DIR) / (Path(IMPORT_FILE).stem + "_sweep_params.json"))
 
 with open(SWEEP_PARAMS_FILE) as f:

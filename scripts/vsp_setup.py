@@ -56,19 +56,8 @@ RESULTS_DIR  = os.path.join(ROOT_DIR, "Results",  "RCS")
 OPENRCS_DIR  = os.path.join(ROOT_DIR, "OpenRCS",  "open-rcs")
 AERO_RESULTS_DIR = os.path.join(ROOT_DIR, "Results", "Aero")
 STABILITY_DIR     = os.path.join(ROOT_DIR, "Results", "Stability")
-AVIARY_FILES      = os.path.join(ROOT_DIR, "Aviary_Files")       # raw/working Aviary+OpenMDAO output (engine deck, native _out/reports/)
-AVIARY_PERF_DIR   = os.path.join(ROOT_DIR, "Results", "aviary_perf")  # our OWN plain-language mission summary lives directly here
-AVIARY_PERF_NATIVE_DIR = os.path.join(AVIARY_PERF_DIR, "native_aviary_files")  # curated copies of Aviary's OWN native reports
-                                                                                 # (mission_summary.md etc.) — kept in their own
-                                                                                 # subfolder so they're not mistaken for our
-                                                                                 # plain-language summary sitting one level up
-MISSION_DIR       = os.path.join(ROOT_DIR, "Results", "Mission")  # mission_summary_<geom_stem>.csv lands here (main.py) - same
-                                                                     # constant name as performance/Raymer-sizing-approach's
-                                                                     # vsp_setup.py; GENERATED_FILES has no Linux-side twin, this
-                                                                     # branch's equivalent "raw/working generated output" dir is
-                                                                     # AVIARY_FILES above (see the prior merge's resolution) - any
-                                                                     # incoming code that referenced GENERATED_FILES is repointed
-                                                                     # at AVIARY_FILES instead, not reintroduced here.
+MISSION_DIR       = os.path.join(ROOT_DIR, "Results", "Mission")  # mission_summary_<geom_stem>.csv lands here (main.py)
+GENERATED_FILES   = os.path.join(ROOT_DIR, "Generated_Files")     # raw/working generated output (engine decks, etc.)
 VSPAERO_EXE = os.path.join(VSP_INSTALL, "vspaero.exe" if sys.platform == "win32" else "vspaero")
 
 # Path to our bridge script (scripts/ folder, same folder as this file)
@@ -107,10 +96,8 @@ os.makedirs(STL_FILES,   exist_ok=True)
 os.makedirs(RESULTS_DIR, exist_ok=True)
 os.makedirs(AERO_RESULTS_DIR, exist_ok=True)
 os.makedirs(STABILITY_DIR, exist_ok=True)
-os.makedirs(AVIARY_FILES, exist_ok=True)
-os.makedirs(AVIARY_PERF_DIR, exist_ok=True)
-os.makedirs(AVIARY_PERF_NATIVE_DIR, exist_ok=True)
 os.makedirs(MISSION_DIR, exist_ok=True)
+os.makedirs(GENERATED_FILES, exist_ok=True)
 
 # =========================
 # OPENVSP INITIALIZATION
@@ -494,8 +481,8 @@ def run_vspaero_aero(
     output_dir     = None,   # Where the final .polar/.csv + 3 PNGs land.
                               # None (default) = AERO_RESULTS_DIR, i.e. the
                               # exact existing shared Results/Aero/ folder
-                              # every current caller (main.py, sweep_worker.py)
-                              # keeps getting unless it opts in. Does NOT
+                              # every current caller (main.py) keeps getting
+                              # unless it opts in. Does NOT
                               # affect VSP_FILES (the .vsp3/.vspgeom scratch
                               # files vspaero.exe itself writes while
                               # solving, below) - those stay in the shared

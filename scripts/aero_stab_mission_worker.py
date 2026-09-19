@@ -21,7 +21,7 @@ formatting/plotting steps over numbers already computed here, not new
 analysis.
 
 Geometry-override mechanism (_find_section_parm, the geom/sets-loading
-sequence) is the same proven pattern already used by sweep_worker.py and
+sequence) is the same proven pattern already used by
 rcs_sweep_worker.py - copied here rather than imported, since none of
 these worker scripts share code with each other by this project's own
 design choice (see Raymer_sizing_based_mission_check.py's module
@@ -44,8 +44,8 @@ distance exceeding the design range - those still raise. This worker's
 outer try/except still catches them (status="error", exception text in
 entry["error"]), so a single infeasible-in-an-unusual-way config can
 never crash the whole sweep - it just needs a human (or
-compare_family.py) to read that config's own error text rather than a
-clean climb_completed=False/feasible=False field.
+aero_stab_mission_compare_family.py) to read that config's own error
+text rather than a clean climb_completed=False/feasible=False field.
 """
 import sys, os, json, glob
 

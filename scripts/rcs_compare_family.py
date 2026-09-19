@@ -9,8 +9,8 @@ rcs_compare_family.py — standalone RCS sensitivity-study plotting/summary tool
 Decoupled on purpose from rcs_sweep_driver.py's execution: this script
 only READS whatever manifest .json files and OpenRCS .dat outputs
 already exist on disk (glob-based, exactly like the aero-side
-compare_family.py's own load_family()) and (re)builds three comparison
-plots + a summary CSV per study:
+aero_stab_mission_compare_family.py's own load_family()) and (re)builds
+three comparison plots + a summary CSV per study:
   1. mean azimuth RCS  vs. delta   (line plot)
   2. mean frontal RCS  vs. delta   (line plot)
   3. azimuth polar RCS, all completed deltas overlaid on one polar plot
@@ -166,9 +166,9 @@ def _add_absolute_values(rows):
 def load_family(study_name, results_root):
     """
     [(delta, manifest_dict), ...] sorted by delta, done runs only.
-    Glob-based (like compare_family.py's load_family()) instead of
-    requiring a delta list up front, so this works even if you don't
-    remember/pass the exact DELTAS_* list the driver used.
+    Glob-based (like aero_stab_mission_compare_family.py's load_family())
+    instead of requiring a delta list up front, so this works even if you
+    don't remember/pass the exact DELTAS_* list the driver used.
 
     Splices in the shared baseline as the Δ=0.0 point, if and only if
     it's actually done AND no per-study "+0.00" manifest already exists
