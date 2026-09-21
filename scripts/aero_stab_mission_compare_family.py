@@ -256,8 +256,14 @@ def plot_metric_by_study(df, metric, ylabel, out_dir, file_stem):
         fig, ax = plt.subplots(figsize=(7, 4.5))
         ax.plot(sub["delta"], sub[metric], "-o", ms=5, color="steelblue", zorder=3, label="raw")
         if len(sub) >= 2:
-            x_trend, y_trend = plot_style.robust_linear_trend(sub["delta"].to_numpy(), sub[metric].to_numpy())
-            ax.plot(x_trend, y_trend, color="crimson", lw=2.2, zorder=2, alpha=0.85, label="linear trend")
+            x_trend, y_trend, r2 = plot_style.robust_linear_trend(sub["delta"].to_numpy(), sub[metric].to_numpy())
+            # R² alongside the line (same convention as Excel's own "add
+            # trendline") - low R² is a real warning that this study's
+            # response isn't well-summarized by a straight line at all
+            # (e.g. rises then plateaus), not just noisy around one -
+            # see plot_style.robust_linear_trend()'s own docstring.
+            trend_label = f"linear trend (R²={r2:.2f})" if r2 is not None else "linear trend"
+            ax.plot(x_trend, y_trend, color="crimson", lw=2.2, zorder=2, alpha=0.85, label=trend_label)
         baseline = sub[sub["delta"].abs() < 1e-9]
         if not baseline.empty:
             ax.plot(baseline["delta"], baseline[metric], "*", ms=15, color="crimson",

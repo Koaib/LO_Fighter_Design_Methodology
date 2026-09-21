@@ -213,8 +213,14 @@ def _plot_mean_vs_delta(rows, tag_key, study_name, ylabel, out_path, spec_baseli
         # docstring), so the occasional sharp spike (e.g. a specular
         # flash at one delta) barely tilts the line instead of dragging
         # it the way an ordinary least-squares fit would.
-        x_trend, y_trend = plot_style.robust_linear_trend(deltas, means)
-        ax.plot(x_trend, y_trend, color="crimson", lw=2.2, zorder=2, alpha=0.85, label="linear trend")
+        x_trend, y_trend, r2 = plot_style.robust_linear_trend(deltas, means)
+        # R² alongside the line (same convention as Excel's own "add
+        # trendline") - low R² is a real warning that this parameter's
+        # response isn't well-summarized by a straight line at all (e.g.
+        # rises then plateaus), not just noisy around one - see
+        # plot_style.robust_linear_trend()'s own docstring.
+        trend_label = f"linear trend (R²={r2:.2f})" if r2 is not None else "linear trend"
+        ax.plot(x_trend, y_trend, color="crimson", lw=2.2, zorder=2, alpha=0.85, label=trend_label)
     baseline_val = np.mean(means)
     if 0.0 in deltas:
         i0 = deltas.index(0.0)
