@@ -239,15 +239,22 @@ def _plot_mean_vs_delta(rows, tag_key, study_name, ylabel, out_path, spec_baseli
         #    with different swept units, since it's in the shared OUTPUT
         #    metric's units (dBsm here) - but NOT comparable across
         #    DIFFERENT metrics (dBsm vs lbm vs L/D are incompatible).
-        #  - sensitivity_pct: main_effect as a percentage of baseline_val
-        #    (this metric's own Δ=0 value) - "how much does the metric
-        #    move, relative to where it started, over the range tested."
-        #    Unlike main_effect, this IS comparable across different
-        #    metrics too (it's unitless), at the cost of needing a
-        #    nonzero, meaningful baseline to normalize against.
+        #  - sensitivity_pct: main_effect as a percentage of this
+        #    metric's own OBSERVED RANGE across the sweep (max - min of
+        #    the raw means, not just the two endpoints) - "what fraction
+        #    of everything this metric actually did across the tested
+        #    delta range does the trend account for, end to end." NOT
+        #    normalized by baseline_val: a metric whose baseline happens
+        #    to sit near zero (dBsm and t/c generally don't, but this
+        #    guards any that might) would blow the percentage up toward
+        #    +-infinity for an ordinary-sized main_effect, since the
+        #    denominator is arbitrarily small - normalizing by the
+        #    sweep's own spread instead has no such failure mode.
+        #    Comparable across different metrics too (unitless).
         slope = (y_trend[1] - y_trend[0]) / (x_trend[1] - x_trend[0]) if x_trend[1] != x_trend[0] else 0.0
         main_effect = y_trend[1] - y_trend[0]
-        sensitivity_pct = (main_effect / abs(baseline_val) * 100.0) if baseline_val else None
+        value_range = max(means) - min(means)
+        sensitivity_pct = (main_effect / value_range * 100.0) if value_range else None
         sensitivity = {"slope": slope, "r2": r2, "main_effect": main_effect,
                         "sensitivity_pct": sensitivity_pct,
                         "delta_min": x_trend[0], "delta_max": x_trend[1]}
@@ -444,18 +451,24 @@ def _write_sensitivity_summary(sensitivity_rows, out_path):
         WingThickChord in t/c ratio), since it's in the shared OUTPUT
         metric's units (dBsm here) - but NOT across different metrics.
       *_sensitivity_pct   - the same movement as a percentage of this
-        metric's own baseline (Δ=0) value - unitless, so ALSO
+        metric's own OBSERVED RANGE across the sweep (max-min of the raw
+        means, not the single Δ=0 baseline point) - unitless, so ALSO
         comparable across different metrics (e.g. against
         aero_stab_mission_compare_family.py's own LDmax/SM/fuel
-        sensitivity_pct columns), at the cost of needing a nonzero,
-        meaningful baseline to normalize against.
+        sensitivity_pct columns). Deliberately NOT normalized by the
+        baseline value: a metric whose baseline happens to sit near zero
+        would blow a baseline-normalized percentage up toward +-infinity
+        for an ordinary-sized change, since the denominator is
+        arbitrarily small - normalizing by the sweep's own spread avoids
+        that failure mode entirely.
     *_r2 says how much to trust either number for a given study; CAN be
     negative here (see plot_style.robust_linear_trend()'s own docstring
     for exactly why - it's a real, correct result for a parameter with
     no real linear effect, not a bug). Treat r2<=~0 the same as a low
     positive one: this study's numbers aren't a reliable finding for
-    that metric. Sort by |az_sensitivity_pct| descending in Excel/pandas
-    to read this as a ranked sensitivity table directly."""
+    that metric. Rows are in the same (alphabetical, by study) order as
+    aero_stab_mission_compare_family.py's own sensitivity_summary.csv,
+    so the two files' rows line up directly when read side by side."""
     if not sensitivity_rows:
         print("  [outputs] no sensitivity data to summarize"); return
     fieldnames = ["study", "az_slope_dBsm_per_delta", "az_r2", "az_main_effect_dBsm", "az_sensitivity_pct",
@@ -476,12 +489,15 @@ def _save_sensitivity_table_png(sensitivity_rows, out_path):
     same way. Shows sensitivity_pct (not main_effect) as the headline
     number - both are in the CSV, but percent is comparable across
     metrics too (not just across studies), so it's the more useful
-    single number for a compact, presentation-ready table. Sorted by
-    |az_sensitivity_pct| descending, so the ranking read top-to-bottom
-    needs no further sorting in Excel first."""
+    single number for a compact, presentation-ready table. Rows are kept
+    in the SAME order they arrive in (alphabetical by study, same as
+    discover_studies()) rather than re-sorted by any one column here -
+    deliberately, so this table's rows line up directly, one-to-one,
+    against aero_stab_mission_compare_family.py's own sensitivity table
+    for the same studies (re-sort by whichever column matters for a
+    given point in Excel/pandas instead)."""
     if not sensitivity_rows:
         print("  [outputs] no sensitivity data to summarize"); return
-    rows_sorted = sorted(sensitivity_rows, key=lambda r: abs(r["az_sensitivity_pct"] or 0), reverse=True)
 
     col_labels = ["Study", "Az sensitivity (%)", "Az R²", "Frontal sensitivity (%)", "Frontal R²"]
     cell_data = [
@@ -490,10 +506,10 @@ def _save_sensitivity_table_png(sensitivity_rows, out_path):
          f"{r['az_r2']:.2f}" if r["az_r2"] is not None else "N/A",
          f"{r['frontal_sensitivity_pct']:+.1f}%" if r["frontal_sensitivity_pct"] is not None else "N/A",
          f"{r['frontal_r2']:.2f}" if r["frontal_r2"] is not None else "N/A"]
-        for r in rows_sorted
+        for r in sensitivity_rows
     ]
 
-    fig, ax = plt.subplots(figsize=(9.5, 1.2 + 0.5 * len(rows_sorted)), facecolor="white")
+    fig, ax = plt.subplots(figsize=(9.5, 1.2 + 0.5 * len(sensitivity_rows)), facecolor="white")
     ax.set_facecolor("white")
     ax.axis("off")
 
@@ -505,8 +521,8 @@ def _save_sensitivity_table_png(sensitivity_rows, out_path):
 
     ax.set_title(
         "RCS Sensitivity Summary — linear-trend sensitivity across each study's own tested Δ range\n"
-        "sensitivity = trend's total predicted change end-to-end, as a % of the baseline (Δ=0) value;\n"
-        "R² = how well a straight line fits (R²<=~0 means no reliable linear trend - not an error)",
+        "sensitivity = trend's total predicted change end-to-end, as a % of the metric's OWN observed\n"
+        "range over the sweep; R² = how well a straight line fits (R²<=~0 means no reliable trend)",
         fontsize=11, pad=14,
     )
     fig.tight_layout()
