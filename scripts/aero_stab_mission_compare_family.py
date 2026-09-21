@@ -240,12 +240,20 @@ def plot_metric_by_study(df, metric, ylabel, out_dir, file_stem):
     measurement error), so a linear trend makes the underlying direction
     legible without deleting any raw point - fit with Theil-Sen so it
     downweights outliers (a lone severe spike barely tilts it) instead
-    of requiring them removed first."""
+    of requiring them removed first.
+
+    Returns (saved, sensitivity_by_study): saved is the list of file
+    paths written; sensitivity_by_study maps each study name to its own
+    {"slope", "r2", "swing", "delta_min", "delta_max"} (only for studies
+    with >=2 points, i.e. an actual line was fit) - the caller collects
+    these across all three metrics into one cross-study sensitivity
+    ranking table (see __main__ below)."""
     studies = sorted(df["study"].dropna().unique())
     if not studies:
         print(f"   (nothing to plot for {metric} - no studies found)")
-        return []
+        return [], {}
     saved = []
+    sensitivity_by_study = {}
     for study in studies:
         sub = df[df["study"] == study].sort_values("delta")
         sub = sub[sub[metric].notna()]
@@ -264,6 +272,18 @@ def plot_metric_by_study(df, metric, ylabel, out_dir, file_stem):
             # see plot_style.robust_linear_trend()'s own docstring.
             trend_label = f"linear trend (R²={r2:.2f})" if r2 is not None else "linear trend"
             ax.plot(x_trend, y_trend, color="crimson", lw=2.2, zorder=2, alpha=0.85, label=trend_label)
+            # Sensitivity, quantified: slope = rate of change per unit
+            # delta; swing = the line's own total predicted change
+            # across THIS study's tested envelope (slope * delta range) -
+            # directly comparable across studies with different swept
+            # units (degrees vs t/c ratio) since it's expressed in the
+            # shared metric's own units instead. Collected below into one
+            # cross-study, cross-metric ranking table.
+            slope = (y_trend[1] - y_trend[0]) / (x_trend[1] - x_trend[0]) if x_trend[1] != x_trend[0] else 0.0
+            sensitivity_by_study[study] = {
+                "slope": slope, "r2": r2, "swing": y_trend[1] - y_trend[0],
+                "delta_min": x_trend[0], "delta_max": x_trend[1],
+            }
         baseline = sub[sub["delta"].abs() < 1e-9]
         if not baseline.empty:
             ax.plot(baseline["delta"], baseline[metric], "*", ms=15, color="crimson",
@@ -296,7 +316,7 @@ def plot_metric_by_study(df, metric, ylabel, out_dir, file_stem):
         plt.close(fig)
         print(f"   ✅ {out_path}")
         saved.append(out_path)
-    return saved
+    return saved, sensitivity_by_study
 
 
 if __name__ == "__main__":
@@ -328,9 +348,44 @@ if __name__ == "__main__":
     df.to_csv(summary_path, index=False)
     print(f"✅ Combined summary CSV: {summary_path}")
 
-    plot_metric_by_study(df, "LD_max_theoretical_cruise", "Theoretical max L/D", OUT_DIR, "LDmax_vs_delta")
-    plot_metric_by_study(df, "SM_cruise", "Static margin (cruise)", OUT_DIR, "StaticMargin_vs_delta")
-    plot_metric_by_study(df, "residual_fuel_lbm", "Residual fuel (lbm)", OUT_DIR, "ResidualFuel_vs_delta")
+    _, ld_sens = plot_metric_by_study(df, "LD_max_theoretical_cruise", "Theoretical max L/D", OUT_DIR, "LDmax_vs_delta")
+    _, sm_sens = plot_metric_by_study(df, "SM_cruise", "Static margin (cruise)", OUT_DIR, "StaticMargin_vs_delta")
+    _, fuel_sens = plot_metric_by_study(df, "residual_fuel_lbm", "Residual fuel (lbm)", OUT_DIR, "ResidualFuel_vs_delta")
+
+    # One row per study, ranking each by how much its own linear trend
+    # predicts LD_max/SM/residual_fuel move across the FULL delta range
+    # actually tested (the *_swing_* columns) - directly comparable
+    # across studies despite their different swept units (degrees vs t/c
+    # ratio), since swing is expressed in each metric's own shared
+    # output units instead. *_r2 says how much to trust that number for
+    # a given study (see plot_style.robust_linear_trend()'s docstring) -
+    # sort by |*_swing_*| in Excel/pandas to read this as a ranked
+    # sensitivity table, and set this next to rcs_compare_family.py's
+    # own sensitivity_summary.csv to relate the aero/mission cost of a
+    # parameter directly against its RCS benefit.
+    all_studies = sorted(set(ld_sens) | set(sm_sens) | set(fuel_sens))
+    sens_rows = []
+    for study in all_studies:
+        ld, sm, fuel = ld_sens.get(study), sm_sens.get(study), fuel_sens.get(study)
+        any_sens = ld or sm or fuel
+        sens_rows.append({
+            "study": study,
+            "LDmax_slope_per_delta": ld["slope"] if ld else None,
+            "LDmax_r2": ld["r2"] if ld else None,
+            "LDmax_swing": ld["swing"] if ld else None,
+            "SM_slope_per_delta": sm["slope"] if sm else None,
+            "SM_r2": sm["r2"] if sm else None,
+            "SM_swing": sm["swing"] if sm else None,
+            "ResidualFuel_slope_per_delta_lbm": fuel["slope"] if fuel else None,
+            "ResidualFuel_r2": fuel["r2"] if fuel else None,
+            "ResidualFuel_swing_lbm": fuel["swing"] if fuel else None,
+            "delta_min": any_sens["delta_min"] if any_sens else None,
+            "delta_max": any_sens["delta_max"] if any_sens else None,
+        })
+    if sens_rows:
+        sens_path = os.path.join(RESULTS_ROOT, "sensitivity_summary.csv")
+        pd.DataFrame(sens_rows).to_csv(sens_path, index=False)
+        print(f"✅ Sensitivity summary CSV: {sens_path}")
 
     if other:
         print(f"\n⚠️  {len(other)} config(s) not done - see their own manifest JSON for status/error:")
