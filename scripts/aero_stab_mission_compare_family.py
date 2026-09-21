@@ -234,12 +234,13 @@ def plot_metric_by_study(df, metric, ylabel, out_dir, file_stem):
     own panel at full size, alongside that same parameter's RCS plots
     (rcs_compare_family.py already saves those individually, per study).
 
-    Each panel also overlays plot_style.robust_lowess()'s trendline on
-    top of the raw delta-sweep line: these sweeps are noisy run-to-run
-    (VSPAero/meshing sensitivity to shaping deltas, not measurement
-    error), so a robust trendline makes the underlying trend legible
-    without deleting any raw point - the trendline downweights outliers
-    instead of requiring them removed first."""
+    Each panel also overlays plot_style.robust_linear_trend()'s straight-
+    line trendline on top of the raw delta-sweep line: these sweeps are
+    noisy run-to-run (VSPAero/meshing sensitivity to shaping deltas, not
+    measurement error), so a linear trend makes the underlying direction
+    legible without deleting any raw point - fit with Theil-Sen so it
+    downweights outliers (a lone severe spike barely tilts it) instead
+    of requiring them removed first."""
     studies = sorted(df["study"].dropna().unique())
     if not studies:
         print(f"   (nothing to plot for {metric} - no studies found)")
@@ -254,9 +255,9 @@ def plot_metric_by_study(df, metric, ylabel, out_dir, file_stem):
 
         fig, ax = plt.subplots(figsize=(7, 4.5))
         ax.plot(sub["delta"], sub[metric], "-o", ms=5, color="steelblue", zorder=3, label="raw")
-        if len(sub) >= 3:
-            x_trend, y_trend = plot_style.robust_lowess(sub["delta"].to_numpy(), sub[metric].to_numpy())
-            ax.plot(x_trend, y_trend, color="crimson", lw=2.2, zorder=2, alpha=0.85, label="robust trend")
+        if len(sub) >= 2:
+            x_trend, y_trend = plot_style.robust_linear_trend(sub["delta"].to_numpy(), sub[metric].to_numpy())
+            ax.plot(x_trend, y_trend, color="crimson", lw=2.2, zorder=2, alpha=0.85, label="linear trend")
         baseline = sub[sub["delta"].abs() < 1e-9]
         if not baseline.empty:
             ax.plot(baseline["delta"], baseline[metric], "*", ms=15, color="crimson",
