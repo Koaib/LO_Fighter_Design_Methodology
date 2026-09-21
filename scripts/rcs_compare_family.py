@@ -204,7 +204,17 @@ def _plot_mean_vs_delta(rows, tag_key, study_name, ylabel, out_path, spec_baseli
 
     fig, ax = plt.subplots(figsize=(7, 4.5), facecolor="white")
     ax.set_facecolor("white")
-    ax.plot(deltas, means, color="steelblue", lw=1.4, marker="o", markersize=5, zorder=3)
+    ax.plot(deltas, means, color="steelblue", lw=1.4, marker="o", markersize=5, zorder=3, label="raw")
+    if len(deltas) >= 3:
+        # Robust trendline: these sweeps are noisy run-to-run (mesh/PO
+        # discretization), so a single lowess pass makes the underlying
+        # trend legible without deleting any raw point - see
+        # plot_style.robust_lowess()'s own docstring for why it's robust
+        # to the occasional sharp spike (e.g. a specular flash at one
+        # delta) instead of being dragged by it like a plain moving
+        # average would be.
+        x_trend, y_trend = plot_style.robust_lowess(deltas, means)
+        ax.plot(x_trend, y_trend, color="crimson", lw=2.2, zorder=2, alpha=0.85, label="robust trend")
     baseline_val = np.mean(means)
     if 0.0 in deltas:
         i0 = deltas.index(0.0)
@@ -212,12 +222,12 @@ def _plot_mean_vs_delta(rows, tag_key, study_name, ylabel, out_path, spec_baseli
         ax.plot(deltas[i0], means[i0], marker="o", markersize=9,
                 markerfacecolor="none", markeredgecolor="crimson", markeredgewidth=1.6,
                 zorder=4, label="baseline (Δ=0)")
-        ax.legend()
     ax.axhline(baseline_val, color="grey", lw=0.6, linestyle=":", zorder=1)
     ax.set_xlabel(f"{study_name}  Δ")
     ax.set_ylabel(ylabel)
     ax.grid(True, linestyle="--", alpha=0.5)
     ax.set_title(f"{study_name} — {ylabel} vs. Δ")
+    ax.legend(fontsize=9)
 
     if spec_baseline is not None:
         # Secondary top axis: the ABSOLUTE applied value of this study's
@@ -283,12 +293,23 @@ def _plot_azimuth_polar_overlay(rows, study_name, out_path):
         r = _rcs_to_r(sph_full)
         t = np.append(np.deg2rad(phi_full), np.deg2rad(phi_full[0]))
         r = np.append(r, r[0])
-        abs_label = f", abs={a:.3g}" if a is not None else ""
+        # No per-curve legend entry: with ~20-30 deltas overlaid, a full
+        # legend was more clutter than information (each entry's exact
+        # abs value is still in summary_<study>.csv). Colour alone
+        # (cmap below, mapped to delta via the colorbar) carries the
+        # same ordering information far more compactly; only the
+        # baseline gets its own callout, via the proxy artist below.
         ax.plot(t, r, color=color, lw=1.6 if d == 0.0 else 1.0,
-                alpha=1.0 if d == 0.0 else 0.85, zorder=5,
-                label=f"Δ={d:+.2f}{abs_label}" + ("  (baseline)" if d == 0.0 else ""))
+                alpha=1.0 if d == 0.0 else 0.85, zorder=5)
 
-    ax.legend(loc="lower left", bbox_to_anchor=(-0.15, -0.15), fontsize=7.5, framealpha=0.7)
+    norm = matplotlib.colors.Normalize(vmin=-max_abs_delta, vmax=max_abs_delta)
+    sm = matplotlib.cm.ScalarMappable(norm=norm, cmap=cmap)
+    sm.set_array([])
+    cbar = fig.colorbar(sm, ax=ax, pad=0.12, shrink=0.65)
+    cbar.set_label(f"{study_name}  Δ", fontsize=9)
+    baseline_proxy = plt.Line2D([0], [0], color="black", lw=1.6, label="baseline (Δ=0)")
+    ax.legend(handles=[baseline_proxy], loc="lower left", bbox_to_anchor=(-0.15, -0.1),
+              fontsize=8.5, framealpha=0.7)
     spokes = {0: "0°\n(nose)", 90: "90°", 180: "180°\n(tail)", 270: "270°"}
     ax.set_xticks(np.deg2rad(list(spokes.keys())))
     ax.set_xticklabels(list(spokes.values()), fontsize=8)
