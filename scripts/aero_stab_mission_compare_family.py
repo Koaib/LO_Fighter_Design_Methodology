@@ -228,28 +228,44 @@ def build_summary_rows(entries, cruise_mach, cruise_altitude_ft):
     return rows
 
 
-def plot_metric_by_study(df, metric, ylabel, out_path):
+def plot_metric_by_study(df, metric, ylabel, out_dir, file_stem):
+    """Saves ONE individual figure per study (not a single combined row
+    of subplots) - so a slide-per-parameter deck can embed each study's
+    own panel at full size, alongside that same parameter's RCS plots
+    (rcs_compare_family.py already saves those individually, per study).
+
+    Each panel also overlays plot_style.robust_lowess()'s trendline on
+    top of the raw delta-sweep line: these sweeps are noisy run-to-run
+    (VSPAero/meshing sensitivity to shaping deltas, not measurement
+    error), so a robust trendline makes the underlying trend legible
+    without deleting any raw point - the trendline downweights outliers
+    instead of requiring them removed first."""
     studies = sorted(df["study"].dropna().unique())
     if not studies:
         print(f"   (nothing to plot for {metric} - no studies found)")
-        return
-    fig, axes = plt.subplots(1, len(studies), figsize=(5 * len(studies), 5), sharey=True)
-    if len(studies) == 1:
-        axes = [axes]
-    for ax, study in zip(axes, studies):
+        return []
+    saved = []
+    for study in studies:
         sub = df[df["study"] == study].sort_values("delta")
         sub = sub[sub[metric].notna()]
         if sub.empty:
-            ax.set_title(f"{study} (no data)")
+            print(f"   ({study}: no data for {metric})")
             continue
-        ax.plot(sub["delta"], sub[metric], "-o", ms=5)
+
+        fig, ax = plt.subplots(figsize=(7, 4.5))
+        ax.plot(sub["delta"], sub[metric], "-o", ms=5, color="steelblue", zorder=3, label="raw")
+        if len(sub) >= 3:
+            x_trend, y_trend = plot_style.robust_lowess(sub["delta"].to_numpy(), sub[metric].to_numpy())
+            ax.plot(x_trend, y_trend, color="crimson", lw=2.2, zorder=2, alpha=0.85, label="robust trend")
         baseline = sub[sub["delta"].abs() < 1e-9]
         if not baseline.empty:
-            ax.plot(baseline["delta"], baseline[metric], "r*", ms=14, label="baseline (delta=0)")
-            ax.legend()
+            ax.plot(baseline["delta"], baseline[metric], "*", ms=15, color="crimson",
+                     markeredgecolor="black", markeredgewidth=0.8, zorder=4, label="baseline (delta=0)")
         ax.set_xlabel("delta")
-        ax.set_title(study)
+        ax.set_ylabel(ylabel)
+        ax.set_title(f"{study} — {ylabel} vs. delta")
         ax.grid(True, ls="--", alpha=0.6)
+        ax.legend(fontsize=9)
 
         # Secondary top axis: the ABSOLUTE applied value of this study's
         # primary swept parameter, not just its delta - e.g. thickness/
@@ -265,13 +281,15 @@ def plot_metric_by_study(df, metric, ylabel, out_path):
                 "top",
                 functions=(lambda x, b=spec_baseline: x + b, lambda x, b=spec_baseline: x - b),
             )
-            ax_top.set_xlabel("absolute value", fontsize=11)
-    axes[0].set_ylabel(ylabel)
-    fig.suptitle(f"{ylabel} vs. shaping delta, by study")
-    fig.tight_layout()
-    fig.savefig(out_path)
-    plt.close(fig)
-    print(f"   ✅ {out_path}")
+            ax_top.set_xlabel(f"{study}  absolute value", fontsize=11)
+
+        fig.tight_layout()
+        out_path = os.path.join(out_dir, f"{study}_{file_stem}.png")
+        fig.savefig(out_path)
+        plt.close(fig)
+        print(f"   ✅ {out_path}")
+        saved.append(out_path)
+    return saved
 
 
 if __name__ == "__main__":
@@ -303,9 +321,9 @@ if __name__ == "__main__":
     df.to_csv(summary_path, index=False)
     print(f"✅ Combined summary CSV: {summary_path}")
 
-    plot_metric_by_study(df, "LD_max_theoretical_cruise", "Theoretical max L/D", os.path.join(OUT_DIR, "ld_max_vs_delta.png"))
-    plot_metric_by_study(df, "SM_cruise", "Static margin (cruise)", os.path.join(OUT_DIR, "sm_vs_delta.png"))
-    plot_metric_by_study(df, "residual_fuel_lbm", "Residual fuel (lbm)", os.path.join(OUT_DIR, "residual_fuel_vs_delta.png"))
+    plot_metric_by_study(df, "LD_max_theoretical_cruise", "Theoretical max L/D", OUT_DIR, "LDmax_vs_delta")
+    plot_metric_by_study(df, "SM_cruise", "Static margin (cruise)", OUT_DIR, "StaticMargin_vs_delta")
+    plot_metric_by_study(df, "residual_fuel_lbm", "Residual fuel (lbm)", OUT_DIR, "ResidualFuel_vs_delta")
 
     if other:
         print(f"\n⚠️  {len(other)} config(s) not done - see their own manifest JSON for status/error:")
