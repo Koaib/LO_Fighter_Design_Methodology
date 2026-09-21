@@ -261,6 +261,12 @@ def plot_metric_by_study(df, metric, ylabel, out_dir, file_stem):
             print(f"   ({study}: no data for {metric})")
             continue
 
+        # Needed BEFORE the trend block now (to normalize into a percent
+        # sensitivity). Real baseline (delta=0) value when available,
+        # else this study's own mean as a fallback reference point.
+        baseline = sub[sub["delta"].abs() < 1e-9]
+        baseline_val = float(baseline[metric].iloc[0]) if not baseline.empty else float(sub[metric].mean())
+
         fig, ax = plt.subplots(figsize=(7, 4.5))
         ax.plot(sub["delta"], sub[metric], "-o", ms=5, color="steelblue", zorder=3, label="raw")
         if len(sub) >= 2:
@@ -272,21 +278,28 @@ def plot_metric_by_study(df, metric, ylabel, out_dir, file_stem):
             # see plot_style.robust_linear_trend()'s own docstring.
             trend_label = f"linear trend (R²={r2:.2f})" if r2 is not None else "linear trend"
             ax.plot(x_trend, y_trend, color="crimson", lw=2.2, zorder=2, alpha=0.85, label=trend_label)
-            # Sensitivity, quantified: slope = rate of change per unit
-            # delta; main_effect (the Design-of-Experiments term for
-            # this - see plot_style.robust_linear_trend()'s docstring)
-            # is the line's own total predicted change across THIS
-            # study's tested envelope (slope * delta range) - directly
-            # comparable across studies with different swept units
-            # (degrees vs t/c ratio) since it's expressed in the shared
-            # metric's own units instead. Collected below into one
-            # cross-study, cross-metric ranking table.
+            # Sensitivity, quantified two ways:
+            #  - main_effect (the Design-of-Experiments term for this -
+            #    see plot_style.robust_linear_trend()'s docstring): the
+            #    line's own total predicted change across THIS study's
+            #    tested envelope (slope * delta range) - comparable
+            #    across studies with different swept units (degrees vs
+            #    t/c ratio) since it's in the shared metric's own units,
+            #    but NOT across different metrics (L/D vs SM vs lbm).
+            #  - sensitivity_pct: the same movement as a percentage of
+            #    this metric's own baseline (delta=0) value - unitless,
+            #    so ALSO comparable across different metrics (and
+            #    against rcs_compare_family.py's own sensitivity_pct
+            #    columns), at the cost of needing a nonzero, meaningful
+            #    baseline to normalize against.
             slope = (y_trend[1] - y_trend[0]) / (x_trend[1] - x_trend[0]) if x_trend[1] != x_trend[0] else 0.0
+            main_effect = y_trend[1] - y_trend[0]
+            sensitivity_pct = (main_effect / abs(baseline_val) * 100.0) if baseline_val else None
             sensitivity_by_study[study] = {
-                "slope": slope, "r2": r2, "main_effect": y_trend[1] - y_trend[0],
+                "slope": slope, "r2": r2, "main_effect": main_effect,
+                "sensitivity_pct": sensitivity_pct,
                 "delta_min": x_trend[0], "delta_max": x_trend[1],
             }
-        baseline = sub[sub["delta"].abs() < 1e-9]
         if not baseline.empty:
             ax.plot(baseline["delta"], baseline[metric], "*", ms=15, color="crimson",
                      markeredgecolor="black", markeredgewidth=0.8, zorder=4, label="baseline (delta=0)")
@@ -325,23 +338,27 @@ def _save_sensitivity_table_png(sensitivity_rows, out_path):
     """Same rows as the sensitivity_summary.csv written just before this
     call, rendered as a table image - same convention run_openrcs.py's
     own _save_mean_table() already uses for the MeanRCS table, so this
-    drops into a slide the same way. No single metric dominates "worse"
-    here the way RCS dBsm does (higher L/D and residual fuel are good,
-    static margin isn't just bigger-is-better), so rows stay in the same
-    order as the CSV (alphabetical by study) rather than pre-sorted by
-    one column - re-sort by whichever metric matters for a given point."""
+    drops into a slide the same way. Shows sensitivity_pct (not
+    main_effect) as the headline number - both are in the CSV, but
+    percent is comparable across metrics too (L/D vs SM vs fuel), so
+    it's the more useful single number for a compact table. No single
+    metric dominates "worse" here the way RCS dBsm does (higher L/D and
+    residual fuel are good, static margin isn't just bigger-is-better),
+    so rows stay in the same order as the CSV (alphabetical by study)
+    rather than pre-sorted by one column - re-sort by whichever metric
+    matters for a given point."""
     if not sensitivity_rows:
         print("   (no sensitivity data to summarize)"); return
 
-    col_labels = ["Study", "L/D main effect", "L/D R²", "SM main effect", "SM R²",
-                  "Fuel main effect (lbm)", "Fuel R²"]
+    col_labels = ["Study", "L/D sensitivity (%)", "L/D R²", "SM sensitivity (%)", "SM R²",
+                  "Fuel sensitivity (%)", "Fuel R²"]
     cell_data = [
         [r["study"],
-         f"{r['LDmax_main_effect']:+.2f}" if r["LDmax_main_effect"] is not None else "N/A",
+         f"{r['LDmax_sensitivity_pct']:+.1f}%" if r["LDmax_sensitivity_pct"] is not None else "N/A",
          f"{r['LDmax_r2']:.2f}" if r["LDmax_r2"] is not None else "N/A",
-         f"{r['SM_main_effect']:+.3f}" if r["SM_main_effect"] is not None else "N/A",
+         f"{r['SM_sensitivity_pct']:+.1f}%" if r["SM_sensitivity_pct"] is not None else "N/A",
          f"{r['SM_r2']:.2f}" if r["SM_r2"] is not None else "N/A",
-         f"{r['ResidualFuel_main_effect_lbm']:+.0f}" if r["ResidualFuel_main_effect_lbm"] is not None else "N/A",
+         f"{r['ResidualFuel_sensitivity_pct']:+.1f}%" if r["ResidualFuel_sensitivity_pct"] is not None else "N/A",
          f"{r['ResidualFuel_r2']:.2f}" if r["ResidualFuel_r2"] is not None else "N/A"]
         for r in sensitivity_rows
     ]
@@ -357,9 +374,9 @@ def _save_sensitivity_table_png(sensitivity_rows, out_path):
     tbl.scale(1.2, 2.0)
 
     ax.set_title(
-        "Aero/Mission Sensitivity Summary — linear-trend main effect across each study's own tested delta range\n"
-        "main effect = trend's total predicted change end-to-end; R² = how well a straight line fits\n"
-        "(R²<=~0 means no reliable linear trend for that study/metric - not an error)",
+        "Aero/Mission Sensitivity Summary — linear-trend sensitivity across each study's own tested delta range\n"
+        "sensitivity = trend's total predicted change end-to-end, as a % of the baseline (delta=0) value;\n"
+        "R² = how well a straight line fits (R²<=~0 means no reliable linear trend - not an error)",
         fontsize=11, pad=14,
     )
     fig.tight_layout()
@@ -403,19 +420,26 @@ if __name__ == "__main__":
 
     # One row per study, ranking each by how much its own linear trend
     # predicts LD_max/SM/residual_fuel move across the FULL delta range
-    # actually tested (the *_main_effect* columns - "main effect" is the
-    # Design-of-Experiments term for this; see plot_style.
-    # robust_linear_trend()'s docstring) - directly comparable across
-    # studies despite their different swept units (degrees vs t/c ratio),
-    # since it's expressed in each metric's own shared output units
-    # instead. *_r2 says how much to trust that number for a given study;
-    # CAN be negative (see plot_style.robust_linear_trend()'s docstring
-    # for exactly why - a real, correct result for a parameter with no
-    # real linear effect, not a bug) - treat r2<=~0 the same as a low
-    # positive one. Sort by |*_main_effect*| in Excel/pandas to read this
-    # as a ranked sensitivity table, and set this next to
-    # rcs_compare_family.py's own sensitivity_summary.csv to relate the
-    # aero/mission cost of a parameter directly against its RCS benefit.
+    # actually tested. Two ways to read the size of that movement:
+    #   *_main_effect        - the Design-of-Experiments term for a
+    #     factor's response change from one end of its tested range to
+    #     the other (see plot_style.robust_linear_trend()'s docstring);
+    #     comparable ACROSS STUDIES (degrees vs t/c ratio), since it's
+    #     in each metric's own shared output units - but NOT across
+    #     different metrics (L/D vs SM vs lbm are incompatible).
+    #   *_sensitivity_pct    - the same movement as a percentage of that
+    #     metric's own baseline (delta=0) value - unitless, so ALSO
+    #     comparable across different metrics, and against
+    #     rcs_compare_family.py's own sensitivity_pct columns, to relate
+    #     the aero/mission cost of a parameter directly against its RCS
+    #     benefit - at the cost of needing a nonzero, meaningful
+    #     baseline to normalize against.
+    # *_r2 says how much to trust either number for a given study; CAN
+    # be negative (see plot_style.robust_linear_trend()'s docstring for
+    # exactly why - a real, correct result for a parameter with no real
+    # linear effect, not a bug) - treat r2<=~0 the same as a low
+    # positive one. Sort by |*_sensitivity_pct| in Excel/pandas to read
+    # this as a ranked sensitivity table.
     all_studies = sorted(set(ld_sens) | set(sm_sens) | set(fuel_sens))
     sens_rows = []
     for study in all_studies:
@@ -426,12 +450,15 @@ if __name__ == "__main__":
             "LDmax_slope_per_delta": ld["slope"] if ld else None,
             "LDmax_r2": ld["r2"] if ld else None,
             "LDmax_main_effect": ld["main_effect"] if ld else None,
+            "LDmax_sensitivity_pct": ld["sensitivity_pct"] if ld else None,
             "SM_slope_per_delta": sm["slope"] if sm else None,
             "SM_r2": sm["r2"] if sm else None,
             "SM_main_effect": sm["main_effect"] if sm else None,
+            "SM_sensitivity_pct": sm["sensitivity_pct"] if sm else None,
             "ResidualFuel_slope_per_delta_lbm": fuel["slope"] if fuel else None,
             "ResidualFuel_r2": fuel["r2"] if fuel else None,
             "ResidualFuel_main_effect_lbm": fuel["main_effect"] if fuel else None,
+            "ResidualFuel_sensitivity_pct": fuel["sensitivity_pct"] if fuel else None,
             "delta_min": any_sens["delta_min"] if any_sens else None,
             "delta_max": any_sens["delta_max"] if any_sens else None,
         })
