@@ -268,7 +268,14 @@ def plot_metric_by_study(df, metric, ylabel, out_dir, file_stem):
         baseline = sub[sub["delta"].abs() < 1e-9]
 
         fig, ax = plt.subplots(figsize=(7, 4.5))
-        ax.plot(sub["delta"], sub[metric], "-o", ms=5, color="steelblue", zorder=3, label="raw")
+        # Points only, no connecting line: each delta is an independent
+        # noisy sample, not a continuous path, so a straight segment
+        # between adjacent deltas would imply a continuity that isn't
+        # physically there - scatter + the separate fitted trend line
+        # below is the correct read (the trend line is the only line on
+        # the chart).
+        ax.plot(sub["delta"], sub[metric], "o", ms=7, color="steelblue",
+                 markeredgecolor="white", markeredgewidth=0.8, zorder=3, label="raw")
         if len(sub) >= 2:
             x_trend, y_trend, r2 = plot_style.robust_linear_trend(sub["delta"].to_numpy(), sub[metric].to_numpy())
             # R² alongside the line (same convention as Excel's own "add
