@@ -211,7 +211,14 @@ def _plot_mean_vs_delta(rows, tag_key, study_name, ylabel, out_path, spec_baseli
 
     fig, ax = plt.subplots(figsize=(7, 4.5), facecolor="white")
     ax.set_facecolor("white")
-    ax.plot(deltas, means, color="steelblue", lw=1.4, marker="o", markersize=5, zorder=3, label="raw")
+    # Points only, no connecting line: each delta is an independent noisy
+    # sample, not a continuous path, so a straight segment between
+    # adjacent deltas would imply a continuity that isn't physically
+    # there - scatter + the separate fitted trend line below is the
+    # correct read here (the trend line is the only line on the chart).
+    ax.plot(deltas, means, color="steelblue", marker="o", markersize=7,
+            markeredgecolor="white", markeredgewidth=0.8, linestyle="none",
+            zorder=3, label="raw")
     if len(deltas) >= 2:
         # Linear trendline: these sweeps are noisy run-to-run (mesh/PO
         # discretization), so a straight-line trend makes the underlying
