@@ -223,17 +223,20 @@ def _plot_mean_vs_delta(rows, tag_key, study_name, ylabel, out_path, spec_baseli
         trend_label = f"linear trend (R²={r2:.2f})" if r2 is not None else "linear trend"
         ax.plot(x_trend, y_trend, color="crimson", lw=2.2, zorder=2, alpha=0.85, label=trend_label)
         # Sensitivity, quantified: slope = rate of change per unit delta
-        # (this parameter's own units - degrees, t/c, ...); swing = the
-        # line's own total predicted change across THIS study's actual
-        # tested envelope (slope * delta range) - unlike the slope alone,
-        # swing is directly comparable across studies with different
-        # units/ranges (e.g. VT_Cant in degrees vs WingThickChord in t/c),
-        # since it's expressed in the shared OUTPUT metric's units
-        # (dBsm here), not the differing input units. Collected by
-        # build_study_outputs() into one cross-study ranking table.
+        # (this parameter's own units - degrees, t/c, ...); main_effect
+        # is the Design-of-Experiments term for what this line predicts
+        # the metric moves by, end to end across THIS study's actual
+        # tested envelope (slope * delta range - the continuous-sweep
+        # analogue of a factorial DOE's "high level minus low level"
+        # effect estimate). Unlike the slope alone, main_effect is
+        # directly comparable across studies with different units/ranges
+        # (e.g. VT_Cant in degrees vs WingThickChord in t/c), since it's
+        # expressed in the shared OUTPUT metric's units (dBsm here), not
+        # the differing input units. Collected by build_study_outputs()
+        # into one cross-study ranking table.
         slope = (y_trend[1] - y_trend[0]) / (x_trend[1] - x_trend[0]) if x_trend[1] != x_trend[0] else 0.0
-        swing = y_trend[1] - y_trend[0]
-        sensitivity = {"slope": slope, "r2": r2, "swing": swing,
+        main_effect = y_trend[1] - y_trend[0]
+        sensitivity = {"slope": slope, "r2": r2, "main_effect": main_effect,
                         "delta_min": x_trend[0], "delta_max": x_trend[1]}
     baseline_val = np.mean(means)
     if 0.0 in deltas:
@@ -392,10 +395,10 @@ def build_study_outputs(study_name):
         "study": study_name,
         "az_slope_dBsm_per_delta": az_sens["slope"] if az_sens else None,
         "az_r2": az_sens["r2"] if az_sens else None,
-        "az_swing_dBsm": az_sens["swing"] if az_sens else None,
+        "az_main_effect_dBsm": az_sens["main_effect"] if az_sens else None,
         "frontal_slope_dBsm_per_delta": fr_sens["slope"] if fr_sens else None,
         "frontal_r2": fr_sens["r2"] if fr_sens else None,
-        "frontal_swing_dBsm": fr_sens["swing"] if fr_sens else None,
+        "frontal_main_effect_dBsm": fr_sens["main_effect"] if fr_sens else None,
         "delta_min": (az_sens or fr_sens)["delta_min"] if (az_sens or fr_sens) else None,
         "delta_max": (az_sens or fr_sens)["delta_max"] if (az_sens or fr_sens) else None,
     }
@@ -420,18 +423,23 @@ def discover_studies():
 def _write_sensitivity_summary(sensitivity_rows, out_path):
     """One row per study, ranking each by how much its own linear trend
     predicts mean RCS moves across the FULL delta range actually tested
-    (the *_swing_dBsm columns) - directly comparable across studies even
-    though their swept parameters have different units (degrees vs t/c
-    ratio), since swing is expressed in the shared OUTPUT metric's units
-    instead. *_r2 says how much to trust that number for a given study
-    (see plot_style.robust_linear_trend()'s own docstring); a low r2
-    means the swept range only informs the sign of the effect, not a
-    precise magnitude. Sort by |az_swing_dBsm| descending in Excel/pandas
-    to read this as a ranked sensitivity table directly."""
+    (the *_main_effect_dBsm columns - "main effect" is the Design-of-
+    Experiments term for a factor's response change from one end of its
+    tested range to the other; see plot_style.robust_linear_trend()'s
+    docstring) - directly comparable across studies even though their
+    swept parameters have different units (degrees vs t/c ratio), since
+    it's expressed in the shared OUTPUT metric's units instead. *_r2
+    says how much to trust that number for a given study; CAN be
+    negative here (see plot_style.robust_linear_trend()'s own docstring
+    for exactly why - it's a real, correct result for a parameter with
+    no real linear effect, not a bug). Treat r2<=~0 the same as a low
+    positive one: this study's slope/main_effect isn't a reliable
+    finding for that metric. Sort by |az_main_effect_dBsm| descending in
+    Excel/pandas to read this as a ranked sensitivity table directly."""
     if not sensitivity_rows:
         print("  [outputs] no sensitivity data to summarize"); return
-    fieldnames = ["study", "az_slope_dBsm_per_delta", "az_r2", "az_swing_dBsm",
-                  "frontal_slope_dBsm_per_delta", "frontal_r2", "frontal_swing_dBsm",
+    fieldnames = ["study", "az_slope_dBsm_per_delta", "az_r2", "az_main_effect_dBsm",
+                  "frontal_slope_dBsm_per_delta", "frontal_r2", "frontal_main_effect_dBsm",
                   "delta_min", "delta_max"]
     with open(out_path, "w", newline="") as f:
         w = csv.DictWriter(f, fieldnames=fieldnames)
@@ -445,23 +453,23 @@ def _save_sensitivity_table_png(sensitivity_rows, out_path):
     """Same rows as _write_sensitivity_summary()'s CSV, rendered as a
     table image - same convention run_openrcs.py's own _save_mean_table()
     already uses for the MeanRCS table, so this drops into a slide the
-    same way. Sorted by |az_swing_dBsm| descending, so the ranking read
-    top-to-bottom needs no further sorting in Excel first."""
+    same way. Sorted by |az_main_effect_dBsm| descending, so the ranking
+    read top-to-bottom needs no further sorting in Excel first."""
     if not sensitivity_rows:
         print("  [outputs] no sensitivity data to summarize"); return
-    rows_sorted = sorted(sensitivity_rows, key=lambda r: abs(r["az_swing_dBsm"] or 0), reverse=True)
+    rows_sorted = sorted(sensitivity_rows, key=lambda r: abs(r["az_main_effect_dBsm"] or 0), reverse=True)
 
-    col_labels = ["Study", "Az swing (dBsm)", "Az R²", "Frontal swing (dBsm)", "Frontal R²"]
+    col_labels = ["Study", "Az main effect (dBsm)", "Az R²", "Frontal main effect (dBsm)", "Frontal R²"]
     cell_data = [
         [r["study"],
-         f"{r['az_swing_dBsm']:+.3f}" if r["az_swing_dBsm"] is not None else "N/A",
+         f"{r['az_main_effect_dBsm']:+.3f}" if r["az_main_effect_dBsm"] is not None else "N/A",
          f"{r['az_r2']:.2f}" if r["az_r2"] is not None else "N/A",
-         f"{r['frontal_swing_dBsm']:+.3f}" if r["frontal_swing_dBsm"] is not None else "N/A",
+         f"{r['frontal_main_effect_dBsm']:+.3f}" if r["frontal_main_effect_dBsm"] is not None else "N/A",
          f"{r['frontal_r2']:.2f}" if r["frontal_r2"] is not None else "N/A"]
         for r in rows_sorted
     ]
 
-    fig, ax = plt.subplots(figsize=(9, 1.0 + 0.5 * len(rows_sorted)), facecolor="white")
+    fig, ax = plt.subplots(figsize=(9.5, 1.2 + 0.5 * len(rows_sorted)), facecolor="white")
     ax.set_facecolor("white")
     ax.axis("off")
 
@@ -472,8 +480,9 @@ def _save_sensitivity_table_png(sensitivity_rows, out_path):
     tbl.scale(1.2, 2.0)
 
     ax.set_title(
-        "RCS Sensitivity Summary — linear-trend swing across each study's own tested Δ range\n"
-        "swing = trend's total predicted change (dBsm); R² = how well a straight line fits (low = check the plot by eye)",
+        "RCS Sensitivity Summary — linear-trend main effect across each study's own tested Δ range\n"
+        "main effect = trend's total predicted change end-to-end (dBsm); R² = how well a straight line fits\n"
+        "(R²<=~0 means no reliable linear trend for that study/metric - not an error)",
         fontsize=11, pad=14,
     )
     fig.tight_layout()

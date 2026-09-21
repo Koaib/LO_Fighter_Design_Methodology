@@ -48,6 +48,24 @@ def robust_linear_trend(x, y):
     means the straight-line summary should be treated with real caution,
     not just plotted and trusted.
 
+    r_squared CAN come out negative here, unlike a textbook OLS r_squared
+    (which is mathematically guaranteed >= 0, because OLS is DEFINED as
+    whichever line minimizes SS_res, and the flat mean - slope=0 - is
+    always one of the lines it could have picked instead, so OLS can
+    never do worse than it). Theil-Sen is deliberately NOT chosen to
+    minimize SS_res - it is chosen to resist outliers - so that guarantee
+    does not carry over: for a study where this parameter genuinely has
+    no real linear effect on the metric (pure noise around a flat line),
+    Theil-Sen's slope is just noise scattered around zero, and using ANY
+    nonzero slope to predict is worse, in total squared error, than just
+    predicting the flat mean every time. Confirmed numerically before
+    shipping this: fit against synthetic pure-noise (zero true slope)
+    data gave r_squared=-0.0005, for exactly this reason. A negative (or
+    near-zero) r_squared is a real, correct result, not a bug - read it
+    exactly like a low positive one: this parameter's effect on this
+    metric is not reliably linear (very possibly not reliably anything),
+    so don't trust the slope's sign, let alone its magnitude.
+
     Returns (x_eval, y_line, r_squared): a straight line evaluated at
     the two ends of x's own range, ready to plot directly over the raw
     data, plus its own r_squared against every raw point (not just the

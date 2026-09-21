@@ -244,10 +244,10 @@ def plot_metric_by_study(df, metric, ylabel, out_dir, file_stem):
 
     Returns (saved, sensitivity_by_study): saved is the list of file
     paths written; sensitivity_by_study maps each study name to its own
-    {"slope", "r2", "swing", "delta_min", "delta_max"} (only for studies
-    with >=2 points, i.e. an actual line was fit) - the caller collects
-    these across all three metrics into one cross-study sensitivity
-    ranking table (see __main__ below)."""
+    {"slope", "r2", "main_effect", "delta_min", "delta_max"} (only for
+    studies with >=2 points, i.e. an actual line was fit) - the caller
+    collects these across all three metrics into one cross-study
+    sensitivity ranking table (see __main__ below)."""
     studies = sorted(df["study"].dropna().unique())
     if not studies:
         print(f"   (nothing to plot for {metric} - no studies found)")
@@ -273,15 +273,17 @@ def plot_metric_by_study(df, metric, ylabel, out_dir, file_stem):
             trend_label = f"linear trend (R²={r2:.2f})" if r2 is not None else "linear trend"
             ax.plot(x_trend, y_trend, color="crimson", lw=2.2, zorder=2, alpha=0.85, label=trend_label)
             # Sensitivity, quantified: slope = rate of change per unit
-            # delta; swing = the line's own total predicted change
-            # across THIS study's tested envelope (slope * delta range) -
-            # directly comparable across studies with different swept
-            # units (degrees vs t/c ratio) since it's expressed in the
-            # shared metric's own units instead. Collected below into one
+            # delta; main_effect (the Design-of-Experiments term for
+            # this - see plot_style.robust_linear_trend()'s docstring)
+            # is the line's own total predicted change across THIS
+            # study's tested envelope (slope * delta range) - directly
+            # comparable across studies with different swept units
+            # (degrees vs t/c ratio) since it's expressed in the shared
+            # metric's own units instead. Collected below into one
             # cross-study, cross-metric ranking table.
             slope = (y_trend[1] - y_trend[0]) / (x_trend[1] - x_trend[0]) if x_trend[1] != x_trend[0] else 0.0
             sensitivity_by_study[study] = {
-                "slope": slope, "r2": r2, "swing": y_trend[1] - y_trend[0],
+                "slope": slope, "r2": r2, "main_effect": y_trend[1] - y_trend[0],
                 "delta_min": x_trend[0], "delta_max": x_trend[1],
             }
         baseline = sub[sub["delta"].abs() < 1e-9]
@@ -331,20 +333,20 @@ def _save_sensitivity_table_png(sensitivity_rows, out_path):
     if not sensitivity_rows:
         print("   (no sensitivity data to summarize)"); return
 
-    col_labels = ["Study", "L/D swing", "L/D R²", "SM swing", "SM R²",
-                  "Fuel swing (lbm)", "Fuel R²"]
+    col_labels = ["Study", "L/D main effect", "L/D R²", "SM main effect", "SM R²",
+                  "Fuel main effect (lbm)", "Fuel R²"]
     cell_data = [
         [r["study"],
-         f"{r['LDmax_swing']:+.2f}" if r["LDmax_swing"] is not None else "N/A",
+         f"{r['LDmax_main_effect']:+.2f}" if r["LDmax_main_effect"] is not None else "N/A",
          f"{r['LDmax_r2']:.2f}" if r["LDmax_r2"] is not None else "N/A",
-         f"{r['SM_swing']:+.3f}" if r["SM_swing"] is not None else "N/A",
+         f"{r['SM_main_effect']:+.3f}" if r["SM_main_effect"] is not None else "N/A",
          f"{r['SM_r2']:.2f}" if r["SM_r2"] is not None else "N/A",
-         f"{r['ResidualFuel_swing_lbm']:+.0f}" if r["ResidualFuel_swing_lbm"] is not None else "N/A",
+         f"{r['ResidualFuel_main_effect_lbm']:+.0f}" if r["ResidualFuel_main_effect_lbm"] is not None else "N/A",
          f"{r['ResidualFuel_r2']:.2f}" if r["ResidualFuel_r2"] is not None else "N/A"]
         for r in sensitivity_rows
     ]
 
-    fig, ax = plt.subplots(figsize=(10, 1.0 + 0.5 * len(sensitivity_rows)), facecolor="white")
+    fig, ax = plt.subplots(figsize=(11, 1.2 + 0.5 * len(sensitivity_rows)), facecolor="white")
     ax.set_facecolor("white")
     ax.axis("off")
 
@@ -355,8 +357,9 @@ def _save_sensitivity_table_png(sensitivity_rows, out_path):
     tbl.scale(1.2, 2.0)
 
     ax.set_title(
-        "Aero/Mission Sensitivity Summary — linear-trend swing across each study's own tested delta range\n"
-        "swing = trend's total predicted change; R² = how well a straight line fits (low = check the plot by eye)",
+        "Aero/Mission Sensitivity Summary — linear-trend main effect across each study's own tested delta range\n"
+        "main effect = trend's total predicted change end-to-end; R² = how well a straight line fits\n"
+        "(R²<=~0 means no reliable linear trend for that study/metric - not an error)",
         fontsize=11, pad=14,
     )
     fig.tight_layout()
@@ -400,15 +403,19 @@ if __name__ == "__main__":
 
     # One row per study, ranking each by how much its own linear trend
     # predicts LD_max/SM/residual_fuel move across the FULL delta range
-    # actually tested (the *_swing_* columns) - directly comparable
-    # across studies despite their different swept units (degrees vs t/c
-    # ratio), since swing is expressed in each metric's own shared
-    # output units instead. *_r2 says how much to trust that number for
-    # a given study (see plot_style.robust_linear_trend()'s docstring) -
-    # sort by |*_swing_*| in Excel/pandas to read this as a ranked
-    # sensitivity table, and set this next to rcs_compare_family.py's
-    # own sensitivity_summary.csv to relate the aero/mission cost of a
-    # parameter directly against its RCS benefit.
+    # actually tested (the *_main_effect* columns - "main effect" is the
+    # Design-of-Experiments term for this; see plot_style.
+    # robust_linear_trend()'s docstring) - directly comparable across
+    # studies despite their different swept units (degrees vs t/c ratio),
+    # since it's expressed in each metric's own shared output units
+    # instead. *_r2 says how much to trust that number for a given study;
+    # CAN be negative (see plot_style.robust_linear_trend()'s docstring
+    # for exactly why - a real, correct result for a parameter with no
+    # real linear effect, not a bug) - treat r2<=~0 the same as a low
+    # positive one. Sort by |*_main_effect*| in Excel/pandas to read this
+    # as a ranked sensitivity table, and set this next to
+    # rcs_compare_family.py's own sensitivity_summary.csv to relate the
+    # aero/mission cost of a parameter directly against its RCS benefit.
     all_studies = sorted(set(ld_sens) | set(sm_sens) | set(fuel_sens))
     sens_rows = []
     for study in all_studies:
@@ -418,13 +425,13 @@ if __name__ == "__main__":
             "study": study,
             "LDmax_slope_per_delta": ld["slope"] if ld else None,
             "LDmax_r2": ld["r2"] if ld else None,
-            "LDmax_swing": ld["swing"] if ld else None,
+            "LDmax_main_effect": ld["main_effect"] if ld else None,
             "SM_slope_per_delta": sm["slope"] if sm else None,
             "SM_r2": sm["r2"] if sm else None,
-            "SM_swing": sm["swing"] if sm else None,
+            "SM_main_effect": sm["main_effect"] if sm else None,
             "ResidualFuel_slope_per_delta_lbm": fuel["slope"] if fuel else None,
             "ResidualFuel_r2": fuel["r2"] if fuel else None,
-            "ResidualFuel_swing_lbm": fuel["swing"] if fuel else None,
+            "ResidualFuel_main_effect_lbm": fuel["main_effect"] if fuel else None,
             "delta_min": any_sens["delta_min"] if any_sens else None,
             "delta_max": any_sens["delta_max"] if any_sens else None,
         })
