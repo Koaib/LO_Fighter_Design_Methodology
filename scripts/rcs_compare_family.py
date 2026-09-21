@@ -200,8 +200,9 @@ def _plot_mean_vs_delta(rows, tag_key, study_name, ylabel, out_path, spec_baseli
     deltas = [d for d, e, _ in rows if tag_key in e.get("means", {})]
     means  = [e["means"][tag_key] for d, e, _ in rows if tag_key in e.get("means", {})]
     if not deltas:
-        print(f"  [outputs] no {tag_key} means to plot for {study_name}"); return None
+        print(f"  [outputs] no {tag_key} means to plot for {study_name}"); return None, None
 
+    sensitivity = None
     fig, ax = plt.subplots(figsize=(7, 4.5), facecolor="white")
     ax.set_facecolor("white")
     ax.plot(deltas, means, color="steelblue", lw=1.4, marker="o", markersize=5, zorder=3, label="raw")
@@ -221,6 +222,19 @@ def _plot_mean_vs_delta(rows, tag_key, study_name, ylabel, out_path, spec_baseli
         # plot_style.robust_linear_trend()'s own docstring.
         trend_label = f"linear trend (R²={r2:.2f})" if r2 is not None else "linear trend"
         ax.plot(x_trend, y_trend, color="crimson", lw=2.2, zorder=2, alpha=0.85, label=trend_label)
+        # Sensitivity, quantified: slope = rate of change per unit delta
+        # (this parameter's own units - degrees, t/c, ...); swing = the
+        # line's own total predicted change across THIS study's actual
+        # tested envelope (slope * delta range) - unlike the slope alone,
+        # swing is directly comparable across studies with different
+        # units/ranges (e.g. VT_Cant in degrees vs WingThickChord in t/c),
+        # since it's expressed in the shared OUTPUT metric's units
+        # (dBsm here), not the differing input units. Collected by
+        # build_study_outputs() into one cross-study ranking table.
+        slope = (y_trend[1] - y_trend[0]) / (x_trend[1] - x_trend[0]) if x_trend[1] != x_trend[0] else 0.0
+        swing = y_trend[1] - y_trend[0]
+        sensitivity = {"slope": slope, "r2": r2, "swing": swing,
+                        "delta_min": x_trend[0], "delta_max": x_trend[1]}
     baseline_val = np.mean(means)
     if 0.0 in deltas:
         i0 = deltas.index(0.0)
@@ -250,7 +264,7 @@ def _plot_mean_vs_delta(rows, tag_key, study_name, ylabel, out_path, spec_baseli
     fig.savefig(out_path, bbox_inches="tight")
     plt.close(fig)
     print(f"  saved -> {out_path.name}")
-    return out_path
+    return out_path, sensitivity
 
 
 def _plot_azimuth_polar_overlay(rows, study_name, out_path):
@@ -355,7 +369,7 @@ def build_study_outputs(study_name):
     rows = load_family(study_name, results_root)
     if not rows:
         print(f"[{study_name}] no completed deltas found under {results_root} — nothing to plot")
-        return
+        return None
 
     rows3, spec_baseline = _add_absolute_values(rows)
 
@@ -367,12 +381,24 @@ def build_study_outputs(study_name):
           + (f", absolute baseline value={spec_baseline:.4g}" if spec_baseline is not None else
              " (no absolute value yet - no non-baseline delta done)"))
 
-    _plot_mean_vs_delta(rows3, "AZ_TE", study_name, "Mean Azimuth RCS (dBsm)",
-                         plots_dir / f"{study_name}_AzimuthMean_vs_delta.png", spec_baseline)
-    _plot_mean_vs_delta(rows3, "FR_TE", study_name, "Mean Frontal-Sector RCS (dBsm)",
-                         plots_dir / f"{study_name}_FrontalMean_vs_delta.png", spec_baseline)
+    _, az_sens = _plot_mean_vs_delta(rows3, "AZ_TE", study_name, "Mean Azimuth RCS (dBsm)",
+                                       plots_dir / f"{study_name}_AzimuthMean_vs_delta.png", spec_baseline)
+    _, fr_sens = _plot_mean_vs_delta(rows3, "FR_TE", study_name, "Mean Frontal-Sector RCS (dBsm)",
+                                       plots_dir / f"{study_name}_FrontalMean_vs_delta.png", spec_baseline)
     _plot_azimuth_polar_overlay(rows3, study_name, plots_dir / f"{study_name}_AzimuthPolar_overlay.png")
     _write_summary_csv(rows3, study_name, results_root / f"summary_{study_name}.csv")
+
+    return {
+        "study": study_name,
+        "az_slope_dBsm_per_delta": az_sens["slope"] if az_sens else None,
+        "az_r2": az_sens["r2"] if az_sens else None,
+        "az_swing_dBsm": az_sens["swing"] if az_sens else None,
+        "frontal_slope_dBsm_per_delta": fr_sens["slope"] if fr_sens else None,
+        "frontal_r2": fr_sens["r2"] if fr_sens else None,
+        "frontal_swing_dBsm": fr_sens["swing"] if fr_sens else None,
+        "delta_min": (az_sens or fr_sens)["delta_min"] if (az_sens or fr_sens) else None,
+        "delta_max": (az_sens or fr_sens)["delta_max"] if (az_sens or fr_sens) else None,
+    }
 
 
 def discover_studies():
@@ -391,11 +417,39 @@ def discover_studies():
     return studies
 
 
+def _write_sensitivity_summary(sensitivity_rows, out_path):
+    """One row per study, ranking each by how much its own linear trend
+    predicts mean RCS moves across the FULL delta range actually tested
+    (the *_swing_dBsm columns) - directly comparable across studies even
+    though their swept parameters have different units (degrees vs t/c
+    ratio), since swing is expressed in the shared OUTPUT metric's units
+    instead. *_r2 says how much to trust that number for a given study
+    (see plot_style.robust_linear_trend()'s own docstring); a low r2
+    means the swept range only informs the sign of the effect, not a
+    precise magnitude. Sort by |az_swing_dBsm| descending in Excel/pandas
+    to read this as a ranked sensitivity table directly."""
+    if not sensitivity_rows:
+        print("  [outputs] no sensitivity data to summarize"); return
+    fieldnames = ["study", "az_slope_dBsm_per_delta", "az_r2", "az_swing_dBsm",
+                  "frontal_slope_dBsm_per_delta", "frontal_r2", "frontal_swing_dBsm",
+                  "delta_min", "delta_max"]
+    with open(out_path, "w", newline="") as f:
+        w = csv.DictWriter(f, fieldnames=fieldnames)
+        w.writeheader()
+        for row in sensitivity_rows:
+            w.writerow(row)
+    print(f"  saved -> {out_path.name}")
+
+
 if __name__ == "__main__":
     targets = sys.argv[1:] or discover_studies()
     if not targets:
         print(f"No study folders (with a manifest/ dir) found under {RESULTS_ROOT}")
         sys.exit(1)
     print(f"Building outputs for: {', '.join(targets)}\n")
+    sensitivity_rows = []
     for study_name in targets:
-        build_study_outputs(study_name)
+        row = build_study_outputs(study_name)
+        if row is not None:
+            sensitivity_rows.append(row)
+    _write_sensitivity_summary(sensitivity_rows, RESULTS_ROOT / "sensitivity_summary.csv")
