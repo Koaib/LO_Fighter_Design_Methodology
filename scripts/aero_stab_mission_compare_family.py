@@ -261,11 +261,11 @@ def plot_metric_by_study(df, metric, ylabel, out_dir, file_stem):
             print(f"   ({study}: no data for {metric})")
             continue
 
-        # Needed BEFORE the trend block now (to normalize into a percent
-        # sensitivity). Real baseline (delta=0) value when available,
-        # else this study's own mean as a fallback reference point.
+        # Needed before the star-marker plotting below, and (as a
+        # DataFrame, not read here) unrelated to the sensitivity_pct
+        # calculation further down - that normalizes by this study's own
+        # observed range instead, not by the delta=0 point specifically.
         baseline = sub[sub["delta"].abs() < 1e-9]
-        baseline_val = float(baseline[metric].iloc[0]) if not baseline.empty else float(sub[metric].mean())
 
         fig, ax = plt.subplots(figsize=(7, 4.5))
         ax.plot(sub["delta"], sub[metric], "-o", ms=5, color="steelblue", zorder=3, label="raw")
@@ -287,14 +287,23 @@ def plot_metric_by_study(df, metric, ylabel, out_dir, file_stem):
             #    t/c ratio) since it's in the shared metric's own units,
             #    but NOT across different metrics (L/D vs SM vs lbm).
             #  - sensitivity_pct: the same movement as a percentage of
-            #    this metric's own baseline (delta=0) value - unitless,
-            #    so ALSO comparable across different metrics (and
-            #    against rcs_compare_family.py's own sensitivity_pct
-            #    columns), at the cost of needing a nonzero, meaningful
-            #    baseline to normalize against.
+            #    this metric's own OBSERVED RANGE across the sweep
+            #    (max-min of the raw values, not the single delta=0
+            #    baseline point) - unitless, so ALSO comparable across
+            #    different metrics (and against rcs_compare_family.py's
+            #    own sensitivity_pct columns). Deliberately NOT
+            #    normalized by baseline_val: static margin in particular
+            #    is designed to sit close to zero, so a baseline-
+            #    normalized percentage there can blow up toward
+            #    +-infinity for an ordinary-sized change (confirmed
+            #    numerically before switching away from it: a baseline of
+            #    -0.006 turned a real main_effect of 0.14 into a reported
+            #    +2349%). Normalizing by the sweep's own spread instead
+            #    has no such failure mode, for any metric.
             slope = (y_trend[1] - y_trend[0]) / (x_trend[1] - x_trend[0]) if x_trend[1] != x_trend[0] else 0.0
             main_effect = y_trend[1] - y_trend[0]
-            sensitivity_pct = (main_effect / abs(baseline_val) * 100.0) if baseline_val else None
+            value_range = float(sub[metric].max() - sub[metric].min())
+            sensitivity_pct = (main_effect / value_range * 100.0) if value_range else None
             sensitivity_by_study[study] = {
                 "slope": slope, "r2": r2, "main_effect": main_effect,
                 "sensitivity_pct": sensitivity_pct,
@@ -345,8 +354,10 @@ def _save_sensitivity_table_png(sensitivity_rows, out_path):
     metric dominates "worse" here the way RCS dBsm does (higher L/D and
     residual fuel are good, static margin isn't just bigger-is-better),
     so rows stay in the same order as the CSV (alphabetical by study)
-    rather than pre-sorted by one column - re-sort by whichever metric
-    matters for a given point."""
+    rather than pre-sorted by one column - deliberately, so this table's
+    rows line up directly, one-to-one, against rcs_compare_family.py's
+    own sensitivity table for the same studies. Re-sort by whichever
+    metric matters for a given point in Excel/pandas instead."""
     if not sensitivity_rows:
         print("   (no sensitivity data to summarize)"); return
 
@@ -375,8 +386,8 @@ def _save_sensitivity_table_png(sensitivity_rows, out_path):
 
     ax.set_title(
         "Aero/Mission Sensitivity Summary — linear-trend sensitivity across each study's own tested delta range\n"
-        "sensitivity = trend's total predicted change end-to-end, as a % of the baseline (delta=0) value;\n"
-        "R² = how well a straight line fits (R²<=~0 means no reliable linear trend - not an error)",
+        "sensitivity = trend's total predicted change end-to-end, as a % of the metric's OWN observed\n"
+        "range over the sweep; R² = how well a straight line fits (R²<=~0 means no reliable trend)",
         fontsize=11, pad=14,
     )
     fig.tight_layout()
@@ -428,12 +439,16 @@ if __name__ == "__main__":
     #     in each metric's own shared output units - but NOT across
     #     different metrics (L/D vs SM vs lbm are incompatible).
     #   *_sensitivity_pct    - the same movement as a percentage of that
-    #     metric's own baseline (delta=0) value - unitless, so ALSO
-    #     comparable across different metrics, and against
+    #     metric's own OBSERVED RANGE across the sweep (max-min of the
+    #     raw values, not the single delta=0 baseline point) - unitless,
+    #     so ALSO comparable across different metrics, and against
     #     rcs_compare_family.py's own sensitivity_pct columns, to relate
     #     the aero/mission cost of a parameter directly against its RCS
-    #     benefit - at the cost of needing a nonzero, meaningful
-    #     baseline to normalize against.
+    #     benefit. Deliberately NOT normalized by the baseline value:
+    #     static margin in particular is designed to sit close to zero,
+    #     so a baseline-normalized percentage there can blow up toward
+    #     +-infinity for an ordinary-sized change - normalizing by the
+    #     sweep's own spread instead has no such failure mode.
     # *_r2 says how much to trust either number for a given study; CAN
     # be negative (see plot_style.robust_linear_trend()'s docstring for
     # exactly why - a real, correct result for a parameter with no real
