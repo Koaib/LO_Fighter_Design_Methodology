@@ -319,6 +319,52 @@ def plot_metric_by_study(df, metric, ylabel, out_dir, file_stem):
     return saved, sensitivity_by_study
 
 
+def _save_sensitivity_table_png(sensitivity_rows, out_path):
+    """Same rows as the sensitivity_summary.csv written just before this
+    call, rendered as a table image - same convention run_openrcs.py's
+    own _save_mean_table() already uses for the MeanRCS table, so this
+    drops into a slide the same way. No single metric dominates "worse"
+    here the way RCS dBsm does (higher L/D and residual fuel are good,
+    static margin isn't just bigger-is-better), so rows stay in the same
+    order as the CSV (alphabetical by study) rather than pre-sorted by
+    one column - re-sort by whichever metric matters for a given point."""
+    if not sensitivity_rows:
+        print("   (no sensitivity data to summarize)"); return
+
+    col_labels = ["Study", "L/D swing", "L/D R²", "SM swing", "SM R²",
+                  "Fuel swing (lbm)", "Fuel R²"]
+    cell_data = [
+        [r["study"],
+         f"{r['LDmax_swing']:+.2f}" if r["LDmax_swing"] is not None else "N/A",
+         f"{r['LDmax_r2']:.2f}" if r["LDmax_r2"] is not None else "N/A",
+         f"{r['SM_swing']:+.3f}" if r["SM_swing"] is not None else "N/A",
+         f"{r['SM_r2']:.2f}" if r["SM_r2"] is not None else "N/A",
+         f"{r['ResidualFuel_swing_lbm']:+.0f}" if r["ResidualFuel_swing_lbm"] is not None else "N/A",
+         f"{r['ResidualFuel_r2']:.2f}" if r["ResidualFuel_r2"] is not None else "N/A"]
+        for r in sensitivity_rows
+    ]
+
+    fig, ax = plt.subplots(figsize=(10, 1.0 + 0.5 * len(sensitivity_rows)), facecolor="white")
+    ax.set_facecolor("white")
+    ax.axis("off")
+
+    tbl = ax.table(cellText=cell_data, colLabels=col_labels, cellLoc="center", loc="center")
+    tbl.auto_set_font_size(False)
+    tbl.set_fontsize(11)
+    tbl.auto_set_column_width(col=list(range(len(col_labels))))
+    tbl.scale(1.2, 2.0)
+
+    ax.set_title(
+        "Aero/Mission Sensitivity Summary — linear-trend swing across each study's own tested delta range\n"
+        "swing = trend's total predicted change; R² = how well a straight line fits (low = check the plot by eye)",
+        fontsize=11, pad=14,
+    )
+    fig.tight_layout()
+    fig.savefig(out_path, bbox_inches="tight")
+    plt.close(fig)
+    print(f"✅ Sensitivity summary PNG: {out_path}")
+
+
 if __name__ == "__main__":
     os.makedirs(OUT_DIR, exist_ok=True)
     done, other = load_family()
@@ -386,6 +432,7 @@ if __name__ == "__main__":
         sens_path = os.path.join(RESULTS_ROOT, "sensitivity_summary.csv")
         pd.DataFrame(sens_rows).to_csv(sens_path, index=False)
         print(f"✅ Sensitivity summary CSV: {sens_path}")
+        _save_sensitivity_table_png(sens_rows, os.path.join(RESULTS_ROOT, "sensitivity_summary.png"))
 
     if other:
         print(f"\n⚠️  {len(other)} config(s) not done - see their own manifest JSON for status/error:")

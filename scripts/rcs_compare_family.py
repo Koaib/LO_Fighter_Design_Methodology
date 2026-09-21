@@ -441,6 +441,47 @@ def _write_sensitivity_summary(sensitivity_rows, out_path):
     print(f"  saved -> {out_path.name}")
 
 
+def _save_sensitivity_table_png(sensitivity_rows, out_path):
+    """Same rows as _write_sensitivity_summary()'s CSV, rendered as a
+    table image - same convention run_openrcs.py's own _save_mean_table()
+    already uses for the MeanRCS table, so this drops into a slide the
+    same way. Sorted by |az_swing_dBsm| descending, so the ranking read
+    top-to-bottom needs no further sorting in Excel first."""
+    if not sensitivity_rows:
+        print("  [outputs] no sensitivity data to summarize"); return
+    rows_sorted = sorted(sensitivity_rows, key=lambda r: abs(r["az_swing_dBsm"] or 0), reverse=True)
+
+    col_labels = ["Study", "Az swing (dBsm)", "Az R²", "Frontal swing (dBsm)", "Frontal R²"]
+    cell_data = [
+        [r["study"],
+         f"{r['az_swing_dBsm']:+.3f}" if r["az_swing_dBsm"] is not None else "N/A",
+         f"{r['az_r2']:.2f}" if r["az_r2"] is not None else "N/A",
+         f"{r['frontal_swing_dBsm']:+.3f}" if r["frontal_swing_dBsm"] is not None else "N/A",
+         f"{r['frontal_r2']:.2f}" if r["frontal_r2"] is not None else "N/A"]
+        for r in rows_sorted
+    ]
+
+    fig, ax = plt.subplots(figsize=(9, 1.0 + 0.5 * len(rows_sorted)), facecolor="white")
+    ax.set_facecolor("white")
+    ax.axis("off")
+
+    tbl = ax.table(cellText=cell_data, colLabels=col_labels, cellLoc="center", loc="center")
+    tbl.auto_set_font_size(False)
+    tbl.set_fontsize(11)
+    tbl.auto_set_column_width(col=list(range(len(col_labels))))
+    tbl.scale(1.2, 2.0)
+
+    ax.set_title(
+        "RCS Sensitivity Summary — linear-trend swing across each study's own tested Δ range\n"
+        "swing = trend's total predicted change (dBsm); R² = how well a straight line fits (low = check the plot by eye)",
+        fontsize=11, pad=14,
+    )
+    fig.tight_layout()
+    fig.savefig(out_path, bbox_inches="tight")
+    plt.close(fig)
+    print(f"  saved -> {out_path.name}")
+
+
 if __name__ == "__main__":
     targets = sys.argv[1:] or discover_studies()
     if not targets:
@@ -453,3 +494,4 @@ if __name__ == "__main__":
         if row is not None:
             sensitivity_rows.append(row)
     _write_sensitivity_summary(sensitivity_rows, RESULTS_ROOT / "sensitivity_summary.csv")
+    _save_sensitivity_table_png(sensitivity_rows, RESULTS_ROOT / "sensitivity_summary.png")
