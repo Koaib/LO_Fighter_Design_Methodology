@@ -205,16 +205,16 @@ def _plot_mean_vs_delta(rows, tag_key, study_name, ylabel, out_path, spec_baseli
     fig, ax = plt.subplots(figsize=(7, 4.5), facecolor="white")
     ax.set_facecolor("white")
     ax.plot(deltas, means, color="steelblue", lw=1.4, marker="o", markersize=5, zorder=3, label="raw")
-    if len(deltas) >= 3:
-        # Robust trendline: these sweeps are noisy run-to-run (mesh/PO
-        # discretization), so a single lowess pass makes the underlying
-        # trend legible without deleting any raw point - see
-        # plot_style.robust_lowess()'s own docstring for why it's robust
-        # to the occasional sharp spike (e.g. a specular flash at one
-        # delta) instead of being dragged by it like a plain moving
-        # average would be.
-        x_trend, y_trend = plot_style.robust_lowess(deltas, means)
-        ax.plot(x_trend, y_trend, color="crimson", lw=2.2, zorder=2, alpha=0.85, label="robust trend")
+    if len(deltas) >= 2:
+        # Linear trendline: these sweeps are noisy run-to-run (mesh/PO
+        # discretization), so a straight-line trend makes the underlying
+        # direction legible without deleting any raw point - fit with
+        # Theil-Sen (see plot_style.robust_linear_trend()'s own
+        # docstring), so the occasional sharp spike (e.g. a specular
+        # flash at one delta) barely tilts the line instead of dragging
+        # it the way an ordinary least-squares fit would.
+        x_trend, y_trend = plot_style.robust_linear_trend(deltas, means)
+        ax.plot(x_trend, y_trend, color="crimson", lw=2.2, zorder=2, alpha=0.85, label="linear trend")
     baseline_val = np.mean(means)
     if 0.0 in deltas:
         i0 = deltas.index(0.0)
