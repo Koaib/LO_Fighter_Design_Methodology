@@ -144,6 +144,39 @@ def _point_at(points, mach, alt_ft, tol=1e-6):
     return None
 
 
+def _point_interp(points, mach, alt_ft, tol=1e-6):
+    """Falls back to linear interpolation in altitude (at an EXACT mach
+    match only - the grid's own mach list, so no mach-axis blending is
+    ever needed for a cruise_mach that's actually swept) when
+    cruise_altitude_ft isn't itself a grid altitude. CD0/K are blended
+    directly and LD_max_theoretical is recomputed from the blended CD0/K
+    (not itself linearly blended - it's a nonlinear function of them).
+    Returns None if cruise_mach/cruise_altitude_ft can't be bracketed at
+    all (e.g. cruise_mach isn't a grid mach), same as _point_at()'s own
+    "no match" behavior."""
+    exact = _point_at(points, mach, alt_ft, tol)
+    if exact is not None:
+        return exact
+    at_m = sorted((p for p in points if abs(p["mach"] - mach) < tol), key=lambda p: p["alt_ft"])
+    lo = [p for p in at_m if p["alt_ft"] < alt_ft]
+    hi = [p for p in at_m if p["alt_ft"] > alt_ft]
+    if not lo or not hi:
+        return None
+    a, b = lo[-1], hi[0]
+    w = (alt_ft - a["alt_ft"]) / (b["alt_ft"] - a["alt_ft"])
+    out = dict(a)
+    for k, va in a.items():
+        vb = b.get(k)
+        if k in ("mach", "alt_ft"):
+            continue
+        if isinstance(va, (int, float)) and isinstance(vb, (int, float)):
+            out[k] = va + w * (vb - va)
+    out["alt_ft"] = alt_ft
+    if out.get("CD0") and out.get("K"):
+        out["LD_max_theoretical"] = 1.0 / (2.0 * (out["CD0"] * out["K"]) ** 0.5)
+    return out
+
+
 def build_summary_rows(entries, cruise_mach, cruise_altitude_ft):
     # Back-derive each study's own spec_baseline (the swept primary
     # parameter's un-swept value) from any ONE of that study's non-
@@ -163,8 +196,8 @@ def build_summary_rows(entries, cruise_mach, cruise_altitude_ft):
 
     rows = []
     for e in entries:
-        aero_pt = _point_at(e.get("aero_points", []), cruise_mach, cruise_altitude_ft)
-        stab_pt = _point_at(e.get("stability_points", []), cruise_mach, cruise_altitude_ft)
+        aero_pt = _point_interp(e.get("aero_points", []), cruise_mach, cruise_altitude_ft)
+        stab_pt = _point_interp(e.get("stability_points", []), cruise_mach, cruise_altitude_ft)
         mr = e.get("mission_results", {})
         # Absolute applied value of the PRIMARY swept parameter (index 4
         # of its override tuple = spec["baseline"] + delta - see
@@ -255,7 +288,14 @@ if __name__ == "__main__":
     # points exist per config) - must match aero_stab_mission_driver.py's
     # own CRUISE_MACH/CRUISE_ALTITUDE_FT values exactly, since that's the
     # flight condition this project's actual design mission cruises at.
-    CRUISE_MACH, CRUISE_ALTITUDE_FT = 0.6, 35000.0
+    # CRUISE_ALTITUDE_FT=30000.0 is NOT itself a swept grid altitude
+    # (ALTITUDE_LIST=[0, 15000, 35000] ft in main.py/aero_stab_mission_
+    # driver.py) - _point_interp() below blends the 15000/35000 ft grid
+    # points' CD0/K linearly to report this exact cruise altitude instead
+    # of a nearby grid point's, since that's the altitude the mission
+    # itself (Raymer_sizing_based_mission_check.py's AeroLookup) actually
+    # cruises and burns fuel at.
+    CRUISE_MACH, CRUISE_ALTITUDE_FT = 0.6, 30000.0
 
     rows = build_summary_rows(done, CRUISE_MACH, CRUISE_ALTITUDE_FT)
     df = pd.DataFrame(rows)
