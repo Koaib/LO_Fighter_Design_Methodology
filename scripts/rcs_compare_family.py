@@ -64,6 +64,18 @@ BASELINE_ROOT = RESULTS_ROOT / "_baseline"
 _YLIM_BY_TAG = {"AZ_TE": plot_style.YLIM_BY_METRIC["az_rcs"],
                  "FR_TE": plot_style.YLIM_BY_METRIC["frontal_rcs"]}
 
+# One-off exclusion: the RCS and aero WingThickChord sweeps were
+# extended with different, only partially-overlapping delta sets over
+# the course of the project - this side ran +-0.01/0.02/0.03, the aero
+# side (aero_stab_mission_compare_family.py's own EXCLUDED_DELTAS) ran
+# +-0.02/0.03/0.04. No time to run the missing +-0.04 here before the
+# deadline, so both sides are restricted to their SHARED tested range
+# {-0.03,-0.02,0,+0.02,+0.03} instead - otherwise the RCS-vs-aero
+# trade-off comparison for this one parameter would be comparing points
+# neither side actually tested in common. Remove this once +-0.04 has
+# actually been run here too.
+EXCLUDED_DELTAS = {"WingThickChord_sec0": {-0.01, 0.01}}
+
 
 # ── local re-implementation of the nested run_openrcs helper ────────────────
 
@@ -420,6 +432,12 @@ def _write_summary_csv(rows, study_name, out_path):
 def build_study_outputs(study_name):
     results_root = RESULTS_ROOT / study_name
     rows = load_family(study_name, results_root)
+    excluded = EXCLUDED_DELTAS.get(study_name)
+    if excluded:
+        before = len(rows)
+        rows = [(d, e) for d, e in rows if d not in excluded]
+        print(f"[{study_name}] excluding {before - len(rows)} delta(s) {sorted(excluded)} - "
+              f"not covered by the matching aero sweep (see EXCLUDED_DELTAS)")
     if not rows:
         print(f"[{study_name}] no completed deltas found under {results_root} — nothing to plot")
         return None
