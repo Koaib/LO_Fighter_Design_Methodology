@@ -540,11 +540,15 @@ def _save_sensitivity_table_png(sensitivity_rows, out_path):
         # plot_style.delta_unit_for_study()'s own docstring for why).
         unit_label, unit_scale = plot_style.delta_unit_for_study(r["study"])
         az_slope, fr_slope = r["az_slope_dBsm_per_delta"], r["frontal_slope_dBsm_per_delta"]
+        # .3f, not .2f: several real slopes here are small enough (a few
+        # thousandths of a dBsm/deg) that 2 decimal places rounds them
+        # to a misleading "+0.00" - indistinguishable from an actual
+        # zero even though the real, computed value (and its R²) isn't.
         cell_data.append([
             r["study"],
-            f"{az_slope * unit_scale:+.2f}/{unit_label}" if az_slope is not None else "N/A",
+            f"{az_slope * unit_scale:+.3f}/{unit_label}" if az_slope is not None else "N/A",
             f"{r['az_r2']:.2f}" if r["az_r2"] is not None else "N/A",
-            f"{fr_slope * unit_scale:+.2f}/{unit_label}" if fr_slope is not None else "N/A",
+            f"{fr_slope * unit_scale:+.3f}/{unit_label}" if fr_slope is not None else "N/A",
             f"{r['frontal_r2']:.2f}" if r["frontal_r2"] is not None else "N/A",
         ])
 
