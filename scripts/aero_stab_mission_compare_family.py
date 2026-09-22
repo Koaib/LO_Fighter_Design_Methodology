@@ -44,6 +44,18 @@ _YLIM_BY_METRIC_COL = {"LD_max_theoretical_cruise": "ld_max",
                         "SM_cruise": "static_margin",
                         "residual_fuel_lbm": "residual_fuel"}
 
+# One-off exclusion: the aero and RCS WingThickChord sweeps were
+# extended with different, only partially-overlapping delta sets over
+# the course of the project - this side ran +-0.02/0.03/0.04, the RCS
+# side (rcs_compare_family.py's own EXCLUDED_DELTAS) ran +-0.01/0.02/0.03.
+# No time to run the missing +-0.01 here before the deadline, so both
+# sides are restricted to their SHARED tested range {-0.03,-0.02,0,
+# +0.02,+0.03} instead - otherwise the RCS-vs-aero trade-off comparison
+# for this one parameter would be comparing points neither side
+# actually tested in common. Remove this once +-0.01 has actually been
+# run here too.
+EXCLUDED_DELTAS = {"WingThickChord": {-0.04, 0.04}}
+
 
 def discover_studies():
     """Every subfolder of RESULTS_ROOT with its own manifest/ dir, i.e.
@@ -451,6 +463,13 @@ if __name__ == "__main__":
 
     rows = build_summary_rows(done, CRUISE_MACH, CRUISE_ALTITUDE_FT)
     df = pd.DataFrame(rows)
+    for study, excluded in EXCLUDED_DELTAS.items():
+        mask = (df["study"] == study) & (df["delta"].isin(excluded))
+        if mask.any():
+            print(f"   excluding {mask.sum()} delta(s) {sorted(excluded)} for {study} - "
+                  f"not covered by the matching RCS sweep (see EXCLUDED_DELTAS)")
+            df = df[~mask]
+
     summary_path = os.path.join(RESULTS_ROOT, "summary_aero_stab_mission.csv")
     df.to_csv(summary_path, index=False)
     print(f"✅ Combined summary CSV: {summary_path}")
