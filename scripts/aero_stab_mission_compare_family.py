@@ -38,6 +38,12 @@ RESULTS_ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "R
 BASELINE_MANIFEST = os.path.join(RESULTS_ROOT, "_baseline", "manifest", "baseline.json")
 OUT_DIR = os.path.join(RESULTS_ROOT, "Comparisons")
 
+# metric column -> plot_style.YLIM_BY_METRIC key, so each metric's plot
+# uses the same fixed y-range across every study (see plot_style.py).
+_YLIM_BY_METRIC_COL = {"LD_max_theoretical_cruise": "ld_max",
+                        "SM_cruise": "static_margin",
+                        "residual_fuel_lbm": "residual_fuel"}
+
 
 def discover_studies():
     """Every subfolder of RESULTS_ROOT with its own manifest/ dir, i.e.
@@ -261,11 +267,24 @@ def plot_metric_by_study(df, metric, ylabel, out_dir, file_stem):
             print(f"   ({study}: no data for {metric})")
             continue
 
-        # Needed before the star-marker plotting below, and (as a
+        # Needed before the baseline-marker plotting below, and (as a
         # DataFrame, not read here) unrelated to the sensitivity_pct
         # calculation further down - that normalizes by this study's own
         # observed range instead, not by the delta=0 point specifically.
         baseline = sub[sub["delta"].abs() < 1e-9]
+
+        # Plot against the swept parameter's ABSOLUTE value, not delta -
+        # delta-from-an-unstated-baseline is the natural bookkeeping
+        # variable for the pipeline, but a reader wants "at what actual
+        # value does this peak," not a delta plus a second axis to
+        # translate it back. spec_baseline recovered from any one row
+        # with a known absolute_value (exact affine relationship within
+        # a study - see build_study_configs()'s _override()); falls back
+        # to plotting vs delta if no row has one yet.
+        abs_sub = sub[sub["absolute_value"].notna()]
+        use_abs = not abs_sub.empty
+        spec_baseline = float(abs_sub["absolute_value"].iloc[0] - abs_sub["delta"].iloc[0]) if use_abs else None
+        x_raw = (sub["delta"] + spec_baseline) if use_abs else sub["delta"]
 
         fig, ax = plt.subplots(figsize=(7, 4.5))
         # Points only, no connecting line: each delta is an independent
@@ -274,7 +293,7 @@ def plot_metric_by_study(df, metric, ylabel, out_dir, file_stem):
         # physically there - scatter + the separate fitted trend line
         # below is the correct read (the trend line is the only line on
         # the chart).
-        ax.plot(sub["delta"], sub[metric], "o", ms=7, color="steelblue",
+        ax.plot(x_raw, sub[metric], "o", ms=7, color="steelblue",
                  markeredgecolor="white", markeredgewidth=0.8, zorder=3, label="raw")
         if len(sub) >= 2:
             x_trend, y_trend, r2 = plot_style.robust_linear_trend(sub["delta"].to_numpy(), sub[metric].to_numpy())
@@ -284,7 +303,11 @@ def plot_metric_by_study(df, metric, ylabel, out_dir, file_stem):
             # (e.g. rises then plateaus), not just noisy around one -
             # see plot_style.robust_linear_trend()'s own docstring.
             trend_label = f"linear trend (R²={r2:.2f})" if r2 is not None else "linear trend"
-            ax.plot(x_trend, y_trend, color="crimson", lw=2.2, zorder=2, alpha=0.85, label=trend_label)
+            # Fit stays against delta (delta_min/delta_max below keep
+            # their existing, already-verified meaning) - only the DRAWN
+            # x-position shifts to match x_raw above.
+            x_trend_plot = x_trend + spec_baseline if use_abs else x_trend
+            ax.plot(x_trend_plot, y_trend, color="crimson", lw=2.2, zorder=2, alpha=0.85, label=trend_label)
             # Sensitivity, quantified two ways:
             #  - main_effect (the Design-of-Experiments term for this -
             #    see plot_style.robust_linear_trend()'s docstring): the
@@ -317,29 +340,24 @@ def plot_metric_by_study(df, metric, ylabel, out_dir, file_stem):
                 "delta_min": x_trend[0], "delta_max": x_trend[1],
             }
         if not baseline.empty:
-            ax.plot(baseline["delta"], baseline[metric], "*", ms=15, color="crimson",
-                     markeredgecolor="black", markeredgewidth=0.8, zorder=4, label="baseline (delta=0)")
-        ax.set_xlabel("delta")
+            # Same open-circle style as rcs_compare_family.py's own
+            # baseline marker (was a filled star here) - one visual
+            # convention for "this is the baseline" across both plot
+            # families.
+            baseline_x = baseline["absolute_value"] if use_abs else baseline["delta"]
+            ax.plot(baseline_x, baseline[metric], marker="o", markersize=9,
+                     markerfacecolor="none", markeredgecolor="crimson", markeredgewidth=1.6,
+                     zorder=4, label="baseline (delta=0)")
+        # Single x-axis, absolute value only (when available) - a reader
+        # wants "at what actual value does this peak," not a delta-from-
+        # an-unstated-baseline plus a second axis to translate it back.
+        ax.set_xlabel(f"{study}  absolute value" if use_abs else "delta")
         ax.set_ylabel(ylabel)
         ax.set_title(f"{study} — {ylabel} vs. delta")
         ax.grid(True, ls="--", alpha=0.6)
         ax.legend(fontsize=9)
-
-        # Secondary top axis: the ABSOLUTE applied value of this study's
-        # primary swept parameter, not just its delta - e.g. thickness/
-        # chord deltas of +-0.01/0.02 around an unstated 0.04 baseline
-        # should also read as 0.02-0.06 somewhere on the plot. Exact
-        # affine relationship within one study (absolute_value =
-        # spec_baseline + delta, see build_study_configs()' _override()),
-        # so any single row recovers spec_baseline exactly - no fit needed.
-        abs_sub = sub[sub["absolute_value"].notna()]
-        if not abs_sub.empty:
-            spec_baseline = float(abs_sub["absolute_value"].iloc[0] - abs_sub["delta"].iloc[0])
-            ax_top = ax.secondary_xaxis(
-                "top",
-                functions=(lambda x, b=spec_baseline: x + b, lambda x, b=spec_baseline: x - b),
-            )
-            ax_top.set_xlabel(f"{study}  absolute value", fontsize=11)
+        if metric in _YLIM_BY_METRIC_COL:
+            ax.set_ylim(*plot_style.YLIM_BY_METRIC[_YLIM_BY_METRIC_COL[metric]])
 
         fig.tight_layout()
         out_path = os.path.join(out_dir, f"{study}_{file_stem}.png")
@@ -368,18 +386,23 @@ def _save_sensitivity_table_png(sensitivity_rows, out_path):
     if not sensitivity_rows:
         print("   (no sensitivity data to summarize)"); return
 
-    col_labels = ["Study", "L/D sensitivity (%)", "L/D R²", "SM sensitivity (%)", "SM R²",
-                  "Fuel sensitivity (%)", "Fuel R²"]
-    cell_data = [
-        [r["study"],
-         f"{r['LDmax_sensitivity_pct']:+.1f}%" if r["LDmax_sensitivity_pct"] is not None else "N/A",
-         f"{r['LDmax_r2']:.2f}" if r["LDmax_r2"] is not None else "N/A",
-         f"{r['SM_sensitivity_pct']:+.1f}%" if r["SM_sensitivity_pct"] is not None else "N/A",
-         f"{r['SM_r2']:.2f}" if r["SM_r2"] is not None else "N/A",
-         f"{r['ResidualFuel_sensitivity_pct']:+.1f}%" if r["ResidualFuel_sensitivity_pct"] is not None else "N/A",
-         f"{r['ResidualFuel_r2']:.2f}" if r["ResidualFuel_r2"] is not None else "N/A"]
-        for r in sensitivity_rows
-    ]
+    col_labels = ["Study", "L/D slope", "L/D R²", "SM slope", "SM R²", "Fuel slope (lb)", "Fuel R²"]
+    cell_data = []
+    for r in sensitivity_rows:
+        # Slope in real units instead of the unitless %, per Sir Bilal's
+        # review - per degree (angle studies) or per 0.01 t/c (the
+        # thickness study, rescaled - see plot_style.delta_unit_for_study()).
+        unit_label, unit_scale = plot_style.delta_unit_for_study(r["study"])
+        ld, sm, fuel = r["LDmax_slope_per_delta"], r["SM_slope_per_delta"], r["ResidualFuel_slope_per_delta_lbm"]
+        cell_data.append([
+            r["study"],
+            f"{ld * unit_scale:+.3f}/{unit_label}" if ld is not None else "N/A",
+            f"{r['LDmax_r2']:.2f}" if r["LDmax_r2"] is not None else "N/A",
+            f"{sm * unit_scale:+.4f}/{unit_label}" if sm is not None else "N/A",
+            f"{r['SM_r2']:.2f}" if r["SM_r2"] is not None else "N/A",
+            f"{fuel * unit_scale:+.1f}/{unit_label}" if fuel is not None else "N/A",
+            f"{r['ResidualFuel_r2']:.2f}" if r["ResidualFuel_r2"] is not None else "N/A",
+        ])
 
     fig, ax = plt.subplots(figsize=(11, 1.2 + 0.5 * len(sensitivity_rows)), facecolor="white")
     ax.set_facecolor("white")
@@ -392,9 +415,9 @@ def _save_sensitivity_table_png(sensitivity_rows, out_path):
     tbl.scale(1.2, 2.0)
 
     ax.set_title(
-        "Aero/Mission Sensitivity Summary — linear-trend sensitivity across each study's own tested delta range\n"
-        "sensitivity = trend's total predicted change end-to-end, as a % of the metric's OWN observed\n"
-        "range over the sweep; R² = how well a straight line fits (R²<=~0 means no reliable trend)",
+        "Aero/Mission Sensitivity Summary — linear-trend slope across each study's own tested delta range\n"
+        "slope = trend's rate of change in real units (per degree, or per 0.01 Δ(t/c) for the thickness\n"
+        "study); R² = how well a straight line fits (R²<=~0 means no reliable trend)",
         fontsize=11, pad=14,
     )
     fig.tight_layout()

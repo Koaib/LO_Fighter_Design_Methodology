@@ -88,3 +88,40 @@ def robust_linear_trend(x, y):
 
     x_eval = np.array([x.min(), x.max()])
     return x_eval, slope * x_eval + intercept, r_squared
+
+
+# Fixed y-axis limits per metric, spanning every study's own data for
+# that metric (not auto-scaled per plot). Auto-scaling makes the SAME
+# metric look like it's on a different scale from one parameter's plot
+# to the next, which in turn makes the horizontal baseline/mean line
+# look like it "moves" between plots even when the underlying data
+# didn't change nearly as much - fixing the range removes that
+# artifact and makes the 5 studies visually comparable side by side.
+# Bounds below span every study's own observed min/max for that metric.
+YLIM_BY_METRIC = {
+    "az_rcs":        (5.0, 27.5),        # Mean Azimuth RCS (dBsm)
+    "frontal_rcs":   (-18.5, -15.0),     # Mean Frontal-Sector RCS (dBsm)
+    "ld_max":        (0.0, 15.0),        # Theoretical max L/D
+    "static_margin": (-0.4, 0.4),        # Static margin
+    "residual_fuel": (-7500.0, 8000.0),  # Residual fuel (lbm)
+}
+
+
+def delta_unit_for_study(study_name):
+    """(unit_label, unit_scale) for expressing a per-delta slope in a
+    natural, human-scaled unit for THIS study's swept parameter, instead
+    of the unitless sensitivity_pct. The angle-based studies (VT_Cant,
+    VT_Sweep, WingSweep*) sweep delta directly in degrees, so their
+    slope is naturally "per deg" (scale=1.0, no rescaling). The
+    thickness/chord study sweeps delta in absolute t/c ratio, in steps
+    of 0.01 (see DELTAS_TC in rcs_sweep_driver.py/
+    aero_stab_mission_driver.py) - reporting its slope "per 1.0 unit
+    t/c" would extrapolate about 50x past the actual tested range
+    (+-0.02) and produce an artificially huge-looking number for the
+    same reason the old baseline-normalized sensitivity_pct did.
+    "per 0.01 t/c" (one real tested step) is the natural, defensible
+    unit instead - matched in scale to "per deg" the same way one
+    tested step is matched to one tested step for every other study."""
+    if "thickchord" in study_name.lower():
+        return "0.01 Δ(t/c)", 0.01
+    return "deg", 1.0

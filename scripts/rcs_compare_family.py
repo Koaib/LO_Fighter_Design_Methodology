@@ -59,6 +59,11 @@ from run_openrcs import _parse_dat  # module-level in run_openrcs.py — safe to
 RESULTS_ROOT  = ROOT_DIR / "Results" / "RCS_SensitivityStudy"
 BASELINE_ROOT = RESULTS_ROOT / "_baseline"
 
+# tag_key -> plot_style.YLIM_BY_METRIC key, so each metric's plot uses
+# the same fixed y-range across every study (see plot_style.py).
+_YLIM_BY_TAG = {"AZ_TE": plot_style.YLIM_BY_METRIC["az_rcs"],
+                 "FR_TE": plot_style.YLIM_BY_METRIC["frontal_rcs"]}
+
 
 # ── local re-implementation of the nested run_openrcs helper ────────────────
 
@@ -197,10 +202,21 @@ def load_family(study_name, results_root):
 # ── plotting ─────────────────────────────────────────────────────────────
 
 def _plot_mean_vs_delta(rows, tag_key, study_name, ylabel, out_path, spec_baseline=None):
-    deltas = [d for d, e, _ in rows if tag_key in e.get("means", {})]
-    means  = [e["means"][tag_key] for d, e, _ in rows if tag_key in e.get("means", {})]
+    deltas   = [d for d, e, _ in rows if tag_key in e.get("means", {})]
+    means    = [e["means"][tag_key] for d, e, _ in rows if tag_key in e.get("means", {})]
+    abs_vals = [a for d, e, a in rows if tag_key in e.get("means", {})]
     if not deltas:
         print(f"  [outputs] no {tag_key} means to plot for {study_name}"); return None, None
+
+    # Plot against the swept parameter's ABSOLUTE value, not delta -
+    # delta-from-an-unstated-baseline is the natural bookkeeping variable
+    # for the pipeline, but a reader wants "at what actual cant angle
+    # does RCS peak," not "how far from a baseline they never saw."
+    # Only possible once spec_baseline is known (every row's abs_val is
+    # then non-None by construction - see _add_absolute_values()); falls
+    # back to plotting vs delta otherwise, same as before this change.
+    use_abs = spec_baseline is not None and all(a is not None for a in abs_vals)
+    x_raw = abs_vals if use_abs else deltas
 
     sensitivity = None
     # Needed below BEFORE the trend block now (to normalize into a
@@ -216,7 +232,7 @@ def _plot_mean_vs_delta(rows, tag_key, study_name, ylabel, out_path, spec_baseli
     # adjacent deltas would imply a continuity that isn't physically
     # there - scatter + the separate fitted trend line below is the
     # correct read here (the trend line is the only line on the chart).
-    ax.plot(deltas, means, color="steelblue", marker="o", markersize=7,
+    ax.plot(x_raw, means, color="steelblue", marker="o", markersize=7,
             markeredgecolor="white", markeredgewidth=0.8, linestyle="none",
             zorder=3, label="raw")
     if len(deltas) >= 2:
@@ -234,7 +250,14 @@ def _plot_mean_vs_delta(rows, tag_key, study_name, ylabel, out_path, spec_baseli
         # rises then plateaus), not just noisy around one - see
         # plot_style.robust_linear_trend()'s own docstring.
         trend_label = f"linear trend (R²={r2:.2f})" if r2 is not None else "linear trend"
-        ax.plot(x_trend, y_trend, color="crimson", lw=2.2, zorder=2, alpha=0.85, label=trend_label)
+        # Fit stays against delta (delta_min/delta_max below keep their
+        # existing, already-verified meaning) - only the DRAWN x-position
+        # shifts to match x_raw above. Exact: abs_val = delta + spec_baseline
+        # for every row in a family, so x_trend + spec_baseline lands
+        # precisely on the same two points x_trend would have in delta
+        # space, just relabeled.
+        x_trend_plot = x_trend + spec_baseline if use_abs else x_trend
+        ax.plot(x_trend_plot, y_trend, color="crimson", lw=2.2, zorder=2, alpha=0.85, label=trend_label)
         # Sensitivity, quantified three ways:
         #  - slope: rate of change per unit delta (this parameter's own
         #    units - degrees, t/c, ...)
@@ -267,26 +290,23 @@ def _plot_mean_vs_delta(rows, tag_key, study_name, ylabel, out_path, spec_baseli
                         "delta_min": x_trend[0], "delta_max": x_trend[1]}
     if 0.0 in deltas:
         i0 = deltas.index(0.0)
-        ax.plot(deltas[i0], means[i0], marker="o", markersize=9,
+        ax.plot(x_raw[i0], means[i0], marker="o", markersize=9,
                 markerfacecolor="none", markeredgecolor="crimson", markeredgewidth=1.6,
                 zorder=4, label="baseline (Δ=0)")
     ax.axhline(baseline_val, color="grey", lw=0.6, linestyle=":", zorder=1)
-    ax.set_xlabel(f"{study_name}  Δ")
+    # Single x-axis, absolute value only (when available) - a reader
+    # wants "at what actual value does this peak," not a delta-from-an-
+    # unstated-baseline plus a second axis to translate it back. The RCS
+    # polar overlay plot is the one place delta stays (it colour-codes
+    # several overlaid curves symmetrically around Δ=0, which only makes
+    # sense in delta terms - see _plot_azimuth_polar_overlay()).
+    ax.set_xlabel(f"{study_name}  absolute value" if use_abs else f"{study_name}  Δ")
     ax.set_ylabel(ylabel)
     ax.grid(True, linestyle="--", alpha=0.5)
     ax.set_title(f"{study_name} — {ylabel} vs. Δ")
     ax.legend(fontsize=9)
-
-    if spec_baseline is not None:
-        # Secondary top axis: the ABSOLUTE applied value of this study's
-        # primary swept parameter (e.g. t/c 0.02-0.06, not just Δ=-0.02..
-        # +0.02 around an unstated 0.04 baseline) - exact affine mapping,
-        # see _add_absolute_values().
-        ax_top = ax.secondary_xaxis(
-            "top",
-            functions=(lambda x, b=spec_baseline: x + b, lambda x, b=spec_baseline: x - b),
-        )
-        ax_top.set_xlabel(f"{study_name}  absolute value", fontsize=11)
+    if tag_key in _YLIM_BY_TAG:
+        ax.set_ylim(*_YLIM_BY_TAG[tag_key])
 
     fig.tight_layout()
     fig.savefig(out_path, bbox_inches="tight")
@@ -320,7 +340,12 @@ def _plot_azimuth_polar_overlay(rows, study_name, out_path):
     ax.set_theta_direction(-1)
 
     max_abs_delta = max(abs(d) for d, _, _, _ in curves) or 1.0
-    cmap = matplotlib.colormaps["coolwarm"]
+    # Purple<->orange diverging colormap, not red/blue - avoids clashing
+    # with an unrelated red/blue association already used elsewhere in
+    # the deck (a reader could otherwise misread this plot as related to
+    # that, which it isn't). Still a proper diverging pair centred on
+    # Delta=0, same as coolwarm was.
+    cmap = matplotlib.colormaps["PuOr"]
 
     def _rcs_to_r(rcs):
         return np.clip((rcs - rcs_min) / (rcs_max - rcs_min), 0.0, 1.0)
@@ -506,15 +531,22 @@ def _save_sensitivity_table_png(sensitivity_rows, out_path):
     if not sensitivity_rows:
         print("  [outputs] no sensitivity data to summarize"); return
 
-    col_labels = ["Study", "Az sensitivity (%)", "Az R²", "Frontal sensitivity (%)", "Frontal R²"]
-    cell_data = [
-        [r["study"],
-         f"{r['az_sensitivity_pct']:+.1f}%" if r["az_sensitivity_pct"] is not None else "N/A",
-         f"{r['az_r2']:.2f}" if r["az_r2"] is not None else "N/A",
-         f"{r['frontal_sensitivity_pct']:+.1f}%" if r["frontal_sensitivity_pct"] is not None else "N/A",
-         f"{r['frontal_r2']:.2f}" if r["frontal_r2"] is not None else "N/A"]
-        for r in sensitivity_rows
-    ]
+    col_labels = ["Study", "Az slope (dBsm)", "Az R²", "Frontal slope (dBsm)", "Frontal R²"]
+    cell_data = []
+    for r in sensitivity_rows:
+        # Slope in real units instead of the unitless %, per Sir Bilal's
+        # review - dBsm per degree (angle studies) or per 0.01 t/c (the
+        # thickness study, rescaled from "per 1.0 unit t/c" - see
+        # plot_style.delta_unit_for_study()'s own docstring for why).
+        unit_label, unit_scale = plot_style.delta_unit_for_study(r["study"])
+        az_slope, fr_slope = r["az_slope_dBsm_per_delta"], r["frontal_slope_dBsm_per_delta"]
+        cell_data.append([
+            r["study"],
+            f"{az_slope * unit_scale:+.2f}/{unit_label}" if az_slope is not None else "N/A",
+            f"{r['az_r2']:.2f}" if r["az_r2"] is not None else "N/A",
+            f"{fr_slope * unit_scale:+.2f}/{unit_label}" if fr_slope is not None else "N/A",
+            f"{r['frontal_r2']:.2f}" if r["frontal_r2"] is not None else "N/A",
+        ])
 
     fig, ax = plt.subplots(figsize=(9.5, 1.2 + 0.5 * len(sensitivity_rows)), facecolor="white")
     ax.set_facecolor("white")
@@ -527,9 +559,9 @@ def _save_sensitivity_table_png(sensitivity_rows, out_path):
     tbl.scale(1.2, 2.0)
 
     ax.set_title(
-        "RCS Sensitivity Summary — linear-trend sensitivity across each study's own tested Δ range\n"
-        "sensitivity = trend's total predicted change end-to-end, as a % of the metric's OWN observed\n"
-        "range over the sweep; R² = how well a straight line fits (R²<=~0 means no reliable trend)",
+        "RCS Sensitivity Summary — linear-trend slope across each study's own tested Δ range\n"
+        "slope = trend's rate of change in real units (dBsm per degree, or per 0.01 Δ(t/c) for the\n"
+        "thickness study); R² = how well a straight line fits (R²<=~0 means no reliable trend)",
         fontsize=11, pad=14,
     )
     fig.tight_layout()
