@@ -90,6 +90,65 @@ def robust_linear_trend(x, y):
     return x_eval, slope * x_eval + intercept, r_squared
 
 
+def linear_fit(x, y):
+    """Ordinary-least-squares straight-line fit (np.polyfit, degree 1) -
+    used ONLY by aero_stab_mission_compare_family.py's and maneuver_
+    compare_family.py's own per-panel trend lines. rcs_compare_family.py
+    is deliberately NOT switched to this - it keeps calling
+    robust_linear_trend() (Theil-Sen) exactly as before, untouched.
+
+    Why two different fits exist in the same project: robust_linear_
+    trend()'s Theil-Sen is chosen for outlier-RESISTANCE (a lone severe
+    spike barely tilts the median-of-slopes line) at the cost of two
+    textbook guarantees a reader expects from "a trendline" - it does
+    NOT necessarily pass through (x.mean(), y.mean()), and its R² CAN go
+    negative (both documented, and verified numerically, on that
+    function's own docstring). An OLS fit WITH an intercept has both
+    guarantees unconditionally: it is DEFINED as whichever line
+    minimizes sum-of-squared-residuals, and the flat mean (slope=0) is
+    always one candidate line it could have picked instead, so it can
+    never score worse than flat - hence 0 <= r_squared <= 1 always, and
+    it always passes through the data's own mean point. Asserted below
+    every call, not just assumed.
+
+    Same finite-value mask applied to x AND y JOINTLY (one boolean
+    array, never two separately-computed ones), so the points hitting
+    polyfit are always drawn from the exact same (x, y) pairs - the
+    returned xs/ys are that exact masked pair; callers should plot THOSE
+    (not re-slice x/y themselves) so the scatter and the fit are
+    provably the same data, not just supposed to be.
+
+    Returns None if fewer than 3 finite points remain after masking - a
+    2-point OLS "fit" is a line through both points unconditionally
+    (r_squared=1 no matter what the data means), not an informative
+    statistic, so it's treated the same as "nothing to fit" rather than
+    a trivially perfect one. Otherwise returns (slope, intercept, r2,
+    xs, ys, n). r2 is None (not NaN) in the one genuine edge case OLS
+    itself doesn't cover - every y value identical (ss_tot==0, so
+    "variance explained" has no denominator - there's no variance to
+    explain in the first place, not a bad fit)."""
+    x = np.asarray(x, dtype=float)
+    y = np.asarray(y, dtype=float)
+    mask = np.isfinite(x) & np.isfinite(y)
+    xs, ys = x[mask], y[mask]
+    if xs.size < 3:
+        return None
+
+    slope, intercept = np.polyfit(xs, ys, 1)
+    yhat = slope * xs + intercept
+    ss_res = np.sum((ys - yhat) ** 2)
+    ss_tot = np.sum((ys - ys.mean()) ** 2)
+    if ss_tot == 0:
+        return slope, intercept, None, xs, ys, xs.size
+
+    r2 = 1.0 - ss_res / ss_tot
+    assert -1e-9 <= r2 <= 1.0 + 1e-9, (
+        f"linear_fit: OLS r_squared={r2!r} outside [0,1] - mathematically "
+        f"impossible for an intercept OLS fit, so something upstream fed "
+        f"this mismatched/corrupted xs={xs!r}, ys={ys!r}")
+    return slope, intercept, min(1.0, max(0.0, r2)), xs, ys, xs.size
+
+
 # Fixed y-axis limits per metric, spanning every study's own data for
 # that metric (not auto-scaled per plot). Auto-scaling makes the SAME
 # metric look like it's on a different scale from one parameter's plot

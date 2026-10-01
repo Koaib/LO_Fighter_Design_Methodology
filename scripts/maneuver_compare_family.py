@@ -18,12 +18,19 @@ sharing ONE multi-panel figure), a small _panel() helper reproduces
 that exact same per-panel convention (same marker/colour/trend/baseline
 calls), since one-metric-per-file isn't optional there.
 
-R² ONE-LINER (asked for separately): compare_family computes R² as
-1 - SS_res/SS_tot of the Theil-Sen trend line against the raw points
-(plot_style.robust_linear_trend(), exactly sklearn.metrics.r2_score's
-formula) - it goes negative because Theil-Sen is fit for outlier-
-robustness, NOT to minimize SS_res, so unlike OLS it has no guarantee
-of beating the flat-mean baseline.
+R² ONE-LINER (asked for separately, now stale - kept for the history):
+compare_family USED TO compute R² as 1 - SS_res/SS_tot of a Theil-Sen
+trend line against the raw points (plot_style.robust_linear_trend()),
+which could go negative because Theil-Sen is fit for outlier-
+robustness, NOT to minimize SS_res, so unlike OLS it had no guarantee
+of beating the flat-mean baseline. As of the fit-alignment fix below,
+every panel in THIS file uses plot_style.linear_fit() (ordinary least
+squares) instead, which always lands in [0, 1] and always passes
+through the panel's own (x.mean(), y.mean()) - see that function's own
+docstring. rcs_compare_family.py was NOT changed and still uses
+Theil-Sen, so an RCS panel's R² can still be negative; only the two
+files this fix touched (aero_stab_mission_compare_family.py and this
+one) switched to OLS.
 
 Does NOT modify plot_style.YLIM_BY_METRIC or aero_stab_mission_compare_
 family.py's own _YLIM_BY_METRIC_COL (would mean editing an existing
@@ -103,16 +110,24 @@ def _panel(ax, x, y, baseline_x, baseline_y, ylabel, title, ylim=None):
     metric look like a different scale from one study's plot to the
     next, which makes a flat baseline line look like it "moves" purely
     from the axis rescaling)."""
+    # x/y are the EXACT arrays handed to both the scatter call below AND
+    # the fit call right after - one pair of variables, used twice, so
+    # the plotted points and the fitted points can never drift apart.
     x = np.asarray(x, dtype=float)
     y = np.asarray(y, dtype=float)
     ax.plot(x, y, "o", ms=7, color="steelblue", markeredgecolor="white",
              markeredgewidth=0.8, zorder=3, label="raw")
     r2 = slope = main_effect = None
-    if len(x) >= 2:
-        x_trend, y_trend, r2 = plot_style.robust_linear_trend(x, y)
+    fit = plot_style.linear_fit(x, y)
+    if fit is not None:
+        slope, intercept, r2, xs, ys, n = fit
+        # Line drawn from the fit's own slope/intercept over the fit's
+        # own [xs.min(), xs.max()] - guaranteed to sit exactly on the
+        # OLS fit for these points, not a separately-sourced range.
+        x_trend = np.array([xs.min(), xs.max()])
+        y_trend = slope * x_trend + intercept
         trend_label = f"linear trend (R²={r2:.2f})" if r2 is not None else "linear trend"
         ax.plot(x_trend, y_trend, color="crimson", lw=2.2, zorder=2, alpha=0.85, label=trend_label)
-        slope = (y_trend[1] - y_trend[0]) / (x_trend[1] - x_trend[0]) if x_trend[1] != x_trend[0] else 0.0
         main_effect = y_trend[1] - y_trend[0]
     if baseline_x is not None:
         ax.plot(baseline_x, baseline_y, marker="o", markersize=9, markerfacecolor="none",
