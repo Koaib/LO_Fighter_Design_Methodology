@@ -104,6 +104,9 @@ YLIM_BY_METRIC = {
     "ld_max":        (0.0, 15.0),        # Theoretical max L/D
     "static_margin": (-0.4, 0.4),        # Static margin
     "residual_fuel": (-7500.0, 8000.0),  # Residual fuel (lbm)
+    "ps_1g":         (10000.0, 20000.0), # Specific excess power at 1g (ft/min)
+    "n_s":           (2.0, 3.5),         # Sustained load factor (g)
+    "turn_rate":     (6.0, 10.0),        # Sustained turn rate (deg/s)
 }
 
 
