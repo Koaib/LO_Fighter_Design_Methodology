@@ -56,8 +56,15 @@ TURN_METRIC_LABELS = {
 def load_maneuver_family():
     """Every *_maneuver_manifest.json written by maneuver_metrics_
     extractor.py, globbed the same way load_family() elsewhere in this
-    project reads manifests - no hardcoded tag/study list."""
-    pattern = os.path.join(RESULTS_ROOT, "*", "manifest", "*_maneuver_manifest.json")
+    project reads manifests - no hardcoded tag/study list. Reads from
+    maneuver/, a dir SIBLING to manifest/ (matching aero/, stability/,
+    mission/'s own convention) - NOT manifest/ itself, which would let
+    aero_stab_mission_compare_family.load_family()'s own unscoped
+    manifest/*.json glob sweep these files back up as if they were
+    additional aero manifests on the next run (confirmed: this caused a
+    real, serious self-corruption bug - see maneuver_metrics_extractor.
+    py's own _manifest_dir_for() docstring for the full mechanism)."""
+    pattern = os.path.join(RESULTS_ROOT, "*", "maneuver", "*_maneuver_manifest.json")
     rows = []
     for path in sorted(glob.glob(pattern)):
         with open(path) as f:

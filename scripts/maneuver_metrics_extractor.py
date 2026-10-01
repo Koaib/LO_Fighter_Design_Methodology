@@ -94,20 +94,43 @@ def _engine_lookup():
 
 
 def _manifest_dir_for(entry):
-    """This variant's own manifest/ dir. Prefers the real on-disk
-    <study>/manifest/<tag>.json location; falls back to the shared
-    _baseline/manifest/ dir for a per-study-SPLICED baseline row (see
+    """This variant's own output dir for the maneuver manifest - a
+    "maneuver/" dir SIBLING to manifest/ (same pattern aero_stab_
+    mission_worker.py already uses for aero/, stability/ and mission/ -
+    all siblings of manifest/, never inside it), NOT manifest/ itself.
+
+    Writing into manifest/ was the original design (matching the brief's
+    own "next to the existing manifest" wording literally) and caused a
+    real, serious bug: aero_stab_mission_compare_family.load_family()
+    globs manifest/*.json with NO filter beyond that - so on any SECOND
+    run, it swept up this script's own previously-written
+    <tag>_maneuver_manifest.json files as if they were additional aero
+    manifests. Those files have no "aero_points" field, so they were
+    (correctly, given what load_family() handed this script) flagged
+    "no aero point found" - and because they sort alphabetically AFTER
+    the real "<tag>.json" entry, processing them LATER silently
+    overwrote that run's own correct earlier result with "missing".
+    Confirmed directly: a real variant's SOURCE manifest had
+    aero_points covering Mach=0.6/15000ft exactly, but this script's
+    own prior output for that same tag, re-ingested as a fake "aero
+    entry" by load_family(), had none - so the fake entry's "missing"
+    clobbered the real entry's "done". Not a data problem - a self-
+    inflicted one, from writing into a directory this script doesn't
+    own the glob scope of. maneuver/ keeps manifest/ exclusively the
+    real aero manifests, so this can't happen again regardless of how
+    many times either script reruns.
+
+    Prefers the real on-disk <study>/manifest/<tag>.json location (to
+    find the right study/maneuver/ dir); falls back to the shared
+    _baseline/maneuver/ dir for a per-study-SPLICED baseline row (see
     aero_stab_mission_compare_family._splice_baseline_for_study() -
     those rows are relabeled in memory only, no <study>/manifest/<tag>.json
-    ever exists for them on disk). Does NOT key off entry["aero_dir"]:
-    some real manifests on disk don't carry that field (observed on the
-    actual run this was built against), so that KeyError'd here before -
-    this derives the directory purely from path structure instead."""
-    study_manifest_dir = os.path.join(compare_family.RESULTS_ROOT, entry["study"], "manifest")
-    tag_path = os.path.join(study_manifest_dir, f"{entry['tag']}.json")
+    ever exists for them on disk)."""
+    study_dir = os.path.join(compare_family.RESULTS_ROOT, entry["study"])
+    tag_path = os.path.join(study_dir, "manifest", f"{entry['tag']}.json")
     if os.path.isfile(tag_path):
-        return study_manifest_dir
-    return os.path.dirname(compare_family.BASELINE_MANIFEST)
+        return os.path.join(study_dir, "maneuver")
+    return os.path.join(os.path.dirname(os.path.dirname(compare_family.BASELINE_MANIFEST)), "maneuver")
 
 
 def compute_for_entry(entry, abs_val, engine, q, V, T_N, W_N):
