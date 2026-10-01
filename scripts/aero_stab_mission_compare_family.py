@@ -31,7 +31,6 @@ import json
 import os
 
 import matplotlib.pyplot as plt
-import numpy as np
 import plot_style
 import pandas as pd
 
@@ -253,15 +252,13 @@ def plot_metric_by_study(df, metric, ylabel, out_dir, file_stem):
     own panel at full size, alongside that same parameter's RCS plots
     (rcs_compare_family.py already saves those individually, per study).
 
-    Each panel also overlays plot_style.linear_fit()'s ordinary-least-
-    squares straight-line trendline on top of the raw delta-sweep line:
-    these sweeps are noisy run-to-run (VSPAero/meshing sensitivity to
-    shaping deltas, not measurement error), so a linear trend makes the
-    underlying direction legible without deleting any raw point. OLS
-    (not Theil-Sen - see plot_style.linear_fit()'s own docstring for why
-    the two fits coexist in this project) so the line always passes
-    through this panel's own (x.mean(), y.mean()) and R² always lands in
-    [0, 1], matching what a reader expects "a trendline" to do.
+    Each panel also overlays plot_style.robust_linear_trend()'s straight-
+    line trendline on top of the raw delta-sweep line: these sweeps are
+    noisy run-to-run (VSPAero/meshing sensitivity to shaping deltas, not
+    measurement error), so a linear trend makes the underlying direction
+    legible without deleting any raw point - fit with Theil-Sen so it
+    downweights outliers (a lone severe spike barely tilts it) instead
+    of requiring them removed first.
 
     Returns (saved, sensitivity_by_study): saved is the list of file
     paths written; sensitivity_by_study maps each study name to its own
@@ -301,14 +298,6 @@ def plot_metric_by_study(df, metric, ylabel, out_dir, file_stem):
         spec_baseline = float(abs_sub["absolute_value"].iloc[0] - abs_sub["delta"].iloc[0]) if use_abs else None
         x_raw = (sub["delta"] + spec_baseline) if use_abs else sub["delta"]
 
-        # x_arr/y_arr are the EXACT arrays handed to both the scatter
-        # call below AND the fit call right after it - one pair of
-        # variables, used twice, so the plotted points and the fitted
-        # points can never drift apart (see plot_style.linear_fit()'s
-        # own docstring on why this matters).
-        x_arr = x_raw.to_numpy(dtype=float)
-        y_arr = sub[metric].to_numpy(dtype=float)
-
         fig, ax = plt.subplots(figsize=(7, 4.5))
         # Points only, no connecting line: each delta is an independent
         # noisy sample, not a continuous path, so a straight segment
@@ -316,32 +305,29 @@ def plot_metric_by_study(df, metric, ylabel, out_dir, file_stem):
         # physically there - scatter + the separate fitted trend line
         # below is the correct read (the trend line is the only line on
         # the chart).
-        ax.plot(x_arr, y_arr, "o", ms=7, color="steelblue",
+        ax.plot(x_raw, sub[metric], "o", ms=7, color="steelblue",
                  markeredgecolor="white", markeredgewidth=0.8, zorder=3, label="raw")
-        fit = plot_style.linear_fit(x_arr, y_arr)
-        if fit is not None:
-            slope, intercept, r2, xs, ys, n = fit
-            # Line drawn from the fit's own slope/intercept over the
-            # fit's own [xs.min(), xs.max()] - the same xs just used to
-            # compute slope/intercept, so the line is guaranteed to sit
-            # exactly on the OLS fit for THESE points, not a separately-
-            # sourced range.
-            x_trend = np.array([xs.min(), xs.max()])
-            y_trend = slope * x_trend + intercept
+        if len(sub) >= 2:
+            x_trend, y_trend, r2 = plot_style.robust_linear_trend(sub["delta"].to_numpy(), sub[metric].to_numpy())
             # R² alongside the line (same convention as Excel's own "add
-            # trendline"); low R² is a real warning that this study's
+            # trendline") - low R² is a real warning that this study's
             # response isn't well-summarized by a straight line at all
-            # (e.g. rises then plateaus), not just noisy around one.
+            # (e.g. rises then plateaus), not just noisy around one -
+            # see plot_style.robust_linear_trend()'s own docstring.
             trend_label = f"linear trend (R²={r2:.2f})" if r2 is not None else "linear trend"
-            ax.plot(x_trend, y_trend, color="crimson", lw=2.2, zorder=2, alpha=0.85, label=trend_label)
+            # Fit stays against delta (delta_min/delta_max below keep
+            # their existing, already-verified meaning) - only the DRAWN
+            # x-position shifts to match x_raw above.
+            x_trend_plot = x_trend + spec_baseline if use_abs else x_trend
+            ax.plot(x_trend_plot, y_trend, color="crimson", lw=2.2, zorder=2, alpha=0.85, label=trend_label)
             # Sensitivity, quantified two ways:
-            #  - main_effect (the Design-of-Experiments term for this):
-            #    the line's own total predicted change across THIS
-            #    study's tested envelope (slope * delta range) -
-            #    comparable across studies with different swept units
-            #    (degrees vs t/c ratio) since it's in the shared metric's
-            #    own units, but NOT across different metrics (L/D vs SM
-            #    vs lbm).
+            #  - main_effect (the Design-of-Experiments term for this -
+            #    see plot_style.robust_linear_trend()'s docstring): the
+            #    line's own total predicted change across THIS study's
+            #    tested envelope (slope * delta range) - comparable
+            #    across studies with different swept units (degrees vs
+            #    t/c ratio) since it's in the shared metric's own units,
+            #    but NOT across different metrics (L/D vs SM vs lbm).
             #  - sensitivity_pct: the same movement as a percentage of
             #    this metric's own OBSERVED RANGE across the sweep
             #    (max-min of the raw values, not the single delta=0
@@ -356,24 +342,14 @@ def plot_metric_by_study(df, metric, ylabel, out_dir, file_stem):
             #    -0.006 turned a real main_effect of 0.14 into a reported
             #    +2349%). Normalizing by the sweep's own spread instead
             #    has no such failure mode, for any metric.
-            # slope is per-delta regardless of whether x_arr plotted in
-            # delta or absolute-value terms: the two differ only by the
-            # constant shift spec_baseline, which cancels out of a slope
-            # (verified: translation of x by a constant leaves an OLS
-            # fit's slope/R² exactly unchanged, same proof already used
-            # for Theil-Sen elsewhere in this project).
+            slope = (y_trend[1] - y_trend[0]) / (x_trend[1] - x_trend[0]) if x_trend[1] != x_trend[0] else 0.0
             main_effect = y_trend[1] - y_trend[0]
             value_range = float(sub[metric].max() - sub[metric].min())
             sensitivity_pct = (main_effect / value_range * 100.0) if value_range else None
             sensitivity_by_study[study] = {
                 "slope": slope, "r2": r2, "main_effect": main_effect,
                 "sensitivity_pct": sensitivity_pct,
-                # Kept in DELTA terms (not xs.min()/xs.max(), which are
-                # in x_arr's own terms - absolute-value when use_abs) -
-                # preserves this column's existing, already-verified
-                # meaning in sensitivity_summary.csv exactly, independent
-                # of which x the trend line itself is drawn against.
-                "delta_min": float(sub["delta"].min()), "delta_max": float(sub["delta"].max()),
+                "delta_min": x_trend[0], "delta_max": x_trend[1],
             }
         if not baseline.empty:
             # Same open-circle style as rcs_compare_family.py's own
