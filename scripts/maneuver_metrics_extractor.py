@@ -94,12 +94,20 @@ def _engine_lookup():
 
 
 def _manifest_dir_for(entry):
-    """This variant's own manifest/ dir, derived from its (already-
-    absolute, via load_family()) aero_dir - aero_dir's own parent is
-    results_root (see aero_stab_mission_worker.py's module docstring),
-    and manifest/ is aero/'s sibling there."""
-    results_root = os.path.dirname(entry["aero_dir"])
-    return os.path.join(results_root, "manifest")
+    """This variant's own manifest/ dir. Prefers the real on-disk
+    <study>/manifest/<tag>.json location; falls back to the shared
+    _baseline/manifest/ dir for a per-study-SPLICED baseline row (see
+    aero_stab_mission_compare_family._splice_baseline_for_study() -
+    those rows are relabeled in memory only, no <study>/manifest/<tag>.json
+    ever exists for them on disk). Does NOT key off entry["aero_dir"]:
+    some real manifests on disk don't carry that field (observed on the
+    actual run this was built against), so that KeyError'd here before -
+    this derives the directory purely from path structure instead."""
+    study_manifest_dir = os.path.join(compare_family.RESULTS_ROOT, entry["study"], "manifest")
+    tag_path = os.path.join(study_manifest_dir, f"{entry['tag']}.json")
+    if os.path.isfile(tag_path):
+        return study_manifest_dir
+    return os.path.dirname(compare_family.BASELINE_MANIFEST)
 
 
 def compute_for_entry(entry, abs_val, engine, q, V, T_N, W_N):
@@ -175,6 +183,20 @@ def compute_for_entry(entry, abs_val, engine, q, V, T_N, W_N):
         out["D_1g_N"] = D1
         out["Ps_1g_ms"] = Ps_1g
         out["Ps_1g_fpm"] = Ps_1g * 196.850394
+        # Plausibility guard, not a correctness check: D(1g) more than
+        # 2x the available thrust at a cruise-ish CL (~0.3 for this
+        # aircraft, well below stall) would be an extraordinary drag
+        # coefficient for level flight - far more likely a noisy/outlier
+        # CDtot point in this variant's own sweep landing right at CL1
+        # than a real aerodynamic result. Interpolation still runs (CL1
+        # IS inside the tested range, so this isn't extrapolation) and
+        # Ps_1g is still reported for transparency - just flagged, not
+        # silently trusted the same as a sane value.
+        if D1 > 2.0 * T_N:
+            flags.append(f"Ps_1g looks implausible: D(1g)={D1:.0f} N is >2x available "
+                          f"thrust ({T_N:.0f} N) at CL_1g={CL1:.4f} - likely a noisy/outlier "
+                          f"CDtot point in this variant's sweep near that CL, not a real "
+                          f"result; check the raw CSV before using this number")
 
     n_upper = cl_max * q * S_m2 / W_N
     if n_upper <= 1.0:
